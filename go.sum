@@ -1,0 +1,4 @@
+github.com/meinside/openai-go v0.0.2 h1:zNBniqHjtswMPra4+c81u9bHEK742McjH8UiQU9zejM=
+github.com/meinside/openai-go v0.0.2/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
+github.com/meinside/telegram-bot-go v0.8.1 h1:tc7GotItyhp470zoc8DJAo/BkArGpg/nDXP5PeMAKVI=
+github.com/meinside/telegram-bot-go v0.8.1/go.mod h1:fo8x0nah9sfQJnylpjOjhEVlLVkSGFAwTmVQOFnX92Y=

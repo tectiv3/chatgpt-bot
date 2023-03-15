@@ -1,0 +1,8 @@
+{
+    "telegram_bot_token": "xxxxxxxxxxxxxx",
+    "openai_api_key": "yyyyyyyyyyyyyy",
+    "openai_org_id": "zzzzzzzzzzzzzz",
+    "openai_model": "gpt-3.5-turbo",
+    "allowed_telegram_users": ["user1", "user2"],
+    "verbose": false
+}
