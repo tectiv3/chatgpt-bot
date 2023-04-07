@@ -57,6 +57,8 @@ dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
+github.com/GRbit/go-pcre v1.0.0 h1:Qv/YZ/tr436mFgep3Y0WAzKOZvAKGOGD0cAMwUcsEJo=
+github.com/GRbit/go-pcre v1.0.0/go.mod h1:OuMGyux1WcDrKNwDn9MyQLa2kzxQS/xFyVqXFZ/ay0I=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
@@ -280,6 +282,8 @@ github.com/mattn/go-isatty v0.0.11/go.mod h1:PhnuNfih5lzO57/f3n+odYbM4JtupLOxQOA
 github.com/mattn/go-isatty v0.0.12/go.mod h1:cbi8OIDigv2wuxKPP5vlRcQ1OAZbq2CE4Kysco4FUpU=
 github.com/mattn/go-isatty v0.0.14/go.mod h1:7GGIvUiUoEMVVmxf/4nioHXj79iQHKdU27kJ6hsGG94=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
+github.com/meinside/geektoken v0.0.1 h1:KyVZwSsl6yD6UzaWfR8G48S64IhS+HNaKEHzMLKjhJ4=
+github.com/meinside/geektoken v0.0.1/go.mod h1:fcHibWofTfmj/ZgdWRMyWvt8FtmrD4mB8hCFKiF133c=
 github.com/meinside/openai-go v0.0.5 h1:TJWDQeI5nw5U5hAyrXgppLjeggc4V6R0g2VvL9egOWg=
 github.com/meinside/openai-go v0.0.5/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
 github.com/miekg/dns v1.1.26/go.mod h1:bPDLeHnStXmXAq1m/Ch/hvfNHr14JKNPMBo3VZKjuso=
