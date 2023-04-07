@@ -3,14 +3,13 @@ package main
 // bot.go
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"strings"
+	"runtime/debug"
+	"time"
 
 	openai "github.com/meinside/openai-go"
-	tg "github.com/meinside/telegram-bot-go"
+	tele "gopkg.in/telebot.v3"
 )
 
 const (
@@ -43,141 +42,160 @@ type DB struct {
 	chats map[int64]Chat
 }
 
+type Server struct {
+	conf  config
+	users map[string]bool
+	ai    *openai.Client
+	bot   *tele.Bot
+	db    DB
+}
+
 // Chat is chat history by chatid
 type Chat struct {
 	history []openai.ChatMessage
 }
 
-var db DB
-
-func init() {
-	db = DB{chats: make(map[int64]Chat)}
-}
-
-// load config at given path
-func loadConfig(fpath string) (conf config, err error) {
-	var bytes []byte
-	if bytes, err = os.ReadFile(fpath); err == nil {
-		if err = json.Unmarshal(bytes, &conf); err == nil {
-			return conf, nil
-		}
-	}
-
-	return config{}, err
-}
-
 // launch bot with given parameters
-func runBot(conf config) {
-	token := conf.TelegramBotToken
-	apiKey := conf.OpenAIAPIKey
-	orgID := conf.OpenAIOrganizationID
-
-	allowedUsers := map[string]bool{}
-	for _, user := range conf.AllowedTelegramUsers {
-		allowedUsers[user] = true
+func (self Server) run() {
+	pref := tele.Settings{
+		Token:  self.conf.TelegramBotToken,
+		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
 	}
 
-	bot := tg.NewClient(token)
-	client := openai.NewClient(apiKey, orgID)
+	b, err := tele.NewBot(pref)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	self.bot = b
 
-	if b := bot.GetMe(); b.Ok {
-		log.Printf("launching bot: %s", userName(b.Result))
-
-		bot.StartMonitoringUpdates(0, intervalSeconds, func(b *tg.Bot, update tg.Update, err error) {
-			if isAllowed(update, allowedUsers) {
-				var message *tg.Message
-
-				if update.HasMessage() && update.Message.HasText() {
-					message = update.Message
-				} else if update.HasEditedMessage() && update.EditedMessage.HasText() {
-					message = update.EditedMessage
-				}
-
-				chatID := message.Chat.ID
-				userID := message.From.ID
-				txt := *message.Text
-
-				if !strings.HasPrefix(txt, "/") {
-					// classify message
-					// if reason, flagged := isFlagged(client, txt); flagged {
-					// send(bot, conf, fmt.Sprintf("Could not handle message: %s.", reason), chatID)
-					// } else {
-					messageID := message.MessageID
-					answer(bot, client, conf, txt, chatID, userID, messageID)
-					// }
-				} else {
-					switch txt {
-					case cmdStart:
-						send(bot, conf, msgStart, chatID)
-					case cmdReset:
-						db.chats[chatID] = Chat{history: []openai.ChatMessage{}}
-						send(bot, conf, msgReset, chatID)
-					// TODO: process more bot commands here
-					default:
-						send(bot, conf, fmt.Sprintf(msgCmdNotSupported, txt), chatID)
-					}
-				}
-			} else {
-				log.Printf("not allowed: %s", userNameFromUpdate(&update))
-			}
+	b.Handle("/start", func(c tele.Context) error {
+		return c.Send(msgStart, "text", &tele.SendOptions{
+			ReplyTo: c.Message(),
 		})
-	} else {
-		log.Printf("failed to get bot info: %s", *b.Description)
+	})
+
+	b.Handle("/reset", func(c tele.Context) error {
+		self.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		return c.Send(msgReset, "text", &tele.SendOptions{
+			ReplyTo: c.Message(),
+		})
+	})
+
+	b.Handle(tele.OnText, func(c tele.Context) error {
+		go self.onText(c)
+
+		return nil
+	})
+
+	b.Handle(tele.OnQuery, func(c tele.Context) error {
+		query := c.Query().Text
+
+		if len(query) < 3 {
+			return nil
+		}
+
+		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Println(string(debug.Stack()), err)
+				}
+			}()
+
+			result := &tele.ArticleResult{}
+			//     URL:         fmt.Sprintf("https://store.steampowered.com/app/%d/", game.AppID),
+			//     Title:       game.Name,
+			//     Text:        text,
+			//     Description: game.ShortDescription,
+			//     ThumbURL:    game.HeaderImage,
+			// }
+
+			results := make(tele.Results, 1)
+			results[0] = result
+			// needed to set a unique string ID for each result
+			results[0].SetResultID("sdsd") //strconv.Itoa(game.AppID))
+
+			c.Answer(&tele.QueryResponse{
+				Results:   results,
+				CacheTime: 100,
+			})
+
+		}()
+
+		return nil
+	})
+
+	b.Start()
+}
+
+func (self Server) onText(c tele.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(string(debug.Stack()), err)
+		}
+	}()
+
+	if !self.isAllowed(c.Sender().Username) {
+		c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{
+			ReplyTo: c.Message(),
+		})
+		return
 	}
+	// if c.Message().IsReply() {
+	//
+	// }
+	message := c.Message().Payload
+	if len(message) == 0 {
+		message = c.Message().Text
+	}
+
+	if message == "reset" {
+		self.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		c.Send(msgReset, "text", &tele.SendOptions{
+			ReplyTo: c.Message(),
+		})
+		return
+	}
+	response, err := self.answer(message, c)
+	if err != nil {
+		return
+	}
+	c.Send(response, "text", &tele.SendOptions{
+		ReplyTo: c.Message(),
+	})
 }
 
 // checks if given update is allowed or not
-func isAllowed(update tg.Update, allowedUsers map[string]bool) bool {
-	var username string
-	if update.HasMessage() && update.Message.From.Username != nil {
-		username = *update.Message.From.Username
-	} else if update.HasEditedMessage() && update.EditedMessage.From.Username != nil {
-		username = *update.EditedMessage.From.Username
-	}
+func (self Server) isAllowed(username string) bool {
+	_, exists := self.users[username]
 
-	if _, exists := allowedUsers[username]; exists {
-		return true
-	}
-
-	return false
-}
-
-// send given message to the chat
-func send(bot *tg.Bot, conf config, message string, chatID int64) {
-	bot.SendChatAction(chatID, tg.ChatActionTyping, nil)
-
-	if conf.Verbose {
-		log.Printf("[verbose] sending message to chat(%d): '%s'", chatID, message)
-	}
-
-	if res := bot.SendMessage(chatID, message, tg.OptionsSendMessage{}); !res.Ok {
-		log.Printf("failed to send message: %s", *res.Description)
-	}
+	return exists
 }
 
 // generate an answer to given message and send it to the chat
-func answer(bot *tg.Bot, client *openai.Client, conf config, message string, chatID, userID, messageID int64) {
-	bot.SendChatAction(chatID, tg.ChatActionTyping, nil)
+func (self Server) answer(message string, c tele.Context) (string, error) {
+	c.Notify(tele.Typing)
+
 	msg := openai.NewChatUserMessage(message)
 
 	var chat Chat
-	chat, ok := db.chats[chatID]
+	chat, ok := self.db.chats[c.Chat().ID]
 	if !ok {
 		chat = Chat{history: []openai.ChatMessage{}}
 	}
-
 	chat.history = append(chat.history, msg)
 
-	response, err := client.CreateChatCompletion(conf.Model, chat.history, openai.ChatCompletionOptions{}.SetUser(userAgent(userID)))
+	response, err := self.ai.CreateChatCompletion(self.conf.Model, chat.history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)))
+
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)
-		return
+		return "", err
 	}
-	if conf.Verbose {
+	if self.conf.Verbose {
 		log.Printf("[verbose] %s ===> %+v", message, response.Choices)
 	}
 
-	// bot.SendChatAction(chatID, tg.ChatActionTyping, nil)
+	c.Notify(tele.Typing)
 
 	var answer string
 	if len(response.Choices) > 0 {
@@ -186,68 +204,21 @@ func answer(bot *tg.Bot, client *openai.Client, conf config, message string, cha
 		answer = "No response from API."
 	}
 
-	if conf.Verbose {
-		log.Printf("[verbose] sending answer to chat(%d): '%s'", chatID, answer)
+	if self.conf.Verbose {
+		log.Printf("[verbose] sending answer: '%s'", answer)
 	}
 
 	chat.history = append(chat.history, openai.NewChatAssistantMessage(answer))
-	db.chats[chatID] = chat
+	self.db.chats[c.Chat().ID] = chat
 
-	if res := bot.SendMessage(
-		chatID,
-		answer,
-		tg.OptionsSendMessage{}.
-			SetReplyToMessageID(messageID)); !res.Ok {
-		log.Printf("failed to answer message '%s' with '%s': %s", message, answer, err)
+	if len(chat.history) > 8 {
+		chat.history = chat.history[1:]
 	}
 
-}
-
-// check if given message is flagged or not
-func isFlagged(client *openai.Client, message string) (output string, flagged bool) {
-	if response, err := client.CreateModeration(message, openai.ModerationOptions{}); err == nil {
-		for _, classification := range response.Results {
-			if classification.Flagged {
-				categories := []string{}
-
-				for k, v := range classification.Categories {
-					if v {
-						categories = append(categories, k)
-					}
-				}
-
-				return fmt.Sprintf("'%s' was flagged due to following reason(s): %s", message, strings.Join(categories, ", ")), true
-			}
-		}
-
-		return "", false
-	} else {
-		return fmt.Sprintf("failed to classify message: '%s' with error: %s", message, err), true
-	}
+	return answer, nil
 }
 
 // generate a user-agent value
 func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
-}
-
-// generate user's name
-func userName(user *tg.User) string {
-	if user.Username != nil {
-		return fmt.Sprintf("@%s (%s)", *user.Username, user.FirstName)
-	} else {
-		return user.FirstName
-	}
-}
-
-// generate user's name from update
-func userNameFromUpdate(update *tg.Update) string {
-	var user *tg.User
-	if update.HasMessage() {
-		user = update.Message.From
-	} else if update.HasEditedMessage() {
-		user = update.EditedMessage.From
-	}
-
-	return userName(user)
 }

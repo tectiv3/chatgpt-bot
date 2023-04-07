@@ -2,9 +2,9 @@
 
 A telegram bot which answers to messages with [ChatGPT API](https://platform.openai.com/docs/api-reference/chat).
 
-## Configurations
+## Configuration
 
-Create a configuration file:
+Copy example configuration file:
 
 ```bash
 $ cp config.json.sample config.json
@@ -49,8 +49,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
+User=pi
+Group=pi
 WorkingDirectory=/dir/to/chatgpt-bot
 ExecStart=/dir/to/chatgpt-bot/chatgpt-bot /path/to/config.json
 Restart=always
@@ -58,6 +58,10 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+```
+
+```bash
+$ systemctl daemon-reload
 ```
 
 and `systemctl` enable|start|restart|stop the service.
