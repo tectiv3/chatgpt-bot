@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meinside/geektoken"
 	openai "github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 )
@@ -58,8 +57,6 @@ type Chat struct {
 	history []openai.ChatMessage
 }
 
-var tokenizer *geektoken.Tokenizer = nil
-
 // launch bot with given parameters
 func (self Server) run() {
 	pref := tele.Settings{
@@ -85,18 +82,6 @@ func (self Server) run() {
 		return c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
-	})
-
-	b.Handle("/count", func(c tele.Context) error {
-		txtToCount := strings.TrimSpace(c.Message().Payload)
-		msg := ""
-		if count, err := countTokens(txtToCount); err == nil {
-			msg = fmt.Sprintf(msgTokenCount, count, len(txtToCount))
-		} else {
-			msg = err.Error()
-		}
-
-		return c.Send(msg, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
@@ -246,31 +231,4 @@ func (self Server) answer(message string, c tele.Context) (string, error) {
 // generate a user-agent value
 func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
-}
-
-// count BPE tokens for given `text`
-func countTokens(text string) (result int, err error) {
-	result = 0
-	// lazy-load the tokenizer
-	if tokenizer == nil {
-		var _tokenizer geektoken.Tokenizer
-		_tokenizer, err = geektoken.GetTokenizerWithEncoding(geektoken.EncodingCl100kBase)
-
-		if err == nil {
-			tokenizer = &_tokenizer
-		}
-	}
-
-	if tokenizer == nil {
-		return 0, fmt.Errorf("tokenizer is not initialized.")
-	}
-
-	var tokens []int
-	tokens, err = tokenizer.Encode(text, nil, nil)
-
-	if err == nil {
-		return len(tokens), nil
-	}
-
-	return result, err
 }
