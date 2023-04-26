@@ -6,26 +6,23 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"gopkg.in/hraban/opus.v2"
+	"github.com/sunicy/go-lame"
+	"github.com/tectiv3/chatgpt-bot/opus"
 	"io"
 	"log"
 	"runtime/debug"
 	"strings"
 	"time"
 
-	openai "github.com/meinside/openai-go"
+	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 )
 
 const (
-	intervalSeconds = 1
-
-	cmdStart           = "/start"
-	cmdReset           = "/reset"
-	msgStart           = "This bot will answer your messages with ChatGPT API"
-	msgReset           = "This bots memory erased"
-	msgCmdNotSupported = "Unknown command: %s"
-	msgTokenCount      = "%d tokens in %d chars"
+	cmdStart = "/start"
+	cmdReset = "/reset"
+	msgStart = "This bot will answer your messages with ChatGPT API"
+	msgReset = "This bots memory erased"
 )
 
 // config struct for loading a configuration file
@@ -62,9 +59,9 @@ type Chat struct {
 }
 
 // launch bot with given parameters
-func (self Server) run() {
+func (s Server) run() {
 	pref := tele.Settings{
-		Token:  self.conf.TelegramBotToken,
+		Token:  s.conf.TelegramBotToken,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
 	}
 
@@ -73,43 +70,42 @@ func (self Server) run() {
 		log.Fatal(err)
 		return
 	}
-	self.bot = b
+	s.bot = b
 
-	b.Handle("/start", func(c tele.Context) error {
+	b.Handle(cmdStart, func(c tele.Context) error {
 		return c.Send(msgStart, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
 	})
 
-	b.Handle("/reset", func(c tele.Context) error {
-		self.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+	b.Handle(cmdReset, func(c tele.Context) error {
+		s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
 		return c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
-		go self.onText(c)
+		go s.onText(c)
 
 		return nil
 	})
 
 	b.Handle(tele.OnQuery, func(c tele.Context) error {
 		query := c.Query().Text
-		go self.complete(c, query)
+		go s.complete(c, query, false)
 
 		return nil
 	})
 
 	b.Handle(tele.OnDocument, func(c tele.Context) error {
-		go self.onDocument(c)
+		go s.onDocument(c)
 
 		return nil
 	})
 
 	b.Handle(tele.OnPhoto, func(c tele.Context) error {
-
-		log.Println("Got a photo, size %d, caption: %s", c.Message().Photo.FileSize, c.Message().Photo.Caption)
+		log.Printf("Got a photo, size %d, caption: %s\n", c.Message().Photo.FileSize, c.Message().Photo.Caption)
 		return nil
 	})
 
@@ -120,7 +116,7 @@ func (self Server) run() {
 			}
 		}()
 
-		if !self.isAllowed(c.Sender().Username) {
+		if !s.isAllowed(c.Sender().Username) {
 			return c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{
 				ReplyTo: c.Message(),
 			})
@@ -147,8 +143,12 @@ func (self Server) run() {
 			if err != nil {
 				return err
 			}
-			audio := openai.NewFileParamFromBytes(wav)
-			if translated, err := self.ai.CreateTranscription(audio, "whisper-1", nil); err != nil {
+			mp3 := wavToMp3(wav)
+			if mp3 == nil {
+				return fmt.Errorf("failed to convert to mp3")
+			}
+			audio := openai.NewFileParamFromBytes(mp3)
+			if translated, err := s.ai.CreateTranscription(audio, "whisper-1", nil); err != nil {
 				log.Printf("failed to create transcription: %s\n", err)
 			} else {
 				if translated.JSON == nil &&
@@ -159,7 +159,7 @@ func (self Server) run() {
 					return fmt.Errorf("there was no returned data")
 				}
 
-				self.complete(c, *translated.Text)
+				s.complete(c, *translated.Text, false)
 			}
 
 		}
@@ -169,21 +169,21 @@ func (self Server) run() {
 	b.Start()
 }
 
-func (self Server) onDocument(c tele.Context) {
+func (s Server) onDocument(c tele.Context) {
 	// body
-	log.Println("Got a file: %d", c.Message().Document.FileSize)
+	log.Printf("Got a file: %d", c.Message().Document.FileSize)
 	// c.Message().Photo
 }
 
-func (self Server) onText(c tele.Context) {
+func (s Server) onText(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(string(debug.Stack()), err)
 		}
 	}()
 
-	if !self.isAllowed(c.Sender().Username) {
-		c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{
+	if !s.isAllowed(c.Sender().Username) {
+		_ = c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
 		return
@@ -194,19 +194,19 @@ func (self Server) onText(c tele.Context) {
 		message = c.Message().Text
 	}
 
-	self.complete(c, message)
+	s.complete(c, message, true)
 }
 
-func (self Server) complete(c tele.Context, message string) {
-	if message == "reset" {
-		self.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
-		c.Send(msgReset, "text", &tele.SendOptions{
+func (s Server) complete(c tele.Context, message string, reply bool) {
+	if strings.HasPrefix(strings.ToLower(message), "reset") {
+		s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		_ = c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
 		return
 	}
 
-	response, err := self.answer(message, c)
+	response, err := s.answer(message, c)
 	if err != nil {
 		return
 	}
@@ -214,48 +214,54 @@ func (self Server) complete(c tele.Context, message string) {
 
 	if len(response) > 4096 {
 		file := tele.FromReader(strings.NewReader(response))
-		c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
+		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
+		return
+	}
+	if !reply {
+		response = fmt.Sprintf("%s\n%s", message, response)
+
+		_ = c.Send(response)
 		return
 	}
 
-	c.Send(response, "text", &tele.SendOptions{
+	_ = c.Send(response, "text", &tele.SendOptions{
 		ReplyTo: c.Message(),
 	})
 }
 
 // checks if given update is allowed or not
-func (self Server) isAllowed(username string) bool {
-	_, exists := self.users[username]
+func (s Server) isAllowed(username string) bool {
+	_, exists := s.users[username]
 
 	return exists
 }
 
 // generate an answer to given message and send it to the chat
-func (self Server) answer(message string, c tele.Context) (string, error) {
-	c.Notify(tele.Typing)
+func (s Server) answer(message string, c tele.Context) (string, error) {
+	_ = c.Notify(tele.Typing)
 
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage("You are a helpful assistant. You always try to answer truthfully. If you don't know the answer you say you don't know.")
 
 	var chat Chat
-	chat, ok := self.db.chats[c.Chat().ID]
+	chat, ok := s.db.chats[c.Chat().ID]
 	if !ok {
 		chat = Chat{history: []openai.ChatMessage{}}
 	}
 	chat.history = append(chat.history, msg)
 	history := append([]openai.ChatMessage{system}, chat.history...)
 
-	response, err := self.ai.CreateChatCompletion(self.conf.Model, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)))
+	response, err := s.ai.CreateChatCompletion(s.conf.Model, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)))
 
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)
 		return err.Error(), err
 	}
-	if self.conf.Verbose {
+	if s.conf.Verbose {
 		log.Printf("[verbose] %s ===> %+v", message, response.Choices)
 	}
 
-	c.Notify(tele.Typing)
+	_ = c.Notify(tele.Typing)
 
 	var answer string
 	if len(response.Choices) > 0 {
@@ -264,12 +270,12 @@ func (self Server) answer(message string, c tele.Context) (string, error) {
 		answer = "No response from API."
 	}
 
-	if self.conf.Verbose {
+	if s.conf.Verbose {
 		log.Printf("[verbose] sending answer: '%s'", answer)
 	}
 
 	chat.history = append(chat.history, openai.NewChatAssistantMessage(answer))
-	self.db.chats[c.Chat().ID] = chat
+	s.db.chats[c.Chat().ID] = chat
 
 	if len(chat.history) > 8 {
 		chat.history = chat.history[1:]
@@ -346,7 +352,7 @@ type wavWriter struct {
 	w io.Writer
 }
 
-// Write samples to the WAV file
+// WriteSamples Write samples to the WAV file
 func (ww *wavWriter) WriteSamples(samples []float32) error {
 	// Convert float32 samples to int16 samples
 	int16Samples := make([]int16, len(samples))
@@ -377,4 +383,23 @@ type wavHeader struct {
 	BitsPerSample uint16  // bits per sample
 	DataID        [4]byte // data header
 	Subchunk2Size uint32  // size of the data chunk
+}
+
+func wavToMp3(wav []byte) []byte {
+	reader := bytes.NewReader(wav)
+	wavHdr, err := lame.ReadWavHeader(reader)
+	if err != nil {
+		log.Println("not a wav file, err=" + err.Error())
+		return nil
+	}
+	output := new(bytes.Buffer)
+	wr, _ := lame.NewWriter(output)
+	defer wr.Close()
+
+	wr.EncodeOptions = wavHdr.ToEncodeOptions()
+	if _, err := io.Copy(wr, reader); err != nil {
+		return nil
+	}
+
+	return output.Bytes()
 }

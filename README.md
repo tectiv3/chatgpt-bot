@@ -23,6 +23,14 @@ and set your values:
 }
 ```
 
+### Install dependencies
+
+`libmp3lame0` is required for mp3 encoding. (macOS: `brew install lame`)
+
+`libopus0` is required for ogg opus decoding. (macOS: `brew install opusfile`)
+
+On macOS, you might also need `brew install pkg-config`.
+
 ## Build
 
 ```bash
