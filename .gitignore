@@ -1,2 +1,4 @@
 config.json
 chatgpt-bot
+.idea
+.DS_Store

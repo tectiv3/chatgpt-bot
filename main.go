@@ -23,7 +23,7 @@ func main() {
 		for _, user := range conf.AllowedTelegramUsers {
 			allowedUsers[user] = true
 		}
-
+		log.Printf("Allowed users: %d\n", len(allowedUsers))
 		server := &Server{
 			conf:  conf,
 			ai:    openai.NewClient(apiKey, orgID),
