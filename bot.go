@@ -4,17 +4,16 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
-	"github.com/sunicy/go-lame"
-	"github.com/tectiv3/chatgpt-bot/opus"
 	"io"
 	"log"
+	"os/exec"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/sunicy/go-lame"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -38,6 +37,7 @@ type config struct {
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
 	Model                string   `json:"openai_model"`
+	Opusdec              string   `json:"opusdec"`
 }
 
 // DB contains chat history
@@ -138,11 +138,15 @@ func (s Server) run() {
 			//	fmt.Println("Error reading file content:", err)
 			//	return nil
 			//}
+			//ioutil.WriteFile("./test.ogg", body, 0644)
 
-			wav, err := convertToWav(reader)
+			wav, err := s.convertToWav(reader)
 			if err != nil {
 				return err
 			}
+			log.Printf("wav: %d bytes\n", len(wav))
+			// save bytes to file
+			//ioutil.WriteFile("./test.wav", wav, 0644)
 			mp3 := wavToMp3(wav)
 			if mp3 == nil {
 				return fmt.Errorf("failed to convert to mp3")
@@ -198,7 +202,8 @@ func (s Server) onText(c tele.Context) {
 }
 
 func (s Server) complete(c tele.Context, message string, reply bool) {
-	if strings.HasPrefix(strings.ToLower(message), "reset") {
+	if strings.HasPrefix(strings.ToLower(message), "reset") ||
+		strings.HasPrefix(strings.ToLower(message), "ресет") {
 		s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
 		_ = c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
@@ -218,7 +223,7 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 		return
 	}
 	if !reply {
-		response = fmt.Sprintf("%s\n%s", message, response)
+		response = fmt.Sprintf("%s\n\n%s", message, response)
 
 		_ = c.Send(response)
 		return
@@ -289,100 +294,51 @@ func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
 }
 
-func convertToWav(r io.Reader) ([]byte, error) {
+func (s Server) convertToWav(r io.Reader) ([]byte, error) {
 	output := new(bytes.Buffer)
-	wavWriter, err := newWavWriter(output, 48000, 1, 16)
-	if err != nil {
+	// run command with stdin as the reader and stdout as the writer
+	cmd := exec.Command(s.conf.Opusdec, "--force-wav", "-", "-")
+
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-
-	s, err := opus.NewStream(r)
-	if err != nil {
+	// write to stdin
+	if _, err := io.Copy(stdin, r); err != nil {
 		return nil, err
 	}
-	defer s.Close()
+	stdin.Close()
 
-	pcmbuf := make([]float32, 16384)
+	// read from stdout
+	tmp := make([]byte, 1024)
 	for {
-		n, err := s.ReadFloat32(pcmbuf)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			log.Fatal(err)
-		}
-		pcm := pcmbuf[:n*1]
-
-		err = wavWriter.WriteSamples(pcm)
-		if err != nil {
+		n, err := stdout.Read(tmp)
+		if err != nil && err != io.EOF {
 			return nil, err
 		}
-	}
-
-	return output.Bytes(), err
-}
-
-// Helper function to create a new WAV writer
-func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample int) (*wavWriter, error) {
-	var header wavHeader
-
-	// Set header values
-	header.RIFFID = [4]byte{'R', 'I', 'F', 'F'}
-	header.WAVEID = [4]byte{'W', 'A', 'V', 'E'}
-	header.FMTID = [4]byte{'f', 'm', 't', ' '}
-	header.Subchunk1Size = 16
-	header.AudioFormat = 1
-	header.NumChannels = uint16(numChannels)
-	header.SampleRate = uint32(sampleRate)
-	header.BitsPerSample = uint16(bitsPerSample)
-	header.ByteRate = uint32(sampleRate * numChannels * bitsPerSample / 8)
-	header.BlockAlign = uint16(numChannels * bitsPerSample / 8)
-	header.DataID = [4]byte{'d', 'a', 't', 'a'}
-
-	// Write header
-	err := binary.Write(w, binary.LittleEndian, &header)
-	if err != nil {
-		return nil, err
-	}
-
-	return &wavWriter{w: w}, nil
-}
-
-// WAV writer struct
-type wavWriter struct {
-	w io.Writer
-}
-
-// WriteSamples Write samples to the WAV file
-func (ww *wavWriter) WriteSamples(samples []float32) error {
-	// Convert float32 samples to int16 samples
-	int16Samples := make([]int16, len(samples))
-	for i, s := range samples {
-		if s > 1.0 {
-			s = 1.0
-		} else if s < -1.0 {
-			s = -1.0
+		if n == 0 {
+			break
 		}
-		int16Samples[i] = int16(s * 32767)
+		output.Write(tmp[:n])
 	}
-	// Write int16 samples to the WAV file
-	return binary.Write(ww.w, binary.LittleEndian, &int16Samples)
-}
+	// read from stderr
+	tmp = make([]byte, 1024)
+	for {
+		n, err := stderr.Read(tmp)
+		if err != nil && err != io.EOF {
+			log.Println(err)
+			break
+		}
+		if n == 0 {
+			break
+		}
+		log.Println(string(tmp[:n]))
+	}
+	cmd.Wait()
 
-// WAV file header struct
-type wavHeader struct {
-	RIFFID        [4]byte // RIFF header
-	FileSize      uint32  // file size - 8
-	WAVEID        [4]byte // WAVE header
-	FMTID         [4]byte // fmt header
-	Subchunk1Size uint32  // size of the fmt chunk
-	AudioFormat   uint16  // audio format code
-	NumChannels   uint16  // number of channels
-	SampleRate    uint32  // sample rate
-	ByteRate      uint32  // bytes per second
-	BlockAlign    uint16  // block align
-	BitsPerSample uint16  // bits per sample
-	DataID        [4]byte // data header
-	Subchunk2Size uint32  // size of the data chunk
+	return output.Bytes(), nil
 }
 
 func wavToMp3(wav []byte) []byte {
