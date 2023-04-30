@@ -84,7 +84,7 @@ func NewStream(read io.Reader) (*Stream, error) {
 
 // Init initializes a stream with an io.Reader to fetch opus encoded data from
 // on demand. Errors from the reader are all transformed to an EOF, any actual
-// error information is lost. The same happens when a read returns succesfully,
+// error information is lost. The same happens when a read returns successfully,
 // but with zero bytes.
 func (s *Stream) Init(read io.Reader) error {
 	if s.oggfile != nil {
@@ -119,7 +119,7 @@ func (s *Stream) Init(read io.Reader) error {
 // (stereo) feed will have twice as many samples as the value returned.
 //
 // Read may successfully read less bytes than requested, but it will never read
-// exactly zero bytes succesfully if a non-zero buffer is supplied.
+// exactly zero bytes successfully if a non-zero buffer is supplied.
 //
 // The number of channels in the output data must be known in advance. It is
 // possible to extract this information from the stream itself, but I'm not
