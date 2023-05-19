@@ -4,8 +4,12 @@ package main
 
 import (
 	"encoding/json"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"log"
 	"os"
+	"time"
 
 	openai "github.com/meinside/openai-go"
 )
@@ -23,12 +27,40 @@ func main() {
 		for _, user := range conf.AllowedTelegramUsers {
 			allowedUsers[user] = true
 		}
+		newLogger := logger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
+			logger.Config{
+				SlowThreshold:             time.Second, // Slow SQL threshold
+				LogLevel:                  logger.Info, // Log level
+				IgnoreRecordNotFoundError: true,        // Ignore ErrRecordNotFound error for logger
+				ParameterizedQueries:      true,        // Don't include params in the SQL log
+				Colorful:                  false,       // Disable color
+			},
+		)
+
+		db, err := gorm.Open(sqlite.Open("bot.db"), &gorm.Config{Logger: newLogger})
+
+		if err != nil {
+			panic("failed to connect database")
+		}
+
+		// Migrate the schema
+		if err := db.AutoMigrate(&User{}); err != nil {
+			panic("failed to migrate database")
+		}
+		if err := db.AutoMigrate(&Chat{}); err != nil {
+			panic("failed to migrate database")
+		}
+		if err := db.AutoMigrate(&ChatMessage{}); err != nil {
+			panic("failed to migrate database")
+		}
+
 		log.Printf("Allowed users: %d\n", len(allowedUsers))
 		server := &Server{
 			conf:  conf,
 			ai:    openai.NewClient(apiKey, orgID),
 			users: allowedUsers,
-			db:    DB{chats: make(map[int64]Chat)},
+			db:    db,
 		}
 
 		server.run()

@@ -6,23 +6,44 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/sunicy/go-lame"
-	"github.com/tectiv3/chatgpt-bot/opus"
+	"gorm.io/gorm/clause"
 	"io"
 	"log"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/sunicy/go-lame"
+	"github.com/tectiv3/chatgpt-bot/opus"
 	tele "gopkg.in/telebot.v3"
 )
 
 const (
-	cmdStart = "/start"
-	cmdReset = "/reset"
-	msgStart = "This bot will answer your messages with ChatGPT API"
-	msgReset = "This bots memory erased"
+	cmdStart     = "/start"
+	cmdReset     = "/reset"
+	cmdModel     = "/model"
+	cmdTemp      = "/temperature"
+	cmdPrompt    = "/prompt"
+	cmdPromptCL  = "/defaultprompt"
+	cmdStream    = "/stream"
+	cmdInfo      = "/info"
+	msgStart     = "This bot will answer your messages with ChatGPT API"
+	msgReset     = "This bots memory erased"
+	masterPrompt = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer."
+)
+
+var (
+	menu   = &tele.ReplyMarkup{ResizeKeyboard: true}
+	btn3   = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
+	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4"}
+	btnT0  = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
+	btnT2  = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
+	btnT4  = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
+	btnT6  = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
+	btnT8  = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
+	btnT10 = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
 )
 
 // config struct for loading a configuration file
@@ -38,24 +59,6 @@ type config struct {
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
 	Model                string   `json:"openai_model"`
-}
-
-// DB contains chat history
-type DB struct {
-	chats map[int64]Chat
-}
-
-type Server struct {
-	conf  config
-	users map[string]bool
-	ai    *openai.Client
-	bot   *tele.Bot
-	db    DB
-}
-
-// Chat is chat history by chatid
-type Chat struct {
-	history []openai.ChatMessage
 }
 
 // launch bot with given parameters
@@ -78,8 +81,93 @@ func (s Server) run() {
 		})
 	})
 
+	b.Handle(cmdModel, func(c tele.Context) error {
+		menu.Inline(menu.Row(btn3, btn4))
+
+		return c.Send("Select model", menu)
+	})
+
+	b.Handle(cmdTemp, func(c tele.Context) error {
+		menu.Inline(menu.Row(btnT0, btnT2, btnT4, btnT6, btnT8, btnT10))
+		chat := s.getChat(c.Chat().ID)
+
+		return c.Send(fmt.Sprintf("Set temperature from less random (0.0) to more random (1.0.\nCurrent: %0.2f (default: 0.8)", chat.Temperature), menu)
+	})
+
+	b.Handle(cmdPrompt, func(c tele.Context) error {
+		query := c.Message().Payload
+		if len(query) < 3 {
+			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+			//return c.Send("Please provide a longer query", "text", &tele.SendOptions{
+			//	ReplyTo:     c.Message(),
+			//	ReplyMarkup: &tele.ReplyMarkup{ForceReply: true},
+			//})
+		}
+
+		chat := s.getChat(c.Chat().ID)
+		chat.MasterPrompt = query
+		s.db.Save(&chat)
+
+		return nil
+	})
+
+	b.Handle(cmdPromptCL, func(c tele.Context) error {
+		chat := s.getChat(c.Chat().ID)
+		chat.MasterPrompt = masterPrompt
+		s.db.Save(&chat)
+
+		return c.Send("Default prompt set", "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
+	b.Handle(cmdStream, func(c tele.Context) error {
+		chat := s.getChat(c.Chat().ID)
+		chat.Stream = !chat.Stream
+		s.db.Save(&chat)
+		status := "disabled"
+		if chat.Stream {
+			status = "enabled"
+		}
+
+		return c.Send("Stream is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
+	b.Handle(cmdInfo, func(c tele.Context) error {
+		chat := s.getChat(c.Chat().ID)
+
+		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s",
+			chat.ModelName, chat.Temperature, chat.MasterPrompt,
+		),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
+	})
+
+	// On inline button pressed (callback)
+	b.Handle(&btn3, func(c tele.Context) error {
+		log.Printf("%s selected", c.Data())
+		chat := s.getChat(c.Chat().ID)
+		chat.ModelName = c.Data()
+		s.db.Save(&chat)
+
+		return c.Edit("Model set to " + c.Data())
+	})
+
+	// On inline button pressed (callback)
+	b.Handle(&btnT0, func(c tele.Context) error {
+		log.Printf("Temp: %s\n", c.Data())
+		chat := s.getChat(c.Chat().ID)
+		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
+		s.db.Save(&chat)
+
+		return c.Edit("Temperature set to " + c.Data())
+	})
+
 	b.Handle(cmdReset, func(c tele.Context) error {
-		s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		//s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		s.deleteHistory(c.Chat().ID)
+
 		return c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
@@ -148,18 +236,19 @@ func (s Server) run() {
 				return fmt.Errorf("failed to convert to mp3")
 			}
 			audio := openai.NewFileParamFromBytes(mp3)
-			if translated, err := s.ai.CreateTranscription(audio, "whisper-1", nil); err != nil {
+			if transcript, err := s.ai.CreateTranscription(audio, "whisper-1", nil); err != nil {
 				log.Printf("failed to create transcription: %s\n", err)
+				return c.Send("Failed to create transcription")
 			} else {
-				if translated.JSON == nil &&
-					translated.Text == nil &&
-					translated.SRT == nil &&
-					translated.VerboseJSON == nil &&
-					translated.VTT == nil {
+				if transcript.JSON == nil &&
+					transcript.Text == nil &&
+					transcript.SRT == nil &&
+					transcript.VerboseJSON == nil &&
+					transcript.VTT == nil {
 					return fmt.Errorf("there was no returned data")
 				}
 
-				s.complete(c, *translated.Text, false)
+				s.complete(c, *transcript.Text, false)
 			}
 
 		}
@@ -197,9 +286,14 @@ func (s Server) onText(c tele.Context) {
 	s.complete(c, message, true)
 }
 
+func (s Server) deleteHistory(chatID int64) {
+	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
+}
+
 func (s Server) complete(c tele.Context, message string, reply bool) {
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
-		s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		//s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
+		s.deleteHistory(c.Chat().ID)
 		_ = c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
@@ -212,20 +306,30 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	}
 	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
 
+	if len(response) == 0 {
+		return
+	}
+
 	if len(response) > 4096 {
 		file := tele.FromReader(strings.NewReader(response))
 		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
 		return
 	}
 	if !reply {
-		response = fmt.Sprintf("%s\n%s", message, response)
+		response = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n%s", message, response)
 
-		_ = c.Send(response)
+		if err := c.Send(response, "text", &tele.SendOptions{
+			ReplyTo:   c.Message(),
+			ParseMode: tele.ModeMarkdown,
+		}); err != nil {
+			_ = c.Send(response)
+		}
 		return
 	}
 
 	_ = c.Send(response, "text", &tele.SendOptions{
-		ReplyTo: c.Message(),
+		ReplyTo:   c.Message(),
+		ParseMode: tele.ModeMarkdown,
 	})
 }
 
@@ -236,22 +340,63 @@ func (s Server) isAllowed(username string) bool {
 	return exists
 }
 
+// getChat returns chat from db or creates a new one
+func (s Server) getChat(chatID int64) Chat {
+	var chat Chat
+	s.db.Preload(clause.Associations).FirstOrCreate(&chat, Chat{ChatID: chatID})
+	if len(chat.MasterPrompt) == 0 {
+		chat.MasterPrompt = masterPrompt
+		chat.ModelName = "gpt-3.5-turbo"
+		chat.Temperature = 0.8
+		s.db.Save(&chat)
+	}
+
+	return chat
+}
+
 // generate an answer to given message and send it to the chat
 func (s Server) answer(message string, c tele.Context) (string, error) {
 	_ = c.Notify(tele.Typing)
-
+	chat := s.getChat(c.Chat().ID)
 	msg := openai.NewChatUserMessage(message)
-	system := openai.NewChatSystemMessage("You are a helpful assistant. You always try to answer truthfully. If you don't know the answer you say you don't know.")
+	system := openai.NewChatSystemMessage(chat.MasterPrompt)
+	log.Println(chat.MasterPrompt)
 
-	var chat Chat
-	chat, ok := s.db.chats[c.Chat().ID]
-	if !ok {
-		chat = Chat{history: []openai.ChatMessage{}}
+	chat.History = append(chat.History, ChatMessage{ChatMessage: msg, ChatID: chat.ChatID})
+	history := []openai.ChatMessage{system}
+	for _, h := range chat.History {
+		history = append(history, h.ChatMessage)
 	}
-	chat.history = append(chat.history, msg)
-	history := append([]openai.ChatMessage{system}, chat.history...)
 
-	response, err := s.ai.CreateChatCompletion(s.conf.Model, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)))
+	if chat.Stream {
+		data := make(chan openai.ChatCompletion)
+		done := make(chan error)
+		defer close(data)
+		defer close(done)
+		callback := func(r openai.ChatCompletion, d bool, e error) {
+			if d {
+				done <- e
+			} else {
+				data <- r
+			}
+		}
+		_, err := s.ai.CreateChatCompletion(chat.ModelName, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature), callback)
+		if err != nil {
+			return err.Error(), err
+		}
+		result := ""
+		for {
+			select {
+			case payload := <-data:
+				fmt.Print(payload.Choices[0].Delta.Content)
+				result += payload.Choices[0].Delta.Content
+			case err := <-done:
+				s.saveHistory(chat, result)
+				return "", err
+			}
+		}
+	}
+	response, err := s.ai.CreateChatCompletion(chat.ModelName, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature), nil)
 
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)
@@ -266,6 +411,7 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	var answer string
 	if len(response.Choices) > 0 {
 		answer = response.Choices[0].Message.Content
+		s.saveHistory(chat, answer)
 	} else {
 		answer = "No response from API."
 	}
@@ -274,14 +420,20 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 		log.Printf("[verbose] sending answer: '%s'", answer)
 	}
 
-	chat.history = append(chat.history, openai.NewChatAssistantMessage(answer))
-	s.db.chats[c.Chat().ID] = chat
-
-	if len(chat.history) > 8 {
-		chat.history = chat.history[1:]
-	}
-
 	return answer, nil
+}
+
+func (s Server) saveHistory(chat Chat, answer string) {
+	chat.History = append(chat.History, ChatMessage{ChatMessage: openai.NewChatAssistantMessage(answer), ChatID: chat.ChatID})
+
+	//s.db.Model(&chat).Update("history", chatHistory)
+	log.Printf("chat history len: %d", len(chat.History))
+
+	if len(chat.History) > 8 {
+		s.deleteHistory(chat.ChatID)
+		chat.History = chat.History[1:]
+	}
+	s.db.Save(&chat)
 }
 
 // generate a user-agent value

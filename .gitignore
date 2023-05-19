@@ -3,3 +3,4 @@ chatgpt-bot
 .idea
 .DS_Store
 lib
+bot.db
