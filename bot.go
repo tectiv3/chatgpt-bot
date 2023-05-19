@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"gorm.io/gorm/clause"
 	"io"
 	"log"
 	"runtime/debug"
@@ -292,8 +291,6 @@ func (s Server) onText(c tele.Context) {
 
 func (s Server) deleteHistory(chatID int64) {
 	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
-	chat := s.getChat(chatID)
-	chat.History = []ChatMessage{}
 }
 
 func (s Server) complete(c tele.Context, message string, reply bool) {
@@ -358,13 +355,15 @@ func (s Server) isAllowed(username string) bool {
 // getChat returns chat from db or creates a new one
 func (s Server) getChat(chatID int64) Chat {
 	var chat Chat
-	s.db.Preload(clause.Associations).FirstOrCreate(&chat, Chat{ChatID: chatID})
+	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = "gpt-3.5-turbo"
 		chat.Temperature = 0.8
 		s.db.Save(&chat)
 	}
+	s.db.Find(&chat.History, "chat_id = ?", chatID)
+	log.Printf("History %d\n", len(chat.History))
 
 	return chat
 }
