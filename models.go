@@ -37,6 +37,7 @@ type Chat struct {
 	ModelName    string
 	MasterPrompt string
 	Stream       bool
+	SentMessage  *tele.Message `gorm:"-"`
 }
 
 type ChatMessage struct {

@@ -3,11 +3,11 @@ module github.com/tectiv3/chatgpt-bot
 go 1.20
 
 require (
-	github.com/meinside/openai-go v0.0.5
+	github.com/meinside/openai-go v0.0.6
 	github.com/sunicy/go-lame v0.0.0-20200422031049-1c192eaafa39
 	gopkg.in/telebot.v3 v3.1.3
 	gorm.io/driver/sqlite v1.5.0
-	gorm.io/gorm v1.25.0
+	gorm.io/gorm v1.25.1
 )
 
 require (

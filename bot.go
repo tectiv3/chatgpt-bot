@@ -135,9 +135,13 @@ func (s Server) run() {
 
 	b.Handle(cmdInfo, func(c tele.Context) error {
 		chat := s.getChat(c.Chat().ID)
+		status := "disabled"
+		if chat.Stream {
+			status = "enabled"
+		}
 
-		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s",
-			chat.ModelName, chat.Temperature, chat.MasterPrompt,
+		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s",
+			chat.ModelName, chat.Temperature, chat.MasterPrompt, status,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
@@ -288,6 +292,8 @@ func (s Server) onText(c tele.Context) {
 
 func (s Server) deleteHistory(chatID int64) {
 	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
+	chat := s.getChat(chatID)
+	chat.History = []ChatMessage{}
 }
 
 func (s Server) complete(c tele.Context, message string, reply bool) {
@@ -298,6 +304,16 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 			ReplyTo: c.Message(),
 		})
 		return
+	}
+
+	chat := s.getChat(c.Chat().ID)
+	text := "..."
+	if !reply {
+		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n...", message)
+		chat.SentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
+			ReplyTo:   c.Message(),
+			ParseMode: tele.ModeMarkdown,
+		})
 	}
 
 	response, err := s.answer(message, c)
@@ -316,13 +332,12 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 		return
 	}
 	if !reply {
-		response = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n%s", message, response)
-
-		if err := c.Send(response, "text", &tele.SendOptions{
+		text = text[:len(text)-3] + response
+		if _, err := c.Bot().Edit(chat.SentMessage, text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
 		}); err != nil {
-			_ = c.Send(response)
+			c.Bot().Edit(chat.SentMessage, text)
 		}
 		return
 	}
@@ -373,30 +388,47 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 		done := make(chan error)
 		defer close(data)
 		defer close(done)
-		callback := func(r openai.ChatCompletion, d bool, e error) {
-			if d {
-				done <- e
-			} else {
-				data <- r
-			}
-		}
-		_, err := s.ai.CreateChatCompletion(chat.ModelName, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature), callback)
+		_, err := s.ai.CreateChatCompletion(chat.ModelName, history,
+			openai.ChatCompletionOptions{}.
+				SetUser(userAgent(c.Sender().ID)).
+				SetTemperature(chat.Temperature).
+				SetStream(func(r openai.ChatCompletion, d bool, e error) {
+					if d {
+						done <- e
+					} else {
+						data <- r
+					}
+				}))
 		if err != nil {
 			return err.Error(), err
 		}
+		if chat.SentMessage == nil {
+			chat.SentMessage, _ = c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
 		result := ""
+		tokens := 0
 		for {
 			select {
 			case payload := <-data:
-				fmt.Print(payload.Choices[0].Delta.Content)
 				result += payload.Choices[0].Delta.Content
+				tokens++
+				// every 10 tokens update the message
+				if tokens%10 == 0 {
+					c.Bot().Edit(chat.SentMessage, result)
+				}
 			case err := <-done:
+				c.Bot().Edit(chat.SentMessage, result, "text", &tele.SendOptions{
+					ReplyTo:   c.Message(),
+					ParseMode: tele.ModeMarkdown,
+				})
 				s.saveHistory(chat, result)
 				return "", err
 			}
 		}
 	}
-	response, err := s.ai.CreateChatCompletion(chat.ModelName, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature), nil)
+	response, err := s.ai.CreateChatCompletion(chat.ModelName, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature))
 
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)
