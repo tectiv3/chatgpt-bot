@@ -12,6 +12,10 @@ type DB struct {
 	chats map[int64]Chat
 }
 
+type BillingData struct {
+	TotalUsage float64 `json:"total_usage"`
+}
+
 type Server struct {
 	conf  config
 	users map[string]bool

@@ -5,9 +5,11 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -74,6 +76,12 @@ func (s Server) run() {
 	}
 	s.bot = b
 
+	usage, err := s.getUsageMonth()
+	if err != nil {
+		log.Println(err)
+	}
+	log.Printf("Current usage: %0.2f", usage)
+
 	b.Handle(cmdStart, func(c tele.Context) error {
 		return c.Send(msgStart, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
@@ -139,8 +147,14 @@ func (s Server) run() {
 			status = "enabled"
 		}
 
-		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s",
-			chat.ModelName, chat.Temperature, chat.MasterPrompt, status,
+		usage, err := s.getUsageMonth()
+		if err != nil {
+			log.Println(err)
+		}
+		log.Printf("Current usage: %0.2f", usage)
+
+		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nUsage: $%0.2f",
+			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, usage,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
@@ -168,8 +182,8 @@ func (s Server) run() {
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
-		//s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
-		s.deleteHistory(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID)
+		s.deleteHistory(chat.ID)
 
 		return c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
@@ -289,21 +303,16 @@ func (s Server) onText(c tele.Context) {
 	s.complete(c, message, true)
 }
 
-func (s Server) deleteHistory(chatID int64) {
-	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
-}
-
 func (s Server) complete(c tele.Context, message string, reply bool) {
+	chat := s.getChat(c.Chat().ID)
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
-		//s.db.chats[c.Chat().ID] = Chat{history: []openai.ChatMessage{}}
-		s.deleteHistory(c.Chat().ID)
+		s.deleteHistory(chat.ID)
 		_ = c.Send(msgReset, "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
 		return
 	}
 
-	chat := s.getChat(c.Chat().ID)
 	text := "..."
 	if !reply {
 		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n...", message)
@@ -345,42 +354,19 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	})
 }
 
-// checks if given update is allowed or not
-func (s Server) isAllowed(username string) bool {
-	_, exists := s.users[username]
-
-	return exists
-}
-
-// getChat returns chat from db or creates a new one
-func (s Server) getChat(chatID int64) Chat {
-	var chat Chat
-	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
-	if len(chat.MasterPrompt) == 0 {
-		chat.MasterPrompt = masterPrompt
-		chat.ModelName = "gpt-3.5-turbo"
-		chat.Temperature = 0.8
-		s.db.Save(&chat)
-	}
-	s.db.Find(&chat.History, "chat_id = ?", chatID)
-	log.Printf("History %d\n", len(chat.History))
-
-	return chat
-}
-
 // generate an answer to given message and send it to the chat
 func (s Server) answer(message string, c tele.Context) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat().ID)
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
-	log.Println(chat.MasterPrompt)
 
 	chat.History = append(chat.History, ChatMessage{ChatMessage: msg, ChatID: chat.ChatID})
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
 		history = append(history, h.ChatMessage)
 	}
+	log.Printf("Chat history %d\n", len(history))
 
 	if chat.Stream {
 		data := make(chan openai.ChatCompletion)
@@ -454,17 +440,108 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	return answer, nil
 }
 
+// checks if given update is allowed or not
+func (s Server) isAllowed(username string) bool {
+	_, exists := s.users[username]
+
+	return exists
+}
+
+// getChat returns chat from db or creates a new one
+func (s Server) getChat(chatID int64) Chat {
+	var chat Chat
+	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
+	if len(chat.MasterPrompt) == 0 {
+		chat.MasterPrompt = masterPrompt
+		chat.ModelName = "gpt-3.5-turbo"
+		chat.Temperature = 0.8
+		s.db.Save(&chat)
+	}
+	s.db.Find(&chat.History, "chat_id = ?", chat.ID)
+	log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
+
+	return chat
+}
+
+func (s Server) deleteHistory(chatID uint) {
+	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
+}
+
 func (s Server) saveHistory(chat Chat, answer string) {
 	chat.History = append(chat.History, ChatMessage{ChatMessage: openai.NewChatAssistantMessage(answer), ChatID: chat.ChatID})
-
-	//s.db.Model(&chat).Update("history", chatHistory)
 	log.Printf("chat history len: %d", len(chat.History))
 
 	if len(chat.History) > 8 {
-		s.deleteHistory(chat.ChatID)
-		chat.History = chat.History[1:]
+		log.Printf("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
+		summary, err := s.summarize(chat.History)
+		if err != nil {
+			log.Println("Failed to summarise chat history: ", err)
+			return
+		}
+
+		if s.conf.Verbose {
+			log.Println("Summary: ", summary)
+		}
+		maxID := chat.History[len(chat.History)-1].ID
+		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
+		chat.History = []ChatMessage{{ChatMessage: openai.NewChatUserMessage(summary), ChatID: chat.ChatID}}
 	}
 	s.db.Save(&chat)
+}
+
+func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
+	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible.")
+	system := openai.NewChatSystemMessage("Be as brief as possible")
+
+	history := []openai.ChatMessage{system}
+	for _, h := range chatHistory {
+		history = append(history, h.ChatMessage)
+	}
+	history = append(history, msg)
+
+	log.Printf("Chat history %d\n", len(history))
+
+	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+
+	if err != nil {
+		log.Printf("failed to create chat completion: %s", err)
+		return "", err
+	}
+	return response.Choices[0].Message.Content, nil
+}
+
+// get billing usage
+func (s Server) getUsageMonth() (float64, error) {
+	now := time.Now()
+	firstDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	lastDay := firstDay.AddDate(0, 1, -1)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", "https://api.openai.com/dashboard/billing/usage", nil)
+	if err != nil {
+		return 0, err
+	}
+
+	query := req.URL.Query()
+	query.Add("start_date", firstDay.Format("2006-01-02"))
+	query.Add("end_date", lastDay.Format("2006-01-02"))
+	req.URL.RawQuery = query.Encode()
+
+	req.Header.Add("Authorization", "Bearer "+s.conf.OpenAIAPIKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var billingData BillingData
+	err = json.NewDecoder(resp.Body).Decode(&billingData)
+	if err != nil {
+		return 0, err
+	}
+
+	return billingData.TotalUsage / 100, nil
 }
 
 // generate a user-agent value
