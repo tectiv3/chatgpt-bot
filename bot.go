@@ -39,6 +39,7 @@ var (
 	menu   = &tele.ReplyMarkup{ResizeKeyboard: true}
 	btn3   = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
 	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4"}
+	btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
 	btnT0  = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2  = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4  = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -89,7 +90,7 @@ func (s Server) run() {
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
-		menu.Inline(menu.Row(btn3, btn4))
+		menu.Inline(menu.Row(btn3, btn4, btn316))
 
 		return c.Send("Select model", menu)
 	})
@@ -163,6 +164,16 @@ func (s Server) run() {
 
 	// On inline button pressed (callback)
 	b.Handle(&btn3, func(c tele.Context) error {
+		log.Printf("%s selected", c.Data())
+		chat := s.getChat(c.Chat().ID)
+		chat.ModelName = c.Data()
+		s.db.Save(&chat)
+
+		return c.Edit("Model set to " + c.Data())
+	})
+
+	// On inline button pressed (callback)
+	b.Handle(&btn316, func(c tele.Context) error {
 		log.Printf("%s selected", c.Data())
 		chat := s.getChat(c.Chat().ID)
 		chat.ModelName = c.Data()
