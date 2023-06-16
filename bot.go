@@ -48,21 +48,6 @@ var (
 	btnT10 = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
 )
 
-// config struct for loading a configuration file
-type config struct {
-	// telegram bot api
-	TelegramBotToken string `json:"telegram_bot_token"`
-
-	// openai api
-	OpenAIAPIKey         string `json:"openai_api_key"`
-	OpenAIOrganizationID string `json:"openai_org_id"`
-
-	// other configurations
-	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
-	Verbose              bool     `json:"verbose,omitempty"`
-	Model                string   `json:"openai_model"`
-}
-
 // launch bot with given parameters
 func (s Server) run() {
 	pref := tele.Settings{
@@ -372,12 +357,14 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
 
-	chat.History = append(chat.History, ChatMessage{ChatMessage: msg, ChatID: chat.ChatID})
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: *msg.Content, ChatID: chat.ChatID})
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
-		history = append(history, h.ChatMessage)
+		log.Println(h.Content)
+		history = append(history, openai.ChatMessage{Role: h.Role, Content: &h.Content})
 	}
 	log.Printf("Chat history %d\n", len(history))
+	log.Printf("Chat history %s\n", *history[0].Content)
 
 	if chat.Stream {
 		data := make(chan openai.ChatCompletion)
@@ -408,7 +395,7 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 		for {
 			select {
 			case payload := <-data:
-				result += payload.Choices[0].Delta.Content
+				result += *payload.Choices[0].Delta.Content
 				tokens++
 				// every 10 tokens update the message
 				if tokens%10 == 0 {
@@ -424,7 +411,38 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 			}
 		}
 	}
-	response, err := s.ai.CreateChatCompletion(chat.ModelName, history, openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature))
+	options := openai.ChatCompletionOptions{}
+	if chat.ModelName == "gpt-3.5-turbo-16k" {
+		options.
+			SetFunctions([]openai.ChatCompletionFunction{
+				openai.NewChatCompletionFunction(
+					"set_reminder",
+					"Set a reminder to do something at a specific time.",
+					map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"reminder": map[string]any{
+								"type":        "string",
+								"description": "A reminder of what to do, e.g. 'buy groceries'.",
+							},
+							"time": map[string]any{
+								"type":        "number",
+								"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
+							},
+						},
+						"required": []string{
+							"reminder",
+							"time",
+						},
+					},
+				),
+			}).
+			SetFunctionCall(openai.ChatCompletionFunctionCallAuto)
+	}
+	response, err := s.ai.CreateChatCompletion(chat.ModelName, history,
+		options.
+			SetUser(userAgent(c.Sender().ID)).
+			SetTemperature(chat.Temperature))
 
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)
@@ -434,11 +452,58 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 		log.Printf("[verbose] %s ===> %+v", message, response.Choices)
 	}
 
+	result := response.Choices[0].Message
+	if result.FunctionCall != nil {
+		functionName := result.FunctionCall.Name
+		if functionName == "" {
+			err := fmt.Sprint("there was no returned function call name")
+			log.Println(err)
+
+			return "", fmt.Errorf(err)
+		}
+		if result.FunctionCall.Arguments == nil {
+			err := fmt.Sprint("there were no returned function call arguments")
+			log.Println(err)
+
+			return "", fmt.Errorf(err)
+		}
+		arguments, _ := result.FunctionCall.ArgumentsParsed()
+
+		if functionName == "set_reminder" {
+			var reminder string
+			var minutes int64
+			if l, exists := arguments["reminder"]; exists {
+				reminder = l.(string)
+			} else {
+				err := fmt.Sprint("there was no returned parameter 'reminder' from function call")
+				log.Println(err)
+
+				return "", fmt.Errorf(err)
+			}
+			if u, exists := arguments["time"]; exists {
+				minutes = int64(u.(float64))
+			} else {
+				err := fmt.Sprint("there was no returned parameter 'time' from function call")
+				log.Println(err)
+
+				return "", fmt.Errorf(err)
+			}
+			log.Printf("Will call %s(\"%s\", %d)", functionName, reminder, minutes)
+
+			if err := s.setReminder(c.Chat().ID, reminder, minutes); err != nil {
+				return "", err
+			}
+			return "set", nil
+		} else {
+			log.Printf("Got a function call %s(%v)", functionName, arguments)
+		}
+	}
+
 	_ = c.Notify(tele.Typing)
 
 	var answer string
-	if len(response.Choices) > 0 {
-		answer = response.Choices[0].Message.Content
+	if len(response.Choices) > 0 && response.Choices[0].Message.Content != nil {
+		answer = *response.Choices[0].Message.Content
 		s.saveHistory(chat, answer)
 	} else {
 		answer = "No response from API."
@@ -479,7 +544,8 @@ func (s Server) deleteHistory(chatID uint) {
 }
 
 func (s Server) saveHistory(chat Chat, answer string) {
-	chat.History = append(chat.History, ChatMessage{ChatMessage: openai.NewChatAssistantMessage(answer), ChatID: chat.ChatID})
+	msg := openai.NewChatAssistantMessage(answer)
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: *msg.Content, ChatID: chat.ChatID})
 	log.Printf("chat history len: %d", len(chat.History))
 
 	if len(chat.History) > 8 {
@@ -495,7 +561,8 @@ func (s Server) saveHistory(chat Chat, answer string) {
 		}
 		maxID := chat.History[len(chat.History)-1].ID
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
-		chat.History = []ChatMessage{{ChatMessage: openai.NewChatUserMessage(summary), ChatID: chat.ChatID}}
+		msg = openai.NewChatUserMessage(summary)
+		chat.History = []ChatMessage{{Role: msg.Role, Content: *msg.Content, ChatID: chat.ChatID}}
 	}
 	s.db.Save(&chat)
 }
@@ -506,7 +573,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 
 	history := []openai.ChatMessage{system}
 	for _, h := range chatHistory {
-		history = append(history, h.ChatMessage)
+		history = append(history, openai.ChatMessage{Role: h.Role, Content: &h.Content})
 	}
 	history = append(history, msg)
 
@@ -518,7 +585,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 		log.Printf("failed to create chat completion: %s", err)
 		return "", err
 	}
-	return response.Choices[0].Message.Content, nil
+	return *response.Choices[0].Message.Content, nil
 }
 
 // get billing usage
@@ -618,11 +685,6 @@ func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample in
 	return &wavWriter{w: w}, nil
 }
 
-// WAV writer struct
-type wavWriter struct {
-	w io.Writer
-}
-
 // WriteSamples Write samples to the WAV file
 func (ww *wavWriter) WriteSamples(samples []float32) error {
 	// Convert float32 samples to int16 samples
@@ -637,23 +699,6 @@ func (ww *wavWriter) WriteSamples(samples []float32) error {
 	}
 	// Write int16 samples to the WAV file
 	return binary.Write(ww.w, binary.LittleEndian, &int16Samples)
-}
-
-// WAV file header struct
-type wavHeader struct {
-	RIFFID        [4]byte // RIFF header
-	FileSize      uint32  // file size - 8
-	WAVEID        [4]byte // WAVE header
-	FMTID         [4]byte // fmt header
-	Subchunk1Size uint32  // size of the fmt chunk
-	AudioFormat   uint16  // audio format code
-	NumChannels   uint16  // number of channels
-	SampleRate    uint32  // sample rate
-	ByteRate      uint32  // bytes per second
-	BlockAlign    uint16  // block align
-	BitsPerSample uint16  // bits per sample
-	DataID        [4]byte // data header
-	Subchunk2Size uint32  // size of the data chunk
 }
 
 func wavToMp3(wav []byte) []byte {
@@ -673,4 +718,18 @@ func wavToMp3(wav []byte) []byte {
 	}
 
 	return output.Bytes()
+}
+
+func (s Server) setReminder(chatID int64, reminder string, minutes int64) error {
+	timer := time.NewTimer(time.Minute * time.Duration(minutes))
+	go func() {
+		<-timer.C
+		fmt.Println("Timer fired")
+
+		if _, err := s.bot.Send(tele.ChatID(chatID), reminder); err != nil {
+			log.Println(err)
+		}
+	}()
+
+	return nil
 }
