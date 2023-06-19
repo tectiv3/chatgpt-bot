@@ -22,17 +22,19 @@ import (
 )
 
 const (
-	cmdStart     = "/start"
-	cmdReset     = "/reset"
-	cmdModel     = "/model"
-	cmdTemp      = "/temperature"
-	cmdPrompt    = "/prompt"
-	cmdPromptCL  = "/defaultprompt"
-	cmdStream    = "/stream"
-	cmdInfo      = "/info"
-	msgStart     = "This bot will answer your messages with ChatGPT API"
-	msgReset     = "This bots memory erased"
-	masterPrompt = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer."
+	cmdStart      = "/start"
+	cmdReset      = "/reset"
+	cmdModel      = "/model"
+	cmdTemp       = "/temperature"
+	cmdPrompt     = "/prompt"
+	cmdPromptCL   = "/defaultprompt"
+	cmdStream     = "/stream"
+	cmdInfo       = "/info"
+	cmdToJapanese = "/jp"
+	cmdToEnglish  = "/en"
+	msgStart      = "This bot will answer your messages with ChatGPT API"
+	msgReset      = "This bots memory erased"
+	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer."
 )
 
 var (
@@ -145,6 +147,46 @@ func (s Server) run() {
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
 		)
+	})
+
+	b.Handle(cmdToJapanese, func(c tele.Context) error {
+		query := c.Message().Payload
+		if len(query) < 3 {
+			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		response, err := s.answer("To Japanese: "+query, c)
+		if err != nil {
+			log.Println(err)
+			return c.Send(err.Error(), "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		return c.Send(response, "text", &tele.SendOptions{
+			ReplyTo:   c.Message(),
+			ParseMode: tele.ModeMarkdown,
+		})
+	})
+
+	b.Handle(cmdToEnglish, func(c tele.Context) error {
+		query := c.Message().Payload
+		if len(query) < 1 {
+			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		response, err := s.answer("To English: "+query, c)
+		if err != nil {
+			log.Println(err)
+			return c.Send(err.Error(), "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		return c.Send(response, "text", &tele.SendOptions{
+			ReplyTo:   c.Message(),
+			ParseMode: tele.ModeMarkdown,
+		})
 	})
 
 	// On inline button pressed (callback)
@@ -357,59 +399,15 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
 
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: *msg.Content, ChatID: chat.ChatID})
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
-		log.Println(h.Content)
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: &h.Content})
+		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
 	}
 	log.Printf("Chat history %d\n", len(history))
-	log.Printf("Chat history %s\n", *history[0].Content)
 
 	if chat.Stream {
-		data := make(chan openai.ChatCompletion)
-		done := make(chan error)
-		defer close(data)
-		defer close(done)
-		_, err := s.ai.CreateChatCompletion(chat.ModelName, history,
-			openai.ChatCompletionOptions{}.
-				SetUser(userAgent(c.Sender().ID)).
-				SetTemperature(chat.Temperature).
-				SetStream(func(r openai.ChatCompletion, d bool, e error) {
-					if d {
-						done <- e
-					} else {
-						data <- r
-					}
-				}))
-		if err != nil {
-			return err.Error(), err
-		}
-		if chat.SentMessage == nil {
-			chat.SentMessage, _ = c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-		result := ""
-		tokens := 0
-		for {
-			select {
-			case payload := <-data:
-				result += *payload.Choices[0].Delta.Content
-				tokens++
-				// every 10 tokens update the message
-				if tokens%10 == 0 {
-					c.Bot().Edit(chat.SentMessage, result)
-				}
-			case err := <-done:
-				c.Bot().Edit(chat.SentMessage, result, "text", &tele.SendOptions{
-					ReplyTo:   c.Message(),
-					ParseMode: tele.ModeMarkdown,
-				})
-				s.saveHistory(chat, result)
-				return "", err
-			}
-		}
+		return s.launchStream(chat, c, history)
 	}
 	options := openai.ChatCompletionOptions{}
 	if chat.ModelName == "gpt-3.5-turbo-16k" {
@@ -430,10 +428,21 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 								"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
 							},
 						},
-						"required": []string{
-							"reminder",
-							"time",
+						"required": []string{"reminder", "time"},
+					},
+				),
+				openai.NewChatCompletionFunction(
+					"make_summary",
+					"Make a summary of a web page.",
+					map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"url": map[string]any{
+								"type":        "string",
+								"description": "A valid URL to a web page.",
+							},
 						},
+						"required": []string{"url"},
 					},
 				),
 			}).
@@ -454,56 +463,14 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 
 	result := response.Choices[0].Message
 	if result.FunctionCall != nil {
-		functionName := result.FunctionCall.Name
-		if functionName == "" {
-			err := fmt.Sprint("there was no returned function call name")
-			log.Println(err)
-
-			return "", fmt.Errorf(err)
-		}
-		if result.FunctionCall.Arguments == nil {
-			err := fmt.Sprint("there were no returned function call arguments")
-			log.Println(err)
-
-			return "", fmt.Errorf(err)
-		}
-		arguments, _ := result.FunctionCall.ArgumentsParsed()
-
-		if functionName == "set_reminder" {
-			var reminder string
-			var minutes int64
-			if l, exists := arguments["reminder"]; exists {
-				reminder = l.(string)
-			} else {
-				err := fmt.Sprint("there was no returned parameter 'reminder' from function call")
-				log.Println(err)
-
-				return "", fmt.Errorf(err)
-			}
-			if u, exists := arguments["time"]; exists {
-				minutes = int64(u.(float64))
-			} else {
-				err := fmt.Sprint("there was no returned parameter 'time' from function call")
-				log.Println(err)
-
-				return "", fmt.Errorf(err)
-			}
-			log.Printf("Will call %s(\"%s\", %d)", functionName, reminder, minutes)
-
-			if err := s.setReminder(c.Chat().ID, reminder, minutes); err != nil {
-				return "", err
-			}
-			return "set", nil
-		} else {
-			log.Printf("Got a function call %s(%v)", functionName, arguments)
-		}
+		return s.handleFunctionCall(c, result)
 	}
 
 	_ = c.Notify(tele.Typing)
 
 	var answer string
-	if len(response.Choices) > 0 && response.Choices[0].Message.Content != nil {
-		answer = *response.Choices[0].Message.Content
+	if len(response.Choices) > 0 {
+		answer = response.Choices[0].Message.Content
 		s.saveHistory(chat, answer)
 	} else {
 		answer = "No response from API."
@@ -545,7 +512,7 @@ func (s Server) deleteHistory(chatID uint) {
 
 func (s Server) saveHistory(chat Chat, answer string) {
 	msg := openai.NewChatAssistantMessage(answer)
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: *msg.Content, ChatID: chat.ChatID})
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
 	log.Printf("chat history len: %d", len(chat.History))
 
 	if len(chat.History) > 8 {
@@ -562,7 +529,7 @@ func (s Server) saveHistory(chat Chat, answer string) {
 		maxID := chat.History[len(chat.History)-1].ID
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 		msg = openai.NewChatUserMessage(summary)
-		chat.History = []ChatMessage{{Role: msg.Role, Content: *msg.Content, ChatID: chat.ChatID}}
+		chat.History = []ChatMessage{{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID}}
 	}
 	s.db.Save(&chat)
 }
@@ -573,7 +540,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 
 	history := []openai.ChatMessage{system}
 	for _, h := range chatHistory {
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: &h.Content})
+		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
 	}
 	history = append(history, msg)
 
@@ -585,7 +552,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 		log.Printf("failed to create chat completion: %s", err)
 		return "", err
 	}
-	return *response.Choices[0].Message.Content, nil
+	return response.Choices[0].Message.Content, nil
 }
 
 // get billing usage
