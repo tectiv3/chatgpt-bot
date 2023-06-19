@@ -87,7 +87,7 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 
 	var answer string
 	if len(response.Choices) > 0 {
-		answer = response.Choices[0].Message.Content
+		answer = *response.Choices[0].Message.Content
 		s.saveHistory(chat, answer)
 	} else {
 		answer = "No response from API."
@@ -118,7 +118,11 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 		log.Printf("failed to create chat completion: %s", err)
 		return "", err
 	}
-	return response.Choices[0].Message.Content, nil
+	if response.Choices[0].Message.Content == nil {
+		return "Empty response", nil
+	}
+
+	return *response.Choices[0].Message.Content, nil
 }
 
 // get billing usage
@@ -226,7 +230,9 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	for {
 		select {
 		case payload := <-data:
-			result += payload.Choices[0].Delta.Content
+			if payload.Choices[0].Delta.Content != nil {
+				result += *payload.Choices[0].Delta.Content
+			}
 			tokens++
 			// every 10 tokens update the message
 			if tokens%10 == 0 {

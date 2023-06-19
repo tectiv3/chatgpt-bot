@@ -66,7 +66,7 @@ type ChatMessage struct {
 	UpdatedAt time.Time
 	ChatID    int64
 	Role      openai.ChatMessageRole `json:"role"`
-	Content   string                 `json:"content,omitempty"`
+	Content   *string `json:"content,omitempty"`
 }
 
 // WAV writer struct
