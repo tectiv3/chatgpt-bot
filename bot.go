@@ -3,21 +3,13 @@ package main
 // bot.go
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/meinside/openai-go"
-	"github.com/sunicy/go-lame"
-	"github.com/tectiv3/chatgpt-bot/opus"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -266,48 +258,8 @@ func (s Server) run() {
 		}
 
 		log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
-		if c.Message().Voice.FileSize > 0 {
-			audioFile := c.Message().Voice.File
-			log.Println("Audio file: ", audioFile.FilePath, audioFile.FileSize, audioFile.FileID, audioFile.FileURL)
 
-			reader, err := b.File(&audioFile)
-			if err != nil {
-				return err
-			}
-			defer reader.Close()
-
-			//body, err := ioutil.ReadAll(reader)
-			//if err != nil {
-			//	fmt.Println("Error reading file content:", err)
-			//	return nil
-			//}
-
-			wav, err := convertToWav(reader)
-			if err != nil {
-				return err
-			}
-			mp3 := wavToMp3(wav)
-			if mp3 == nil {
-				return fmt.Errorf("failed to convert to mp3")
-			}
-			audio := openai.NewFileParamFromBytes(mp3)
-			if transcript, err := s.ai.CreateTranscription(audio, "whisper-1", nil); err != nil {
-				log.Printf("failed to create transcription: %s\n", err)
-				return c.Send("Failed to create transcription")
-			} else {
-				if transcript.JSON == nil &&
-					transcript.Text == nil &&
-					transcript.SRT == nil &&
-					transcript.VerboseJSON == nil &&
-					transcript.VTT == nil {
-					return fmt.Errorf("there was no returned data")
-				}
-
-				s.complete(c, *transcript.Text, false)
-			}
-
-		}
-		return nil
+		return s.handleVoice(c)
 	})
 
 	b.Start()
@@ -392,97 +344,6 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	})
 }
 
-// generate an answer to given message and send it to the chat
-func (s Server) answer(message string, c tele.Context) (string, error) {
-	_ = c.Notify(tele.Typing)
-	chat := s.getChat(c.Chat().ID)
-	msg := openai.NewChatUserMessage(message)
-	system := openai.NewChatSystemMessage(chat.MasterPrompt)
-
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
-	history := []openai.ChatMessage{system}
-	for _, h := range chat.History {
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
-	}
-	log.Printf("Chat history %d\n", len(history))
-
-	if chat.Stream {
-		return s.launchStream(chat, c, history)
-	}
-	options := openai.ChatCompletionOptions{}
-	if chat.ModelName == "gpt-3.5-turbo-16k" {
-		options.
-			SetFunctions([]openai.ChatCompletionFunction{
-				openai.NewChatCompletionFunction(
-					"set_reminder",
-					"Set a reminder to do something at a specific time.",
-					map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"reminder": map[string]any{
-								"type":        "string",
-								"description": "A reminder of what to do, e.g. 'buy groceries'.",
-							},
-							"time": map[string]any{
-								"type":        "number",
-								"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
-							},
-						},
-						"required": []string{"reminder", "time"},
-					},
-				),
-				openai.NewChatCompletionFunction(
-					"make_summary",
-					"Make a summary of a web page.",
-					map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"url": map[string]any{
-								"type":        "string",
-								"description": "A valid URL to a web page.",
-							},
-						},
-						"required": []string{"url"},
-					},
-				),
-			}).
-			SetFunctionCall(openai.ChatCompletionFunctionCallAuto)
-	}
-	response, err := s.ai.CreateChatCompletion(chat.ModelName, history,
-		options.
-			SetUser(userAgent(c.Sender().ID)).
-			SetTemperature(chat.Temperature))
-
-	if err != nil {
-		log.Printf("failed to create chat completion: %s", err)
-		return err.Error(), err
-	}
-	if s.conf.Verbose {
-		log.Printf("[verbose] %s ===> %+v", message, response.Choices)
-	}
-
-	result := response.Choices[0].Message
-	if result.FunctionCall != nil {
-		return s.handleFunctionCall(c, result)
-	}
-
-	_ = c.Notify(tele.Typing)
-
-	var answer string
-	if len(response.Choices) > 0 {
-		answer = response.Choices[0].Message.Content
-		s.saveHistory(chat, answer)
-	} else {
-		answer = "No response from API."
-	}
-
-	if s.conf.Verbose {
-		log.Printf("[verbose] sending answer: '%s'", answer)
-	}
-
-	return answer, nil
-}
-
 // checks if given update is allowed or not
 func (s Server) isAllowed(username string) bool {
 	_, exists := s.users[username]
@@ -510,193 +371,7 @@ func (s Server) deleteHistory(chatID uint) {
 	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
 }
 
-func (s Server) saveHistory(chat Chat, answer string) {
-	msg := openai.NewChatAssistantMessage(answer)
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
-	log.Printf("chat history len: %d", len(chat.History))
-
-	if len(chat.History) > 8 {
-		log.Printf("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
-		summary, err := s.summarize(chat.History)
-		if err != nil {
-			log.Println("Failed to summarise chat history: ", err)
-			return
-		}
-
-		if s.conf.Verbose {
-			log.Println("Summary: ", summary)
-		}
-		maxID := chat.History[len(chat.History)-1].ID
-		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
-		msg = openai.NewChatUserMessage(summary)
-		chat.History = []ChatMessage{{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID}}
-	}
-	s.db.Save(&chat)
-}
-
-func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
-	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible.")
-	system := openai.NewChatSystemMessage("Be as brief as possible")
-
-	history := []openai.ChatMessage{system}
-	for _, h := range chatHistory {
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
-	}
-	history = append(history, msg)
-
-	log.Printf("Chat history %d\n", len(history))
-
-	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
-
-	if err != nil {
-		log.Printf("failed to create chat completion: %s", err)
-		return "", err
-	}
-	return response.Choices[0].Message.Content, nil
-}
-
-// get billing usage
-func (s Server) getUsageMonth() (float64, error) {
-	now := time.Now()
-	firstDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	lastDay := firstDay.AddDate(0, 1, -1)
-
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", "https://api.openai.com/dashboard/billing/usage", nil)
-	if err != nil {
-		return 0, err
-	}
-
-	query := req.URL.Query()
-	query.Add("start_date", firstDay.Format("2006-01-02"))
-	query.Add("end_date", lastDay.Format("2006-01-02"))
-	req.URL.RawQuery = query.Encode()
-
-	req.Header.Add("Authorization", "Bearer "+s.conf.OpenAIAPIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	var billingData BillingData
-	err = json.NewDecoder(resp.Body).Decode(&billingData)
-	if err != nil {
-		return 0, err
-	}
-
-	return billingData.TotalUsage / 100, nil
-}
-
 // generate a user-agent value
 func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
-}
-
-func convertToWav(r io.Reader) ([]byte, error) {
-	output := new(bytes.Buffer)
-	wavWriter, err := newWavWriter(output, 48000, 1, 16)
-	if err != nil {
-		return nil, err
-	}
-
-	s, err := opus.NewStream(r)
-	if err != nil {
-		return nil, err
-	}
-	defer s.Close()
-
-	pcmbuf := make([]float32, 16384)
-	for {
-		n, err := s.ReadFloat32(pcmbuf)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			log.Fatal(err)
-		}
-		pcm := pcmbuf[:n*1]
-
-		err = wavWriter.WriteSamples(pcm)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return output.Bytes(), err
-}
-
-// Helper function to create a new WAV writer
-func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample int) (*wavWriter, error) {
-	var header wavHeader
-
-	// Set header values
-	header.RIFFID = [4]byte{'R', 'I', 'F', 'F'}
-	header.WAVEID = [4]byte{'W', 'A', 'V', 'E'}
-	header.FMTID = [4]byte{'f', 'm', 't', ' '}
-	header.Subchunk1Size = 16
-	header.AudioFormat = 1
-	header.NumChannels = uint16(numChannels)
-	header.SampleRate = uint32(sampleRate)
-	header.BitsPerSample = uint16(bitsPerSample)
-	header.ByteRate = uint32(sampleRate * numChannels * bitsPerSample / 8)
-	header.BlockAlign = uint16(numChannels * bitsPerSample / 8)
-	header.DataID = [4]byte{'d', 'a', 't', 'a'}
-
-	// Write header
-	err := binary.Write(w, binary.LittleEndian, &header)
-	if err != nil {
-		return nil, err
-	}
-
-	return &wavWriter{w: w}, nil
-}
-
-// WriteSamples Write samples to the WAV file
-func (ww *wavWriter) WriteSamples(samples []float32) error {
-	// Convert float32 samples to int16 samples
-	int16Samples := make([]int16, len(samples))
-	for i, s := range samples {
-		if s > 1.0 {
-			s = 1.0
-		} else if s < -1.0 {
-			s = -1.0
-		}
-		int16Samples[i] = int16(s * 32767)
-	}
-	// Write int16 samples to the WAV file
-	return binary.Write(ww.w, binary.LittleEndian, &int16Samples)
-}
-
-func wavToMp3(wav []byte) []byte {
-	reader := bytes.NewReader(wav)
-	wavHdr, err := lame.ReadWavHeader(reader)
-	if err != nil {
-		log.Println("not a wav file, err=" + err.Error())
-		return nil
-	}
-	output := new(bytes.Buffer)
-	wr, _ := lame.NewWriter(output)
-	defer wr.Close()
-
-	wr.EncodeOptions = wavHdr.ToEncodeOptions()
-	if _, err := io.Copy(wr, reader); err != nil {
-		return nil
-	}
-
-	return output.Bytes()
-}
-
-func (s Server) setReminder(chatID int64, reminder string, minutes int64) error {
-	timer := time.NewTimer(time.Minute * time.Duration(minutes))
-	go func() {
-		<-timer.C
-		fmt.Println("Timer fired")
-
-		if _, err := s.bot.Send(tele.ChatID(chatID), reminder); err != nil {
-			log.Println(err)
-		}
-	}()
-
-	return nil
 }
