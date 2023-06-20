@@ -54,6 +54,9 @@ func (s Server) run() {
 		log.Fatal(err)
 		return
 	}
+	//b.Use(middleware.Logger())
+	b.Use(whitelist(s.conf.AllowedTelegramUsers...))
+
 	s.bot = b
 
 	usage, err := s.getUsageMonth()
@@ -63,9 +66,7 @@ func (s Server) run() {
 	log.Printf("Current usage: %0.2f", usage)
 
 	b.Handle(cmdStart, func(c tele.Context) error {
-		return c.Send(msgStart, "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
+		return c.Send(msgStart, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
@@ -251,12 +252,6 @@ func (s Server) run() {
 			}
 		}()
 
-		if !s.isAllowed(c.Sender().Username) {
-			return c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-
 		log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
 
 		return s.handleVoice(c)
@@ -277,13 +272,6 @@ func (s Server) onText(c tele.Context) {
 			log.Println(string(debug.Stack()), err)
 		}
 	}()
-
-	if !s.isAllowed(c.Sender().Username) {
-		_ = c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
-		return
-	}
 
 	message := c.Message().Payload
 	if len(message) == 0 {
@@ -344,13 +332,6 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	})
 }
 
-// checks if given update is allowed or not
-func (s Server) isAllowed(username string) bool {
-	_, exists := s.users[username]
-
-	return exists
-}
-
 // getChat returns chat from db or creates a new one
 func (s Server) getChat(chatID int64) Chat {
 	var chat Chat
@@ -374,4 +355,41 @@ func (s Server) deleteHistory(chatID uint) {
 // generate a user-agent value
 func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
+}
+
+// Restrict returns a middleware that handles a list of provided
+// usernames with the logic defined by In and Out functions.
+// If the username is found in the Usernames field, In function will be called,
+// otherwise Out function will be called.
+func Restrict(v RestrictConfig) tele.MiddlewareFunc {
+	return func(next tele.HandlerFunc) tele.HandlerFunc {
+		if v.In == nil {
+			v.In = next
+		}
+		if v.Out == nil {
+			v.Out = next
+		}
+		return func(c tele.Context) error {
+			for _, username := range v.Usernames {
+				if username == c.Sender().Username {
+					return v.In(c)
+				}
+			}
+			return v.Out(c)
+		}
+	}
+}
+
+// Whitelist returns a middleware that skips the update for users
+// NOT specified in the usernames field.
+func whitelist(usernames ...string) tele.MiddlewareFunc {
+	return func(next tele.HandlerFunc) tele.HandlerFunc {
+		return Restrict(RestrictConfig{
+			Usernames: usernames,
+			In:        next,
+			Out: func(c tele.Context) error {
+				return c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			},
+		})(next)
+	}
 }

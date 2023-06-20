@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	openai "github.com/meinside/openai-go"
+	"github.com/meinside/openai-go"
 )
 
 func main() {

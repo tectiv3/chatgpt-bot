@@ -23,11 +23,6 @@ type config struct {
 	Model                string   `json:"openai_model"`
 }
 
-// DB contains chat history
-type DB struct {
-	chats map[int64]Chat
-}
-
 type BillingData struct {
 	TotalUsage float64 `json:"total_usage"`
 }
@@ -66,7 +61,7 @@ type ChatMessage struct {
 	UpdatedAt time.Time
 	ChatID    int64
 	Role      openai.ChatMessageRole `json:"role"`
-	Content   *string `json:"content,omitempty"`
+	Content   *string                `json:"content,omitempty"`
 }
 
 // WAV writer struct
@@ -89,4 +84,19 @@ type wavHeader struct {
 	BitsPerSample uint16  // bits per sample
 	DataID        [4]byte // data header
 	Subchunk2Size uint32  // size of the data chunk
+}
+
+// RestrictConfig defines config for Restrict middleware.
+type RestrictConfig struct {
+	// Chats is a list of chats that are going to be affected
+	// by either In or Out function.
+	Usernames []string
+
+	// In defines a function that will be called if the chat
+	// of an update will be found in the Chats list.
+	In tele.HandlerFunc
+
+	// Out defines a function that will be called if the chat
+	// of an update will NOT be found in the Chats list.
+	Out tele.HandlerFunc
 }
