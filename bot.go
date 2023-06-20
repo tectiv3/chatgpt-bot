@@ -56,7 +56,6 @@ func (s Server) run() {
 	}
 	//b.Use(middleware.Logger())
 	b.Use(whitelist(s.conf.AllowedTelegramUsers...))
-
 	s.bot = b
 
 	usage, err := s.getUsageMonth()
@@ -143,46 +142,17 @@ func (s Server) run() {
 	})
 
 	b.Handle(cmdToJapanese, func(c tele.Context) error {
-		query := c.Message().Payload
-		if len(query) < 3 {
-			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-		response, err := s.answer("To Japanese: "+query, c)
-		if err != nil {
-			log.Println(err)
-			return c.Send(err.Error(), "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-		return c.Send(response, "text", &tele.SendOptions{
-			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdown,
-		})
+		go s.onTranslate(c, "To Japanese: ")
+
+		return nil
 	})
 
 	b.Handle(cmdToEnglish, func(c tele.Context) error {
-		query := c.Message().Payload
-		if len(query) < 1 {
-			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-		response, err := s.answer("To English: "+query, c)
-		if err != nil {
-			log.Println(err)
-			return c.Send(err.Error(), "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-		return c.Send(response, "text", &tele.SendOptions{
-			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdown,
-		})
+		go s.onTranslate(c, "To English: ")
+
+		return nil
 	})
 
-	// On inline button pressed (callback)
 	b.Handle(&btn3, func(c tele.Context) error {
 		log.Printf("%s selected", c.Data())
 		chat := s.getChat(c.Chat().ID)
@@ -216,9 +186,7 @@ func (s Server) run() {
 		chat := s.getChat(c.Chat().ID)
 		s.deleteHistory(chat.ID)
 
-		return c.Send(msgReset, "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
+		return c.Send(msgReset, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
@@ -242,19 +210,14 @@ func (s Server) run() {
 
 	b.Handle(tele.OnPhoto, func(c tele.Context) error {
 		log.Printf("Got a photo, size %d, caption: %s\n", c.Message().Photo.FileSize, c.Message().Photo.Caption)
+
 		return nil
 	})
 
 	b.Handle(tele.OnVoice, func(c tele.Context) error {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Println(string(debug.Stack()), err)
-			}
-		}()
+		go s.onVoice(c)
 
-		log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
-
-		return s.handleVoice(c)
+		return nil
 	})
 
 	b.Start()
@@ -279,6 +242,48 @@ func (s Server) onText(c tele.Context) {
 	}
 
 	s.complete(c, message, true)
+}
+
+func (s Server) onVoice(c tele.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(string(debug.Stack()), err)
+		}
+	}()
+
+	log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
+
+	s.handleVoice(c)
+}
+
+func (s Server) onTranslate(c tele.Context, prefix string) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(string(debug.Stack()), err)
+		}
+	}()
+
+	query := c.Message().Payload
+	if len(query) < 1 {
+		_ = c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
+			ReplyTo: c.Message(),
+		})
+
+		return
+	}
+
+	response, err := s.answer(prefix+query, c)
+	if err != nil {
+		log.Println(err)
+		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+
+		return
+	}
+
+	_ = c.Send(response, "text", &tele.SendOptions{
+		ReplyTo:   c.Message(),
+		ParseMode: tele.ModeMarkdown,
+	})
 }
 
 func (s Server) complete(c tele.Context, message string, reply bool) {

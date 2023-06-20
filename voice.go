@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"github.com/meinside/openai-go"
 	"github.com/sunicy/go-lame"
 	"github.com/tectiv3/chatgpt-bot/opus"
@@ -105,16 +104,17 @@ func wavToMp3(wav []byte) []byte {
 	return output.Bytes()
 }
 
-func (s Server) handleVoice(c tele.Context) error {
+func (s Server) handleVoice(c tele.Context) {
 	if c.Message().Voice.FileSize == 0 {
-		return nil
+		return
 	}
 	audioFile := c.Message().Voice.File
 	log.Println("Audio file: ", audioFile.FilePath, audioFile.FileSize, audioFile.FileID, audioFile.FileURL)
 
 	reader, err := c.Bot().File(&audioFile)
 	if err != nil {
-		return err
+		log.Println("Error getting file content:", err)
+		return
 	}
 	defer reader.Close()
 
@@ -126,27 +126,31 @@ func (s Server) handleVoice(c tele.Context) error {
 
 	wav, err := convertToWav(reader)
 	if err != nil {
-		return err
+		log.Println("failed to convert to wav: ", err)
+		return
 	}
 	mp3 := wavToMp3(wav)
 	if mp3 == nil {
-		return fmt.Errorf("failed to convert to mp3")
+		log.Println("failed to convert to mp3")
+		return
 	}
 	audio := openai.NewFileParamFromBytes(mp3)
 	transcript, err := s.ai.CreateTranscription(audio, "whisper-1", nil)
 	if err != nil {
 		log.Printf("failed to create transcription: %s\n", err)
-		return c.Send("Failed to create transcription")
+		return
 	}
 	if transcript.JSON == nil &&
 		transcript.Text == nil &&
 		transcript.SRT == nil &&
 		transcript.VerboseJSON == nil &&
 		transcript.VTT == nil {
-		return fmt.Errorf("there was no returned data")
+		log.Println("There was no returned data")
+
+		return
 	}
 
 	s.complete(c, *transcript.Text, false)
 
-	return nil
+	return
 }
