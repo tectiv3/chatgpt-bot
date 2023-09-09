@@ -37,9 +37,10 @@ type Server struct {
 
 type User struct {
 	gorm.Model
-	TelegramID int64
-	ApiKey     string
-	OrgID      string
+	TelegramID *int64 `gorm:"nullable:true"`
+	Username   string
+	ApiKey     *string `gorm:"nullable:true"`
+	OrgID      *string `gorm:"nullable:true"`
 	Threads    []Chat
 }
 
@@ -99,4 +100,14 @@ type RestrictConfig struct {
 	// Out defines a function that will be called if the chat
 	// of an update will NOT be found in the Chats list.
 	Out tele.HandlerFunc
+}
+
+func in_array(needle string, haystack []string) bool {
+	for _, v := range haystack {
+		if needle == v {
+			return true
+		}
+	}
+
+	return false
 }

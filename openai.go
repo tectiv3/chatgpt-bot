@@ -12,7 +12,7 @@ import (
 // generate an answer to given message and send it to the chat
 func (s Server) answer(message string, c tele.Context) (string, error) {
 	_ = c.Notify(tele.Typing)
-	chat := s.getChat(c.Chat().ID)
+	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
 
@@ -101,7 +101,7 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 }
 
 func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
-	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible.")
+	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Try not to lose the context and use same language as the user.")
 	system := openai.NewChatSystemMessage("Be as brief as possible")
 
 	history := []openai.ChatMessage{system}
@@ -112,7 +112,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 
 	log.Printf("Chat history %d\n", len(history))
 
-	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)

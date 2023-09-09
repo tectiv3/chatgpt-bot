@@ -102,6 +102,7 @@ func (s Server) getPageSummary(chatID int64, url string) {
 	log.Printf("Page content	: %d\n", len(article.TextContent))
 
 	msg := openai.NewChatUserMessage(article.TextContent)
+	// You are acting as a summarization AI, and for the input text please summarize it to the most important 3 to 5 bullet points for brevity:
 	system := openai.NewChatSystemMessage("Make a summary of the article. Try to be as brief as possible and highlight key points. Use markdown to annotate the summary.")
 
 	history := []openai.ChatMessage{system, msg}

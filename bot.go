@@ -21,9 +21,14 @@ const (
 	cmdPrompt     = "/prompt"
 	cmdPromptCL   = "/defaultprompt"
 	cmdStream     = "/stream"
+	cmdStop       = "/stop"
 	cmdInfo       = "/info"
-	cmdToJapanese = "/jp"
+	cmdToJapanese = "/ja"
 	cmdToEnglish  = "/en"
+	cmdToRussian  = "/ru"
+	cmdUsers      = "/users"
+	cmdAddUser    = "/add"
+	cmdDelUser    = "/del"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	msgReset      = "This bots memory erased"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer."
@@ -55,7 +60,7 @@ func (s Server) run() {
 		return
 	}
 	//b.Use(middleware.Logger())
-	b.Use(whitelist(s.conf.AllowedTelegramUsers...))
+	b.Use(s.whitelist())
 	s.bot = b
 
 	usage, err := s.getUsageMonth()
@@ -76,7 +81,7 @@ func (s Server) run() {
 
 	b.Handle(cmdTemp, func(c tele.Context) error {
 		menu.Inline(menu.Row(btnT0, btnT2, btnT4, btnT6, btnT8, btnT10))
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 
 		return c.Send(fmt.Sprintf("Set temperature from less random (0.0) to more random (1.0.\nCurrent: %0.2f (default: 0.8)", chat.Temperature), menu)
 	})
@@ -93,7 +98,7 @@ func (s Server) run() {
 			//})
 		}
 
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.MasterPrompt = query
 		s.db.Save(&chat)
 
@@ -101,7 +106,7 @@ func (s Server) run() {
 	})
 
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.MasterPrompt = masterPrompt
 		s.db.Save(&chat)
 
@@ -109,7 +114,7 @@ func (s Server) run() {
 	})
 
 	b.Handle(cmdStream, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.Stream = !chat.Stream
 		s.db.Save(&chat)
 		status := "disabled"
@@ -120,8 +125,13 @@ func (s Server) run() {
 		return c.Send("Stream is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
+	b.Handle(cmdStop, func(c tele.Context) error {
+
+		return nil
+	})
+
 	b.Handle(cmdInfo, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		status := "disabled"
 		if chat.Stream {
 			status = "enabled"
@@ -153,9 +163,15 @@ func (s Server) run() {
 		return nil
 	})
 
+	b.Handle(cmdToRussian, func(c tele.Context) error {
+		go s.onTranslate(c, "To Russian: ")
+
+		return nil
+	})
+
 	b.Handle(&btn3, func(c tele.Context) error {
 		log.Printf("%s selected", c.Data())
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.ModelName = c.Data()
 		s.db.Save(&chat)
 
@@ -165,7 +181,7 @@ func (s Server) run() {
 	// On inline button pressed (callback)
 	b.Handle(&btn316, func(c tele.Context) error {
 		log.Printf("%s selected", c.Data())
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.ModelName = c.Data()
 		s.db.Save(&chat)
 
@@ -175,7 +191,7 @@ func (s Server) run() {
 	// On inline button pressed (callback)
 	b.Handle(&btnT0, func(c tele.Context) error {
 		log.Printf("Temp: %s\n", c.Data())
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
 		s.db.Save(&chat)
 
@@ -183,10 +199,10 @@ func (s Server) run() {
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID)
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		s.deleteHistory(chat.ID)
 
-		return c.Send(msgReset, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return nil //c.Send(msgReset, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
@@ -218,6 +234,43 @@ func (s Server) run() {
 		go s.onVoice(c)
 
 		return nil
+	})
+
+	b.Handle(cmdUsers, func(c tele.Context) error {
+		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
+			return nil
+		}
+		return s.onGetUsers(c)
+	})
+
+	b.Handle(cmdAddUser, func(c tele.Context) error {
+		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
+			return nil
+		}
+		name := c.Message().Payload
+		if len(name) < 3 {
+			return c.Send("Username is too short", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		s.addUser(name)
+
+		return s.onGetUsers(c)
+	})
+
+	b.Handle(cmdDelUser, func(c tele.Context) error {
+		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
+			return nil
+		}
+		name := c.Message().Payload
+		if len(name) < 3 {
+			return c.Send("Username is too short", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		s.delUser(name)
+
+		return s.onGetUsers(c)
 	})
 
 	b.Start()
@@ -286,8 +339,26 @@ func (s Server) onTranslate(c tele.Context, prefix string) {
 	})
 }
 
+func (s Server) onGetUsers(c tele.Context) error {
+	users := s.getUsers()
+	text := "Users:\n"
+	for _, user := range users {
+		threads := user.Threads
+		var historyLen int64
+		var updatedAt time.Time
+		if len(threads) > 0 {
+			s.db.Model(&ChatMessage{}).Where("chat_id = ?", threads[0].ID).Count(&historyLen)
+			updatedAt = threads[0].UpdatedAt
+		}
+
+		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*\n", user.Username, historyLen, updatedAt.Format("2006-01-02 15:04"))
+	}
+
+	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
+}
+
 func (s Server) complete(c tele.Context, message string, reply bool) {
-	chat := s.getChat(c.Chat().ID)
+	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
 		s.deleteHistory(chat.ID)
 		_ = c.Send(msgReset, "text", &tele.SendOptions{
@@ -338,19 +409,49 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 }
 
 // getChat returns chat from db or creates a new one
-func (s Server) getChat(chatID int64) Chat {
+func (s Server) getChat(chatID int64, username string) Chat {
 	var chat Chat
-	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
+	user := s.getUser(username)
+	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID, UserID: user.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = "gpt-3.5-turbo"
 		chat.Temperature = 0.8
 		s.db.Save(&chat)
 	}
+	if chat.UserID == 0 {
+		chat.UserID = user.ID
+		s.db.Save(&chat)
+	}
+
 	s.db.Find(&chat.History, "chat_id = ?", chat.ID)
 	log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
 
 	return chat
+}
+
+// getUsers returns all users from db
+func (s Server) getUsers() []User {
+	var users []User
+	s.db.Model(&User{}).Preload("Threads").Find(&users)
+
+	return users
+}
+
+// getUser returns user from db
+func (s Server) getUser(username string) User {
+	var user User
+	s.db.First(&user, User{Username: username})
+
+	return user
+}
+
+func (s Server) addUser(username string) {
+	s.db.Create(&User{Username: username})
+}
+
+func (s Server) delUser(userNane string) {
+	s.db.Where("username = ?", userNane).Delete(&User{})
 }
 
 func (s Server) deleteHistory(chatID uint) {
@@ -387,7 +488,11 @@ func Restrict(v RestrictConfig) tele.MiddlewareFunc {
 
 // Whitelist returns a middleware that skips the update for users
 // NOT specified in the usernames field.
-func whitelist(usernames ...string) tele.MiddlewareFunc {
+func (s Server) whitelist() tele.MiddlewareFunc {
+	//usernames := s.conf.AllowedTelegramUsers
+	var usernames []string
+	s.db.Model(&User{}).Pluck("username", &usernames)
+
 	return func(next tele.HandlerFunc) tele.HandlerFunc {
 		return Restrict(RestrictConfig{
 			Usernames: usernames,
