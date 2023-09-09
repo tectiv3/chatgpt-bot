@@ -54,6 +54,7 @@ type Chat struct {
 	MasterPrompt string
 	Stream       bool
 	SentMessage  *tele.Message `gorm:"-"`
+	TotalTokens  int           `json:"total_tokens"`
 }
 
 type ChatMessage struct {

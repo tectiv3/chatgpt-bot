@@ -78,16 +78,17 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 		log.Printf("[verbose] %s ===> %+v", message, response.Choices)
 	}
 
+	_ = c.Notify(tele.Typing)
+
 	result := response.Choices[0].Message
 	if result.FunctionCall != nil {
 		return s.handleFunctionCall(c, result)
 	}
 
-	_ = c.Notify(tele.Typing)
-
 	var answer string
 	if len(response.Choices) > 0 {
 		answer = *response.Choices[0].Message.Content
+		chat.TotalTokens += response.Usage.TotalTokens
 		s.saveHistory(chat, answer)
 	} else {
 		answer = "No response from API."
@@ -100,8 +101,8 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	return answer, nil
 }
 
-func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
-	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Try not to lose the context and use same language as the user.")
+func (s Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
+	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.")
 	system := openai.NewChatSystemMessage("Be as brief as possible")
 
 	history := []openai.ChatMessage{system}
@@ -112,17 +113,17 @@ func (s Server) summarize(chatHistory []ChatMessage) (string, error) {
 
 	log.Printf("Chat history %d\n", len(history))
 
-	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
 
 	if err != nil {
 		log.Printf("failed to create chat completion: %s", err)
-		return "", err
+		return nil, err
 	}
 	if response.Choices[0].Message.Content == nil {
-		return "Empty response", nil
+		return nil, nil
 	}
 
-	return *response.Choices[0].Message.Content, nil
+	return &response, nil
 }
 
 // get billing usage
@@ -256,7 +257,10 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			})
+			log.Println("Stream total tokens: ", tokens)
+			chat.TotalTokens += tokens
 			s.saveHistory(chat, result)
+
 			return "", err
 		}
 	}
@@ -269,19 +273,23 @@ func (s Server) saveHistory(chat Chat, answer string) {
 
 	if len(chat.History) > 8 {
 		log.Printf("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
-		summary, err := s.summarize(chat.History)
+		response, err := s.summarize(chat.History)
 		if err != nil {
 			log.Println("Failed to summarise chat history: ", err)
 			return
 		}
+		summary := *response.Choices[0].Message.Content
 
 		if s.conf.Verbose {
 			log.Println("Summary: ", summary)
 		}
-		maxID := chat.History[len(chat.History)-1].ID
+		maxID := chat.History[len(chat.History)-3].ID
+		log.Printf("Deleting chat history for chat ID %d up to message ID %d\n", chat.ID, maxID)
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 		msg = openai.NewChatUserMessage(summary)
 		chat.History = []ChatMessage{{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID}}
+		log.Println("Chat history after summarising: ", len(chat.History))
+		chat.TotalTokens = response.Usage.TotalTokens
 	}
 	s.db.Save(&chat)
 }

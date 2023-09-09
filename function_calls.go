@@ -113,9 +113,11 @@ func (s Server) getPageSummary(chatID int64, url string) {
 		log.Printf("failed to create chat completion: %s", err)
 		return
 	}
-
+	chat := s.getChat(chatID, "")
+	chat.TotalTokens += response.Usage.TotalTokens
+	s.db.Save(&chat)
 	if _, err := s.bot.Send(tele.ChatID(chatID),
-		response.Choices[0].Message.Content,
+		*response.Choices[0].Message.Content,
 		"text",
 		&tele.SendOptions{
 			ParseMode: tele.ModeMarkdown,

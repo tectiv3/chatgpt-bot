@@ -346,12 +346,14 @@ func (s Server) onGetUsers(c tele.Context) error {
 		threads := user.Threads
 		var historyLen int64
 		var updatedAt time.Time
+		var totalTokens int
 		if len(threads) > 0 {
 			s.db.Model(&ChatMessage{}).Where("chat_id = ?", threads[0].ID).Count(&historyLen)
 			updatedAt = threads[0].UpdatedAt
+			totalTokens = threads[0].TotalTokens
 		}
 
-		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*\n", user.Username, historyLen, updatedAt.Format("2006-01-02 15:04"))
+		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*, usage: *%d*\n", user.Username, historyLen, updatedAt.Format("2006/01/02 15:04"), totalTokens)
 	}
 
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
@@ -411,15 +413,17 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 // getChat returns chat from db or creates a new one
 func (s Server) getChat(chatID int64, username string) Chat {
 	var chat Chat
-	user := s.getUser(username)
-	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID, UserID: user.ID})
+
+	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = "gpt-3.5-turbo"
 		chat.Temperature = 0.8
 		s.db.Save(&chat)
 	}
-	if chat.UserID == 0 {
+
+	if len(username) > 0 && chat.UserID == 0 {
+		user := s.getUser(username)
 		chat.UserID = user.ID
 		s.db.Save(&chat)
 	}
@@ -489,9 +493,14 @@ func Restrict(v RestrictConfig) tele.MiddlewareFunc {
 // Whitelist returns a middleware that skips the update for users
 // NOT specified in the usernames field.
 func (s Server) whitelist() tele.MiddlewareFunc {
-	//usernames := s.conf.AllowedTelegramUsers
+	admins := s.conf.AllowedTelegramUsers
 	var usernames []string
 	s.db.Model(&User{}).Pluck("username", &usernames)
+	for _, username := range admins {
+		if !in_array(username, usernames) {
+			usernames = append(usernames, username)
+		}
+	}
 
 	return func(next tele.HandlerFunc) tele.HandlerFunc {
 		return Restrict(RestrictConfig{
