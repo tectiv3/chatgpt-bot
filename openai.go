@@ -289,7 +289,7 @@ func (s Server) saveHistory(chat Chat, answer string) {
 		msg = openai.NewChatUserMessage(summary)
 		chat.History = []ChatMessage{{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID}}
 		log.Println("Chat history after summarising: ", len(chat.History))
-		chat.TotalTokens = response.Usage.TotalTokens
+		chat.TotalTokens += response.Usage.TotalTokens
 	}
 	s.db.Save(&chat)
 }
