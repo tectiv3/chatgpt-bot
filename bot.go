@@ -367,12 +367,14 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	}
 
 	text := "..."
+	sentMessage := c.Message()
 	if !reply {
-		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n", message)
-		chat.SentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
+		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_ \n\n", message)
+		sentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
 		})
+		c.Set("reply", *sentMessage)
 	}
 
 	response, err := s.answer(message, c)
@@ -392,11 +394,11 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	}
 	if !reply {
 		text = text[:len(text)-3] + response
-		if _, err := c.Bot().Edit(chat.SentMessage, text, "text", &tele.SendOptions{
+		if _, err := c.Bot().Edit(sentMessage, text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
 		}); err != nil {
-			c.Bot().Edit(chat.SentMessage, text)
+			c.Bot().Edit(sentMessage, text)
 		}
 		return
 	}

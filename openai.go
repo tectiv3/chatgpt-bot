@@ -144,12 +144,18 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	if err != nil {
 		return err.Error(), err
 	}
-	if chat.SentMessage == nil {
-		chat.SentMessage, _ = c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
+
+	result := ""
+	SentMessage := tele.Message{}
+	if c.Get("reply") != nil {
+		result = c.Get("reply").(tele.Message).Text + "\n"
+		SentMessage = c.Get("reply").(tele.Message)
+	} else {
+		msgPointer, _ := c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
+		SentMessage = *msgPointer
 	}
-	result := ""
 	tokens := 0
 	var msg *openai.ChatMessage
 	for {
@@ -161,7 +167,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 			}
 			// every 10 tokens update the message
 			if tokens%10 == 0 {
-				c.Bot().Edit(chat.SentMessage, result)
+				c.Bot().Edit(&SentMessage, result)
 			}
 			if payload.Choices[0].Message.FunctionCall != nil && payload.Choices[0].Message.FunctionCall.Name != "" {
 				msg = &payload.Choices[0].Message
@@ -171,12 +177,19 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 			if msg != nil {
 				if msg.FunctionCall != nil {
 					result, err = s.handleFunctionCall(c, *msg)
+
+					c.Bot().Edit(&SentMessage, result, "text", &tele.SendOptions{
+						ReplyTo:   c.Message(),
+						ParseMode: tele.ModeMarkdown,
+					})
+					return "", nil
 				}
 			}
+
 			if len(result) == 0 {
 				return "", err
 			}
-			c.Bot().Edit(chat.SentMessage, result, "text", &tele.SendOptions{
+			c.Bot().Edit(&SentMessage, result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			})

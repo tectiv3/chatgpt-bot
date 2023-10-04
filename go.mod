@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/go-shiori/go-readability v0.0.0-20230421032831-c66949dfc0ad
-	github.com/meinside/openai-go v0.3.0
+	github.com/meinside/openai-go v0.3.1
 	github.com/sunicy/go-lame v0.0.0-20200422031049-1c192eaafa39
 	gopkg.in/telebot.v3 v3.1.3
 	gorm.io/driver/sqlite v1.5.3
@@ -18,7 +18,7 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-sqlite3 v1.14.17 // indirect
-	golang.org/x/net v0.15.0 // indirect
+	golang.org/x/net v0.16.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
 )
 
