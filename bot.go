@@ -31,7 +31,7 @@ const (
 	cmdDelUser    = "/del"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	msgReset      = "This bots memory erased"
-	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer."
+	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 )
 
 var (
@@ -363,15 +363,12 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
 		s.deleteHistory(chat.ID)
-		_ = c.Send(msgReset, "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
 		return
 	}
 
 	text := "..."
 	if !reply {
-		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n...", message)
+		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_\n", message)
 		chat.SentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,

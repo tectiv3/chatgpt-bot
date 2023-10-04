@@ -26,45 +26,8 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	if chat.Stream {
 		return s.launchStream(chat, c, history)
 	}
-	options := openai.ChatCompletionOptions{}
-	if chat.ModelName == "gpt-3.5-turbo-16k" {
-		options.
-			SetFunctions([]openai.ChatCompletionFunction{
-				openai.NewChatCompletionFunction(
-					"set_reminder",
-					"Set a reminder to do something at a specific time.",
-					map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"reminder": map[string]any{
-								"type":        "string",
-								"description": "A reminder of what to do, e.g. 'buy groceries'.",
-							},
-							"time": map[string]any{
-								"type":        "number",
-								"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
-							},
-						},
-						"required": []string{"reminder", "time"},
-					},
-				),
-				openai.NewChatCompletionFunction(
-					"make_summary",
-					"Make a summary of a web page.",
-					map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"url": map[string]any{
-								"type":        "string",
-								"description": "A valid URL to a web page.",
-							},
-						},
-						"required": []string{"url"},
-					},
-				),
-			}).
-			SetFunctionCall(openai.ChatCompletionFunctionCallAuto)
-	}
+	options := s.setFunctions()
+
 	response, err := s.ai.CreateChatCompletion(chat.ModelName, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
@@ -166,46 +129,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	defer close(data)
 	defer close(done)
 
-	options := openai.ChatCompletionOptions{}
-	if chat.ModelName == "gpt-3.5-turbo-16k" {
-		options.
-			SetFunctions([]openai.ChatCompletionFunction{
-				openai.NewChatCompletionFunction(
-					"set_reminder",
-					"Set a reminder to do something at a specific time.",
-					map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"reminder": map[string]any{
-								"type":        "string",
-								"description": "A reminder of what to do, e.g. 'buy groceries'.",
-							},
-							"time": map[string]any{
-								"type":        "number",
-								"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
-							},
-						},
-						"required": []string{"reminder", "time"},
-					},
-				),
-				openai.NewChatCompletionFunction(
-					"make_summary",
-					"Make a summary of a web page.",
-					map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"url": map[string]any{
-								"type":        "string",
-								"description": "A valid URL to a web page.",
-							},
-						},
-						"required": []string{"url"},
-					},
-				),
-			}).
-			SetFunctionCall(openai.ChatCompletionFunctionCallAuto)
-	}
-
+	options := s.setFunctions()
 	_, err := s.ai.CreateChatCompletion(chat.ModelName, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
@@ -233,21 +157,20 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 		case payload := <-data:
 			if payload.Choices[0].Delta.Content != nil {
 				result += *payload.Choices[0].Delta.Content
+				tokens++
 			}
-			tokens++
 			// every 10 tokens update the message
 			if tokens%10 == 0 {
 				c.Bot().Edit(chat.SentMessage, result)
 			}
-			result := payload.Choices[0].Delta
-			if result.FunctionCall != nil && result.FunctionCall.Name != "" {
-				msg = &result
+			if payload.Choices[0].Message.FunctionCall != nil && payload.Choices[0].Message.FunctionCall.Name != "" {
+				msg = &payload.Choices[0].Message
 			}
 
 		case err := <-done:
 			if msg != nil {
 				if msg.FunctionCall != nil {
-					return s.handleFunctionCall(c, *msg)
+					result, err = s.handleFunctionCall(c, *msg)
 				}
 			}
 			if len(result) == 0 {
@@ -264,6 +187,45 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 			return "", err
 		}
 	}
+}
+
+func (s Server) setFunctions() openai.ChatCompletionOptions {
+	return openai.ChatCompletionOptions{}.
+		SetFunctions([]openai.ChatCompletionFunction{
+			openai.NewChatCompletionFunction(
+				"set_reminder",
+				"Set a reminder to do something at a specific time.",
+				map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"reminder": map[string]any{
+							"type":        "string",
+							"description": "A reminder of what to do, e.g. 'buy groceries'.",
+						},
+						"time": map[string]any{
+							"type":        "number",
+							"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
+						},
+					},
+					"required": []string{"reminder", "time"},
+				},
+			),
+			openai.NewChatCompletionFunction(
+				"make_summary",
+				"Make a summary of a web page.",
+				map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"url": map[string]any{
+							"type":        "string",
+							"description": "A valid URL to a web page.",
+						},
+					},
+					"required": []string{"url"},
+				},
+			),
+		}).
+		SetFunctionCall(openai.ChatCompletionFunctionCallAuto)
 }
 
 func (s Server) saveHistory(chat Chat, answer string) {

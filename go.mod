@@ -4,11 +4,11 @@ go 1.20
 
 require (
 	github.com/go-shiori/go-readability v0.0.0-20230421032831-c66949dfc0ad
-	github.com/meinside/openai-go v0.2.0
+	github.com/meinside/openai-go v0.3.0
 	github.com/sunicy/go-lame v0.0.0-20200422031049-1c192eaafa39
 	gopkg.in/telebot.v3 v3.1.3
-	gorm.io/driver/sqlite v1.5.2
-	gorm.io/gorm v1.25.2-0.20230530020048-26663ab9bf55
+	gorm.io/driver/sqlite v1.5.3
+	gorm.io/gorm v1.25.4
 )
 
 require (
@@ -18,8 +18,8 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-sqlite3 v1.14.17 // indirect
-	golang.org/x/net v0.11.0 // indirect
-	golang.org/x/text v0.10.0 // indirect
+	golang.org/x/net v0.15.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
 )
 
 //replace github.com/meinside/openai-go => github.com/tectiv3/openai-go v0.2.1
