@@ -16,10 +16,12 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
 
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID, CreatedAt: time.Now()})
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
+		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
 		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
+	}
 	}
 	log.Printf("Chat history %d\n", len(history))
 
@@ -246,6 +248,23 @@ func (s Server) saveHistory(chat Chat, answer string) {
 	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
 	log.Printf("chat history len: %d", len(chat.History))
 
+	// iterate over history
+	// drop messages that are older than chat.ConversationAge days
+	history := []ChatMessage{}
+	for _, h := range chat.History {
+		if h.ID == 0 {
+			history = append(history, h)
+			continue
+		}
+		if h.CreatedAt.Before(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
+			s.db.Where("chat_id = ?", chat.ID).Where("id = ?", h.ID).Delete(&ChatMessage{})
+		} else {
+			history = append(history, h)
+		}
+	}
+	chat.History = history
+	log.Printf("chat history len: %d", len(chat.History))
+
 	if len(chat.History) > 8 {
 		log.Printf("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
 		response, err := s.summarize(chat.History)
@@ -266,5 +285,6 @@ func (s Server) saveHistory(chat Chat, answer string) {
 		log.Println("Chat history after summarising: ", len(chat.History))
 		chat.TotalTokens += response.Usage.TotalTokens
 	}
+
 	s.db.Save(&chat)
 }

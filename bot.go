@@ -19,6 +19,7 @@ const (
 	cmdModel      = "/model"
 	cmdTemp       = "/temperature"
 	cmdPrompt     = "/prompt"
+	cmdAge        = "/age"
 	cmdPromptCL   = "/defaultprompt"
 	cmdStream     = "/stream"
 	cmdStop       = "/stop"
@@ -92,10 +93,6 @@ func (s Server) run() {
 			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
 				ReplyTo: c.Message(),
 			})
-			//return c.Send("Please provide a longer query", "text", &tele.SendOptions{
-			//	ReplyTo:     c.Message(),
-			//	ReplyMarkup: &tele.ReplyMarkup{ForceReply: true},
-			//})
 		}
 
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
@@ -103,6 +100,20 @@ func (s Server) run() {
 		s.db.Save(&chat)
 
 		return nil
+	})
+
+	b.Handle(cmdAge, func(c tele.Context) error {
+		age, err := strconv.Atoi(c.Message().Payload)
+		if err != nil {
+			return c.Send("Please provide a number", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat.ConversationAge = int64(age)
+		s.db.Save(&chat)
+
+		return c.Send(fmt.Sprintf("Conversation age set to %d days", age), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
@@ -137,14 +148,14 @@ func (s Server) run() {
 			status = "enabled"
 		}
 
-		usage, err := s.getUsageMonth()
-		if err != nil {
-			log.Println(err)
-		}
-		log.Printf("Current usage: %0.2f", usage)
+		//usage, err := s.getUsageMonth()
+		//if err != nil {
+		//	log.Println(err)
+		//}
+		//log.Printf("Current usage: %0.2f", usage)
 
-		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nUsage: $%0.2f",
-			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, usage,
+		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d",
+			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
@@ -418,12 +429,18 @@ func (s Server) getChat(chatID int64, username string) Chat {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = "gpt-3.5-turbo"
 		chat.Temperature = 0.8
+		chat.ConversationAge = 1
 		s.db.Save(&chat)
 	}
 
 	if len(username) > 0 && chat.UserID == 0 {
 		user := s.getUser(username)
 		chat.UserID = user.ID
+		s.db.Save(&chat)
+	}
+
+	if chat.ConversationAge == 0 {
+		chat.ConversationAge = 1
 		s.db.Save(&chat)
 	}
 
