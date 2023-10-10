@@ -1,12 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/go-shiori/go-readability"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 	"log"
+	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -67,6 +71,19 @@ func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (s
 		go s.getPageSummary(c.Chat().ID, url)
 
 		return "Downloading summary. Please wait.", nil
+	} else if functionName == "get_crypto_rate" {
+		var asset string
+		if l, exists := arguments["asset"]; exists {
+			asset = l.(string)
+		} else {
+			err := fmt.Sprint("there was no returned parameter 'asset' from function call")
+			log.Println(err)
+
+			return err, fmt.Errorf(err)
+		}
+		log.Printf("Will call %s(\"%s\")", functionName, asset)
+
+		return s.getCryptoRate(asset)
 	}
 	log.Printf("Got a function call %s(%v)", functionName, arguments)
 
@@ -125,4 +142,46 @@ func (s Server) getPageSummary(chatID int64, url string) {
 	); err != nil {
 		log.Println(err)
 	}
+}
+
+func (s Server) getCryptoRate(asset string) (string, error) {
+	asset = strings.ToLower(asset)
+	format := "$%0.0f"
+	switch asset {
+	case "btc":
+		asset = "bitcoin"
+	case "eth":
+		asset = "ethereum"
+	case "ltc":
+		asset = "litecoin"
+	case "xrp":
+		asset = "ripple"
+		format = "$%0.3f"
+	case "xlm":
+		asset = "stellar"
+		format = "$%0.3f"
+	case "ada":
+		asset = "cardano"
+		format = "$%0.3f"
+	}
+	client := &http.Client{}
+	client.Timeout = 10 * time.Second
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.coincap.io/v2/assets/%s", asset), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var symbol CoinCap
+	err = json.NewDecoder(resp.Body).Decode(&symbol)
+	if err != nil {
+		return "", err
+	}
+	price, _ := strconv.ParseFloat(symbol.Data.PriceUsd, 64)
+
+	return fmt.Sprintf(format, price), nil
 }

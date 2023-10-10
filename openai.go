@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -20,8 +22,8 @@ func (s Server) answer(message string, c tele.Context) (string, error) {
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
 		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
-	}
+			history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
+		}
 	}
 	log.Printf("Chat history %d\n", len(history))
 
@@ -94,18 +96,20 @@ func (s Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, er
 // get billing usage
 func (s Server) getUsageMonth() (float64, error) {
 	now := time.Now()
-	firstDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	lastDay := firstDay.AddDate(0, 1, -1)
+	//firstDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	//lastDay := firstDay.AddDate(0, 1, -1)
 
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", "https://api.openai.com/dashboard/billing/usage", nil)
+	client.Timeout = 10 * time.Second
+
+	req, err := http.NewRequest("GET", "https://api.openai.com/v1/usage", nil)
 	if err != nil {
 		return 0, err
 	}
 
 	query := req.URL.Query()
-	query.Add("start_date", firstDay.Format("2006-01-02"))
-	query.Add("end_date", lastDay.Format("2006-01-02"))
+	query.Add("date", now.Format("2006-01-02"))
+	//query.Add("end_date", lastDay.Format("2006-01-02"))
 	req.URL.RawQuery = query.Encode()
 
 	req.Header.Add("Authorization", "Bearer "+s.conf.OpenAIAPIKey)
@@ -116,13 +120,21 @@ func (s Server) getUsageMonth() (float64, error) {
 	}
 	defer resp.Body.Close()
 
-	var billingData BillingData
-	err = json.NewDecoder(resp.Body).Decode(&billingData)
+	if resp.StatusCode != 200 {
+		// dump response body
+		if body, err := io.ReadAll(resp.Body); err == nil {
+			log.Printf("Response body: %s", string(body))
+		}
+		return 0, fmt.Errorf("http status %d", resp.StatusCode)
+	}
+
+	var usageData UsageResponseBody
+	err = json.NewDecoder(resp.Body).Decode(&usageData)
 	if err != nil {
 		return 0, err
 	}
 
-	return billingData.TotalUsage / 100, nil
+	return usageData.CurrentUsageUsd / 100, nil
 }
 
 func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
@@ -237,6 +249,17 @@ func (s Server) setFunctions() openai.ChatCompletionOptions {
 						},
 					},
 					"required": []string{"url"},
+				},
+			),
+			openai.NewChatCompletionFunction(
+				"get_crypto_rate",
+				"Get the current rate of various crypto currencies",
+				map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"asset": map[string]any{"type": "string", "description": "Asset of the crypto"},
+					},
+					"required": []string{"asset"},
 				},
 			),
 		}).

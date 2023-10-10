@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var modelCosts map[string]ModelCosts
+
 // config struct for loading a configuration file
 type config struct {
 	// telegram bot api
@@ -23,8 +25,21 @@ type config struct {
 	Model                string   `json:"openai_model"`
 }
 
-type BillingData struct {
-	TotalUsage float64 `json:"total_usage"`
+type UsageResponseBody struct {
+	Object string `json:"object"`
+	Data   []struct {
+		AggregationTimestamp  int    `json:"aggregation_timestamp"`
+		NRequests             int    `json:"n_requests"`
+		Operation             string `json:"operation"`
+		SnapshotID            string `json:"snapshot_id"`
+		NContext              int    `json:"n_context"`
+		NContextTokensTotal   int    `json:"n_context_tokens_total"`
+		NGenerated            int    `json:"n_generated"`
+		NGeneratedTokensTotal int    `json:"n_generated_tokens_total"`
+	} `json:"data"`
+	FtData          []interface{} `json:"ft_data"`
+	DalleAPIData    []interface{} `json:"dalle_api_data"`
+	CurrentUsageUsd float64       `json:"current_usage_usd"`
 }
 
 type Server struct {
@@ -46,15 +61,15 @@ type User struct {
 
 type Chat struct {
 	gorm.Model
-	ChatID       int64
-	UserID       uint `json:"user_id" gorm:"nullable:true"`
-	History      []ChatMessage
-	Temperature  float64
-	ModelName    string
-	MasterPrompt string
-	Stream       bool
+	ChatID          int64
+	UserID          uint `json:"user_id" gorm:"nullable:true"`
+	History         []ChatMessage
+	Temperature     float64
+	ModelName       string
+	MasterPrompt    string
+	Stream          bool
 	ConversationAge int64
-	TotalTokens  int `json:"total_tokens"`
+	TotalTokens     int `json:"total_tokens"`
 }
 
 type ChatMessage struct {
@@ -111,4 +126,32 @@ func in_array(needle string, haystack []string) bool {
 	}
 
 	return false
+}
+
+type ModelCosts struct {
+	Context   float64
+	Generated float64
+}
+
+func init() {
+	modelCosts = map[string]ModelCosts{
+		"gpt-3.5-turbo-0301":     {Context: 0.0015, Generated: 0.002},
+		"gpt-3.5-turbo-0613":     {Context: 0.0015, Generated: 0.002},
+		"gpt-3.5-turbo-16k":      {Context: 0.003, Generated: 0.004},
+		"gpt-3.5-turbo-16k-0613": {Context: 0.003, Generated: 0.004},
+		"gpt-4-0314":             {Context: 0.03, Generated: 0.06},
+		"gpt-4-0613":             {Context: 0.03, Generated: 0.06},
+		"gpt-4-32k":              {Context: 0.06, Generated: 0.12},
+		"gpt-4-32k-0314":         {Context: 0.06, Generated: 0.12},
+		"gpt-4-32k-0613":         {Context: 0.06, Generated: 0.12},
+		"whisper-1":              {Context: 0.006 / 60, Generated: 0}, // Cost is per second, so convert to minutes
+	}
+}
+
+type CoinCap struct {
+	Data struct {
+		Symbol   string `json:"symbol"`
+		PriceUsd string `json:"priceUsd"`
+	} `json:"data"`
+	Timestamp int64 `json:"timestamp"`
 }
