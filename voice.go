@@ -150,7 +150,7 @@ func (s Server) handleVoice(c tele.Context) {
 		return
 	}
 
-	s.complete(c, *transcript.Text, false)
+	s.complete(c, *transcript.Text, false, nil)
 
 	return
 }

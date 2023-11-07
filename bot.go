@@ -3,8 +3,13 @@ package main
 // bot.go
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -31,15 +36,15 @@ const (
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
-	msgReset      = "This bots memory erased"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 )
 
 var (
 	menu   = &tele.ReplyMarkup{ResizeKeyboard: true}
 	btn3   = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
-	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4"}
+	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo"}
 	btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
+	//btn4v  = tele.Btn{Text: "GPT4-V", Unique: "btnModel", Data: "gpt-4-vision-preview"}
 	btnT0  = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2  = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4  = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -200,6 +205,16 @@ func (s Server) run() {
 	})
 
 	// On inline button pressed (callback)
+	//b.Handle(&btn4v, func(c tele.Context) error {
+	//	log.Printf("%s selected", c.Data())
+	//	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	//	chat.ModelName = c.Data()
+	//	s.db.Save(&chat)
+	//
+	//	return c.Edit("Model set to " + c.Data())
+	//})
+
+	// On inline button pressed (callback)
 	b.Handle(&btnT0, func(c tele.Context) error {
 		log.Printf("Temp: %s\n", c.Data())
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
@@ -224,7 +239,7 @@ func (s Server) run() {
 
 	b.Handle(tele.OnQuery, func(c tele.Context) error {
 		query := c.Query().Text
-		go s.complete(c, query, false)
+		go s.complete(c, query, false, nil)
 
 		return nil
 	})
@@ -235,14 +250,14 @@ func (s Server) run() {
 		return nil
 	})
 
-	b.Handle(tele.OnPhoto, func(c tele.Context) error {
-		log.Printf("Got a photo, size %d, caption: %s\n", c.Message().Photo.FileSize, c.Message().Photo.Caption)
+	b.Handle(tele.OnVoice, func(c tele.Context) error {
+		go s.onVoice(c)
 
 		return nil
 	})
 
-	b.Handle(tele.OnVoice, func(c tele.Context) error {
-		go s.onVoice(c)
+	b.Handle(tele.OnPhoto, func(c tele.Context) error {
+		go s.onPhoto(c)
 
 		return nil
 	})
@@ -305,7 +320,7 @@ func (s Server) onText(c tele.Context) {
 		message = c.Message().Text
 	}
 
-	s.complete(c, message, true)
+	s.complete(c, message, true, nil)
 }
 
 func (s Server) onVoice(c tele.Context) {
@@ -318,6 +333,18 @@ func (s Server) onVoice(c tele.Context) {
 	log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
 
 	s.handleVoice(c)
+}
+
+func (s Server) onPhoto(c tele.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(string(debug.Stack()), err)
+		}
+	}()
+
+	log.Printf("Got a photo, size %d, caption: %s\n", c.Message().Photo.FileSize, c.Message().Photo.Caption)
+
+	s.handlePhoto(c)
 }
 
 func (s Server) onTranslate(c tele.Context, prefix string) {
@@ -336,7 +363,7 @@ func (s Server) onTranslate(c tele.Context, prefix string) {
 		return
 	}
 
-	response, err := s.answer(prefix+query, c)
+	response, err := s.answer(prefix+query, c, nil)
 	if err != nil {
 		log.Println(err)
 		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -370,7 +397,7 @@ func (s Server) onGetUsers(c tele.Context) error {
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
-func (s Server) complete(c tele.Context, message string, reply bool) {
+func (s Server) complete(c tele.Context, message string, reply bool, image *string) {
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
 		s.deleteHistory(chat.ID)
@@ -388,7 +415,7 @@ func (s Server) complete(c tele.Context, message string, reply bool) {
 		c.Set("reply", *sentMessage)
 	}
 
-	response, err := s.answer(message, c)
+	response, err := s.answer(message, c, image)
 	if err != nil {
 		return
 	}
@@ -527,4 +554,44 @@ func (s Server) whitelist() tele.MiddlewareFunc {
 			},
 		})(next)
 	}
+}
+
+func (s Server) handlePhoto(c tele.Context) {
+	if c.Message().Photo.FileSize == 0 {
+		return
+	}
+	photo := c.Message().Photo.File
+	log.Println("Photo file: ", photo.FilePath, photo.FileSize, photo.FileID, photo.FileURL, c.Message().Photo.Caption)
+
+	reader, err := c.Bot().File(&photo)
+	if err != nil {
+		log.Println("Error getting file content:", err)
+		return
+	}
+	defer reader.Close()
+
+	bytes, err := ioutil.ReadAll(reader)
+	if err != nil {
+		fmt.Println("Error reading file content:", err)
+		return
+	}
+
+	var base64Encoding string
+
+	// Determine the content type of the image file
+	mimeType := http.DetectContentType(bytes)
+
+	// Prepend the appropriate URI scheme header depending
+	// on the MIME type
+	switch mimeType {
+	case "image/jpeg":
+		base64Encoding += "data:image/jpeg;base64,"
+	case "image/png":
+		base64Encoding += "data:image/png;base64,"
+	}
+
+	// Append the base64 encoded output
+	encoded := base64Encoding + toBase64(bytes)
+
+	s.complete(c, c.Message().Caption, true, &encoded)
 }

@@ -12,27 +12,44 @@ import (
 )
 
 // generate an answer to given message and send it to the chat
-func (s Server) answer(message string, c tele.Context) (string, error) {
+func (s Server) answer(message string, c tele.Context, image *string) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	msg := openai.NewChatUserMessage(message)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
 
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID, CreatedAt: time.Now()})
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: &message, ChatID: chat.ChatID, CreatedAt: time.Now()})
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
 		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
-			history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
+			content := []openai.ContentType{{Type: "text", Text: h.Content}}
+			if image != nil && h.Content == &message {
+				content = append(content, openai.ContentType{
+					Type: "image_url",
+					ImageURL: &struct {
+						URL string `json:"url"`
+					}{URL: *image},
+				})
+			}
+			history = append(history, openai.ChatMessage{Role: h.Role, Content: content})
 		}
 	}
 	log.Printf("Chat history %d\n", len(history))
 
-	if chat.Stream {
+	if chat.Stream && image == nil {
 		return s.launchStream(chat, c, history)
 	}
-	options := s.setFunctions()
-
-	response, err := s.ai.CreateChatCompletion(chat.ModelName, history,
+	options := openai.ChatCompletionOptions{}
+	if image == nil {
+		options = s.setFunctions()
+	}
+	s.ai.Verbose = s.conf.Verbose
+	options.SetMaxTokens(3000)
+	model := chat.ModelName
+	if image != nil {
+		model = "gpt-4-vision-preview"
+	}
+	response, err := s.ai.CreateChatCompletion(model, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature))
@@ -74,7 +91,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, er
 
 	history := []openai.ChatMessage{system}
 	for _, h := range chatHistory {
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: h.Content})
+		history = append(history, openai.ChatMessage{Role: h.Role, Content: []openai.ContentType{{Type: "text", Text: h.Content}}})
 	}
 	history = append(history, msg)
 
@@ -171,7 +188,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 		SentMessage = *msgPointer
 	}
 	tokens := 0
-	var msg *openai.ChatMessage
+	var msg *openai.ChatMessageResponse
 	for {
 		select {
 		case payload := <-data:
@@ -268,7 +285,7 @@ func (s Server) setFunctions() openai.ChatCompletionOptions {
 
 func (s Server) saveHistory(chat Chat, answer string) {
 	msg := openai.NewChatAssistantMessage(answer)
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID})
+	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: &answer, ChatID: chat.ChatID})
 	log.Printf("chat history len: %d", len(chat.History))
 
 	// iterate over history
@@ -304,7 +321,7 @@ func (s Server) saveHistory(chat Chat, answer string) {
 		log.Printf("Deleting chat history for chat ID %d up to message ID %d\n", chat.ID, maxID)
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 		msg = openai.NewChatUserMessage(summary)
-		chat.History = []ChatMessage{{Role: msg.Role, Content: msg.Content, ChatID: chat.ChatID}}
+		chat.History = []ChatMessage{{Role: msg.Role, Content: &summary, ChatID: chat.ChatID}}
 		log.Println("Chat history after summarising: ", len(chat.History))
 		chat.TotalTokens += response.Usage.TotalTokens
 	}

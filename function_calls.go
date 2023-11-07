@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (string, error) {
+func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessageResponse) (string, error) {
 	functionName := result.FunctionCall.Name
 	if functionName == "" {
 		err := fmt.Sprint("there was no returned function call name")
