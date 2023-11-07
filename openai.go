@@ -177,9 +177,10 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	}
 
 	result := ""
+	reply := ""
 	SentMessage := tele.Message{}
 	if c.Get("reply") != nil {
-		result = c.Get("reply").(tele.Message).Text + "\n"
+		reply = c.Get("reply").(tele.Message).Text + "\n"
 		SentMessage = c.Get("reply").(tele.Message)
 	} else {
 		msgPointer, _ := c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
@@ -209,7 +210,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 				if msg.FunctionCall != nil {
 					result, err = s.handleFunctionCall(c, *msg)
 
-					c.Bot().Edit(&SentMessage, result, "text", &tele.SendOptions{
+					c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
 						ReplyTo:   c.Message(),
 						ParseMode: tele.ModeMarkdown,
 					})
@@ -220,7 +221,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 			if len(result) == 0 {
 				return "", err
 			}
-			c.Bot().Edit(&SentMessage, result, "text", &tele.SendOptions{
+			c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			})

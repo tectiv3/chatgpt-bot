@@ -12,6 +12,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 )
 
 func convertToWav(r io.Reader) ([]byte, error) {
@@ -153,6 +155,18 @@ func (s Server) handleVoice(c tele.Context) {
 		return
 	}
 
+	if strings.HasPrefix(strings.ToLower(*transcript.Text), "reset") {
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		s.deleteHistory(chat.ID)
+		log.Println("Resetting history")
+		if chat.Voice {
+			v := &tele.Voice{File: tele.FromDisk("erased.ogg")}
+			_ = c.Send(v)
+		}
+
+		return
+	}
+
 	s.complete(c, *transcript.Text, false, nil)
 
 	return
@@ -188,7 +202,7 @@ func (s Server) sendAudio(c tele.Context, text string) {
 	out.Close()
 	log.Println(out.Name())
 	v := &tele.Voice{File: tele.FromDisk(out.Name())}
-	//defer os.Remove(out.Name())
+	defer os.Remove(out.Name())
 	_ = c.Send(v)
 
 }
