@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"github.com/meinside/openai-go"
 	"github.com/sunicy/go-lame"
 	"github.com/tectiv3/chatgpt-bot/opus"
 	tele "gopkg.in/telebot.v3"
 	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
 )
 
 func convertToWav(r io.Reader) ([]byte, error) {
@@ -153,4 +156,39 @@ func (s Server) handleVoice(c tele.Context) {
 	s.complete(c, *transcript.Text, false, nil)
 
 	return
+}
+
+func (s Server) sendAudio(c tele.Context, text string) {
+	url := "https://api.openai.com/v1/audio/speech"
+	body := map[string]string{
+		"model":           "tts-1",
+		"input":           text,
+		"voice":           "alloy",
+		"response_format": "opus",
+		"speed":           "1.25",
+	}
+	jsonStr, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
+	req.Header.Set("Authorization", "Bearer "+s.conf.OpenAIAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	out, err := ioutil.TempFile("", "chatbot")
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = io.Copy(out, resp.Body)
+	out.Close()
+	log.Println(out.Name())
+	v := &tele.Voice{File: tele.FromDisk(out.Name())}
+	//defer os.Remove(out.Name())
+	_ = c.Send(v)
+
 }

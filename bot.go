@@ -3,13 +3,10 @@ package main
 // bot.go
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -139,6 +136,18 @@ func (s Server) run() {
 		}
 
 		return c.Send("Stream is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
+	b.Handle("/voice", func(c tele.Context) error {
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat.Voice = !chat.Voice
+		s.db.Save(&chat)
+		status := "disabled"
+		if chat.Voice {
+			status = "enabled"
+		}
+
+		return c.Send("Voice is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
@@ -430,6 +439,11 @@ func (s Server) complete(c tele.Context, message string, reply bool, image *stri
 		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
 		return
 	}
+
+	if chat.Voice {
+		s.sendAudio(c, response)
+	}
+
 	if !reply {
 		text = text[:len(text)-3] + response
 		if _, err := c.Bot().Edit(sentMessage, text, "text", &tele.SendOptions{

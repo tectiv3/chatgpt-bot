@@ -226,6 +226,9 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 			})
 			log.Println("Stream total tokens: ", tokens)
 			chat.TotalTokens += tokens
+			if chat.Voice {
+				s.sendAudio(c, result)
+			}
 			s.saveHistory(chat, result)
 
 			return "", err

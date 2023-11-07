@@ -72,6 +72,7 @@ type Chat struct {
 	ModelName       string
 	MasterPrompt    string
 	Stream          bool
+	Voice           bool
 	ConversationAge int64
 	TotalTokens     int `json:"total_tokens"`
 }
