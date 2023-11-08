@@ -39,7 +39,7 @@ const (
 var (
 	menu   = &tele.ReplyMarkup{ResizeKeyboard: true}
 	btn3   = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
-	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo"}
+	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-1106-preview"}
 	btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
 	//btn4v  = tele.Btn{Text: "GPT4-V", Unique: "btnModel", Data: "gpt-4-vision-preview"}
 	btnT0  = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
@@ -426,6 +426,7 @@ func (s Server) complete(c tele.Context, message string, reply bool, image *stri
 
 	response, err := s.answer(message, c, image)
 	if err != nil {
+		_ = c.Send(response)
 		return
 	}
 	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
