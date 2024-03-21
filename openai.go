@@ -247,7 +247,7 @@ func (s *Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMe
 					_, _ = c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
 						ReplyTo:   c.Message(),
 						ParseMode: tele.ModeMarkdown,
-					})
+					}, replyMenu)
 					return "", nil
 				}
 			}
@@ -258,7 +258,7 @@ func (s *Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMe
 			_, _ = c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
-			})
+			}, replyMenu)
 			log.Println("Stream total tokens: ", tokens)
 			chat.TotalTokens += tokens
 			if chat.Voice {
@@ -317,7 +317,7 @@ func (s *Server) saveHistory(chat Chat, answer string) {
 	chat.History = history
 	log.Printf("chat history len: %d", len(chat.History))
 
-	if len(chat.History) > 8 {
+	if len(chat.History) > 100 {
 		log.Printf("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
 		response, err := s.summarize(chat.History)
 		if err != nil {

@@ -39,17 +39,19 @@ const (
 )
 
 var (
-	menu = &tele.ReplyMarkup{ResizeKeyboard: true}
-	btn3 = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
-	btn4 = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
+	menu      = &tele.ReplyMarkup{ResizeKeyboard: true}
+	replyMenu = &tele.ReplyMarkup{ResizeKeyboard: true}
+	btn3      = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
+	btn4      = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
 	//btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
 	//btn4v  = tele.Btn{Text: "GPT4-V", Unique: "btnModel", Data: "gpt-4-vision-preview"}
-	btnT0  = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
-	btnT2  = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
-	btnT4  = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
-	btnT6  = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
-	btnT8  = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
-	btnT10 = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
+	btnT0    = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
+	btnT2    = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
+	btnT4    = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
+	btnT6    = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
+	btnT8    = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
+	btnT10   = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
+	btnReset = tele.Btn{Text: "Reset", Unique: "btnreset", Data: "r"}
 )
 
 // launch bot with given parameters
@@ -71,6 +73,7 @@ func (s *Server) run() {
 	b.Use(s.whitelist())
 	s.bot = b
 	s.RUnlock()
+	replyMenu.Inline(menu.Row(btnReset))
 
 	//usage, err := s.getUsageMonth()
 	//if err != nil {
@@ -249,6 +252,13 @@ func (s *Server) run() {
 		s.db.Save(&chat)
 
 		return c.Edit("Temperature set to " + c.Data())
+	})
+
+	b.Handle(&btnReset, func(c tele.Context) error {
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		s.deleteHistory(chat.ID)
+
+		return c.Edit(c.Message().Text)
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
@@ -440,7 +450,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 	_ = c.Send(response, "text", &tele.SendOptions{
 		ReplyTo:   c.Message(),
 		ParseMode: tele.ModeMarkdown,
-	})
+	}, replyMenu)
 }
 
 func (s *Server) onGetUsers(c tele.Context) error {
@@ -485,7 +495,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 
 	response, err := s.answer(message, c, image)
 	if err != nil {
-		_ = c.Send(response)
+		_ = c.Send(response, replyMenu)
 		return
 	}
 	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
@@ -496,7 +506,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 
 	if len(response) > 4096 {
 		file := tele.FromReader(strings.NewReader(response))
-		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
+		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
 		return
 	}
 
@@ -509,8 +519,8 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 		if _, err := c.Bot().Edit(sentMessage, text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
-		}); err != nil {
-			_, _ = c.Bot().Edit(sentMessage, text)
+		}, replyMenu); err != nil {
+			_, _ = c.Bot().Edit(sentMessage, text, replyMenu)
 		}
 		return
 	}
@@ -518,7 +528,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 	_ = c.Send(response, "text", &tele.SendOptions{
 		ReplyTo:   c.Message(),
 		ParseMode: tele.ModeMarkdown,
-	})
+	}, replyMenu)
 }
 
 // getChat returns chat from db or creates a new one
