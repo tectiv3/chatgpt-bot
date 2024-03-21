@@ -53,7 +53,7 @@ var (
 )
 
 // launch bot with given parameters
-func (s Server) run() {
+func (s *Server) run() {
 	pref := tele.Settings{
 		Token:  s.conf.TelegramBotToken,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -65,8 +65,12 @@ func (s Server) run() {
 		return
 	}
 	//b.Use(middleware.Logger())
+	s.loadUsers()
+
+	s.RLock()
 	b.Use(s.whitelist())
 	s.bot = b
+	s.RUnlock()
 
 	//usage, err := s.getUsageMonth()
 	//if err != nil {
@@ -285,6 +289,13 @@ func (s Server) run() {
 		return nil
 	})
 
+	b.Handle(tele.OnUserShared, func(c tele.Context) error {
+		user := c.Message().UserShared
+		log.Println("Shared user ID:", user.UserID)
+
+		return nil
+	})
+
 	b.Handle(cmdUsers, func(c tele.Context) error {
 		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
 			return nil
@@ -303,6 +314,7 @@ func (s Server) run() {
 			})
 		}
 		s.addUser(name)
+		s.loadUsers()
 
 		return s.onGetUsers(c)
 	})
@@ -318,6 +330,7 @@ func (s Server) run() {
 			})
 		}
 		s.delUser(name)
+		s.loadUsers()
 
 		return s.onGetUsers(c)
 	})
@@ -325,13 +338,27 @@ func (s Server) run() {
 	b.Start()
 }
 
-func (s Server) onDocument(c tele.Context) {
+func (s *Server) loadUsers() {
+	s.RLock()
+	defer s.RUnlock()
+	admins := s.conf.AllowedTelegramUsers
+	var usernames []string
+	s.db.Model(&User{}).Pluck("username", &usernames)
+	for _, username := range admins {
+		if !in_array(username, usernames) {
+			usernames = append(usernames, username)
+		}
+	}
+	s.users = append(s.users, usernames...)
+}
+
+func (s *Server) onDocument(c tele.Context) {
 	// body
 	log.Printf("Got a file: %d", c.Message().Document.FileSize)
 	// c.Message().Photo
 }
 
-func (s Server) onText(c tele.Context) {
+func (s *Server) onText(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(string(debug.Stack()), err)
@@ -346,7 +373,7 @@ func (s Server) onText(c tele.Context) {
 	s.complete(c, message, true, nil)
 }
 
-func (s Server) onVoice(c tele.Context) {
+func (s *Server) onVoice(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(string(debug.Stack()), err)
@@ -358,7 +385,7 @@ func (s Server) onVoice(c tele.Context) {
 	s.handleVoice(c)
 }
 
-func (s Server) onPhoto(c tele.Context) {
+func (s *Server) onPhoto(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(string(debug.Stack()), err)
@@ -370,7 +397,23 @@ func (s Server) onPhoto(c tele.Context) {
 	s.handlePhoto(c)
 }
 
-func (s Server) onTranslate(c tele.Context, prefix string) {
+func (s *Server) onShare(c tele.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(string(debug.Stack()), err)
+		}
+	}()
+
+	//log.Printf("Got a share: %s\n", c.Message().Text)
+	if c.Message().Photo != nil {
+		s.handlePhoto(c)
+		return
+	}
+
+	s.onText(c)
+}
+
+func (s *Server) onTranslate(c tele.Context, prefix string) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(string(debug.Stack()), err)
@@ -400,7 +443,7 @@ func (s Server) onTranslate(c tele.Context, prefix string) {
 	})
 }
 
-func (s Server) onGetUsers(c tele.Context) error {
+func (s *Server) onGetUsers(c tele.Context) error {
 	users := s.getUsers()
 	text := "Users:\n"
 	for _, user := range users {
@@ -408,19 +451,21 @@ func (s Server) onGetUsers(c tele.Context) error {
 		var historyLen int64
 		var updatedAt time.Time
 		var totalTokens int
+		var model string
 		if len(threads) > 0 {
 			s.db.Model(&ChatMessage{}).Where("chat_id = ?", threads[0].ID).Count(&historyLen)
 			updatedAt = threads[0].UpdatedAt
 			totalTokens = threads[0].TotalTokens
+			model = threads[0].ModelName
 		}
 
-		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*, usage: *%d*\n", user.Username, historyLen, updatedAt.Format("2006/01/02 15:04"), totalTokens)
+		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*, usage: *%d*, model: *%s*\n", user.Username, historyLen, updatedAt.Format("2006/01/02 15:04"), totalTokens, model)
 	}
 
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
-func (s Server) complete(c tele.Context, message string, reply bool, image *string) {
+func (s *Server) complete(c tele.Context, message string, reply bool, image *string) {
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
 		s.deleteHistory(chat.ID)
@@ -477,7 +522,7 @@ func (s Server) complete(c tele.Context, message string, reply bool, image *stri
 }
 
 // getChat returns chat from db or creates a new one
-func (s Server) getChat(chatID int64, username string) Chat {
+func (s *Server) getChat(chatID int64, username string) Chat {
 	var chat Chat
 
 	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
@@ -508,7 +553,7 @@ func (s Server) getChat(chatID int64, username string) Chat {
 }
 
 // getUsers returns all users from db
-func (s Server) getUsers() []User {
+func (s *Server) getUsers() []User {
 	var users []User
 	s.db.Model(&User{}).Preload("Threads").Find(&users)
 
@@ -516,22 +561,22 @@ func (s Server) getUsers() []User {
 }
 
 // getUser returns user from db
-func (s Server) getUser(username string) User {
+func (s *Server) getUser(username string) User {
 	var user User
 	s.db.First(&user, User{Username: username})
 
 	return user
 }
 
-func (s Server) addUser(username string) {
+func (s *Server) addUser(username string) {
 	s.db.Create(&User{Username: username})
 }
 
-func (s Server) delUser(userNane string) {
+func (s *Server) delUser(userNane string) {
 	s.db.Where("username = ?", userNane).Delete(&User{})
 }
 
-func (s Server) deleteHistory(chatID uint) {
+func (s *Server) deleteHistory(chatID uint) {
 	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
 }
 
@@ -565,19 +610,10 @@ func Restrict(v RestrictConfig) tele.MiddlewareFunc {
 
 // Whitelist returns a middleware that skips the update for users
 // NOT specified in the usernames field.
-func (s Server) whitelist() tele.MiddlewareFunc {
-	admins := s.conf.AllowedTelegramUsers
-	var usernames []string
-	s.db.Model(&User{}).Pluck("username", &usernames)
-	for _, username := range admins {
-		if !in_array(username, usernames) {
-			usernames = append(usernames, username)
-		}
-	}
-
+func (s *Server) whitelist() tele.MiddlewareFunc {
 	return func(next tele.HandlerFunc) tele.HandlerFunc {
 		return Restrict(RestrictConfig{
-			Usernames: usernames,
+			Usernames: s.users,
 			In:        next,
 			Out: func(c tele.Context) error {
 				return c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -586,7 +622,7 @@ func (s Server) whitelist() tele.MiddlewareFunc {
 	}
 }
 
-func (s Server) handlePhoto(c tele.Context) {
+func (s *Server) handlePhoto(c tele.Context) {
 	if c.Message().Photo.FileSize == 0 {
 		return
 	}

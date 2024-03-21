@@ -109,7 +109,7 @@ func wavToMp3(wav []byte) []byte {
 	return output.Bytes()
 }
 
-func (s Server) handleVoice(c tele.Context) {
+func (s *Server) handleVoice(c tele.Context) {
 	if c.Message().Voice.FileSize == 0 {
 		return
 	}
@@ -172,7 +172,7 @@ func (s Server) handleVoice(c tele.Context) {
 	return
 }
 
-func (s Server) sendAudio(c tele.Context, text string) {
+func (s *Server) sendAudio(c tele.Context, text string) {
 	url := "https://api.openai.com/v1/audio/speech"
 	body := map[string]string{
 		"model":           "tts-1",

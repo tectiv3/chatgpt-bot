@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -46,9 +47,11 @@ type UsageResponseBody struct {
 	CurrentUsageUsd float64       `json:"current_usage_usd"`
 }
 
+// add mutex to protect the usage
 type Server struct {
+	sync.RWMutex
 	conf  config
-	users map[string]bool
+	users []string
 	ai    *openai.Client
 	bot   *tele.Bot
 	db    *gorm.DB

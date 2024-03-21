@@ -23,10 +23,6 @@ func main() {
 	if conf, err := loadConfig(confFilepath); err == nil {
 		apiKey := conf.OpenAIAPIKey
 		orgID := conf.OpenAIOrganizationID
-		allowedUsers := map[string]bool{}
-		for _, user := range conf.AllowedTelegramUsers {
-			allowedUsers[user] = true
-		}
 		level := logger.Error
 		if conf.Verbose {
 			level = logger.Info
@@ -59,12 +55,11 @@ func main() {
 			panic("failed to migrate database")
 		}
 
-		log.Printf("Allowed users: %d\n", len(allowedUsers))
+		log.Printf("Allowed users: %d\n", len(conf.AllowedTelegramUsers))
 		server := &Server{
-			conf:  conf,
-			ai:    openai.NewClient(apiKey, orgID),
-			users: allowedUsers,
-			db:    db,
+			conf: conf,
+			ai:   openai.NewClient(apiKey, orgID),
+			db:   db,
 		}
 
 		server.run()

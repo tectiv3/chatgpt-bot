@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (string, error) {
+func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (string, error) {
 	// refactor to handle multiple function calls not just the first one
 	for _, toolCall := range result.ToolCalls {
 		function := toolCall.Function
@@ -90,7 +90,7 @@ func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (s
 	return "", nil
 }
 
-func (s Server) setReminder(chatID int64, reminder string, minutes int64) error {
+func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
 	timer := time.NewTimer(time.Minute * time.Duration(minutes))
 	go func() {
 		<-timer.C
@@ -104,7 +104,7 @@ func (s Server) setReminder(chatID int64, reminder string, minutes int64) error 
 	return nil
 }
 
-func (s Server) getPageSummary(chatID int64, url string) {
+func (s *Server) getPageSummary(chatID int64, url string) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println(string(debug.Stack()), err)
@@ -143,7 +143,7 @@ func (s Server) getPageSummary(chatID int64, url string) {
 	}
 }
 
-func (s Server) getCryptoRate(asset string) (string, error) {
+func (s *Server) getCryptoRate(asset string) (string, error) {
 	asset = strings.ToLower(asset)
 	format := "$%0.0f"
 	switch asset {

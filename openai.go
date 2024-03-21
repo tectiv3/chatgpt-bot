@@ -12,7 +12,7 @@ import (
 )
 
 // generate an answer to given message and send it to the chat
-func (s Server) answer(message string, c tele.Context, image *string) (string, error) {
+func (s *Server) answer(message string, c tele.Context, image *string) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	msg := openai.NewChatUserMessage(message)
@@ -66,7 +66,6 @@ func (s Server) answer(message string, c tele.Context, image *string) (string, e
 
 	var answer string
 	if len(response.Choices) > 0 {
-		//log.Printf("%+v", response.Choices[0].Message)
 		answer, err = response.Choices[0].Message.ContentString()
 		if err != nil {
 			log.Printf("failed to get content string: %s", err)
@@ -85,7 +84,7 @@ func (s Server) answer(message string, c tele.Context, image *string) (string, e
 	return answer, nil
 }
 
-func (s Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
+func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
 	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.")
 	system := openai.NewChatSystemMessage("Be as brief as possible")
 
@@ -113,7 +112,7 @@ func (s Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, er
 }
 
 // get billing usage
-func (s Server) getUsageMonth() (float64, error) {
+func (s *Server) getUsageMonth() (float64, error) {
 	now := time.Now()
 	//firstDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	//lastDay := firstDay.AddDate(0, 1, -1)
@@ -156,7 +155,7 @@ func (s Server) getUsageMonth() (float64, error) {
 	return usageData.CurrentUsageUsd / 100, nil
 }
 
-func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
+func (s *Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
 	data := make(chan openai.ChatCompletion)
 	done := make(chan error)
 	defer close(data)
@@ -272,7 +271,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	}
 }
 
-func (s Server) getTools() []openai.ChatCompletionTool {
+func (s *Server) getTools() []openai.ChatCompletionTool {
 	return []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
 			"set_reminder",
@@ -296,7 +295,7 @@ func (s Server) getTools() []openai.ChatCompletionTool {
 	}
 }
 
-func (s Server) saveHistory(chat Chat, answer string) {
+func (s *Server) saveHistory(chat Chat, answer string) {
 	msg := openai.NewChatAssistantMessage(answer)
 	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: &answer, ChatID: chat.ChatID})
 	log.Printf("chat history len: %d", len(chat.History))
