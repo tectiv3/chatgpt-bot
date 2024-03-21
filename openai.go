@@ -22,14 +22,9 @@ func (s Server) answer(message string, c tele.Context, image *string) (string, e
 	history := []openai.ChatMessage{system}
 	for _, h := range chat.History {
 		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
-			content := []openai.ContentType{{Type: "text", Text: h.Content}}
+			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
 			if image != nil && h.Content == &message {
-				content = append(content, openai.ContentType{
-					Type: "image_url",
-					ImageURL: &struct {
-						URL string `json:"url"`
-					}{URL: *image},
-				})
+				content = append(content, openai.NewChatMessageContentWithImageURL(*image))
 			}
 			history = append(history, openai.ChatMessage{Role: h.Role, Content: content})
 		}
@@ -41,10 +36,10 @@ func (s Server) answer(message string, c tele.Context, image *string) (string, e
 	}
 	options := openai.ChatCompletionOptions{}
 	if image == nil {
-		options = s.setFunctions()
+		options.SetTools(s.getTools())
 	}
 	s.ai.Verbose = s.conf.Verbose
-	options.SetMaxTokens(3000)
+	//options.SetMaxTokens(3000)
 	model := chat.ModelName
 	if image != nil {
 		model = "gpt-4-vision-preview"
@@ -65,13 +60,18 @@ func (s Server) answer(message string, c tele.Context, image *string) (string, e
 	_ = c.Notify(tele.Typing)
 
 	result := response.Choices[0].Message
-	if result.FunctionCall != nil {
+	if len(result.ToolCalls) > 0 {
 		return s.handleFunctionCall(c, result)
 	}
 
 	var answer string
 	if len(response.Choices) > 0 {
-		answer = *response.Choices[0].Message.Content
+		//log.Printf("%+v", response.Choices[0].Message)
+		answer, err = response.Choices[0].Message.ContentString()
+		if err != nil {
+			log.Printf("failed to get content string: %s", err)
+			return err.Error(), err
+		}
 		chat.TotalTokens += response.Usage.TotalTokens
 		s.saveHistory(chat, answer)
 	} else {
@@ -91,7 +91,9 @@ func (s Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, er
 
 	history := []openai.ChatMessage{system}
 	for _, h := range chatHistory {
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: []openai.ContentType{{Type: "text", Text: h.Content}}})
+		history = append(history, openai.ChatMessage{Role: h.Role, Content: []openai.ChatMessageContent{{
+			Type: "text", Text: h.Content,
+		}}})
 	}
 	history = append(history, msg)
 
@@ -160,9 +162,40 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	defer close(data)
 	defer close(done)
 
-	options := s.setFunctions()
+	//type completion struct {
+	//	response openai.ChatCompletion
+	//	done     bool
+	//	err      error
+	//}
+	//ch := make(chan completion, 1)
+	//
+	//SetStream(func(response openai.ChatCompletion, done bool, err error) {
+	//	ch <- completion{response: response, done: done, err: err}
+	//	if done {
+	//		toolCall := response.Choices[0].Message.ToolCalls[0]
+	//		function := toolCall.Function
+	//
+	//		// parse returned arguments into a struct
+	//		type parsed struct {
+	//			Locations []string `json:"locations"`
+	//			Unit      string   `json:"unit"`
+	//		}
+	//		var arguments parsed
+	//		if err := toolCall.ArgumentsInto(&arguments); err != nil {
+	//			t.Errorf("failed to parse arguments into struct: %s", err)
+	//		} else {
+	//			t.Logf("will call %s(%+v, \"%s\")", function.Name, arguments.Locations, arguments.Unit)
+	//
+	//			// NOTE: get your local function's result with the generated arguments
+	//		}
+	//
+	//		close(ch)
+	//	}
+	//})
 	_, err := s.ai.CreateChatCompletion(chat.ModelName, history,
-		options.
+		openai.ChatCompletionOptions{}.
+			SetTools(s.getTools()).
+			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature).
 			SetStream(func(r openai.ChatCompletion, d bool, e error) {
@@ -189,28 +222,30 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 		SentMessage = *msgPointer
 	}
 	tokens := 0
-	var msg *openai.ChatMessageResponse
+	var msg *openai.ChatMessage
 	for {
 		select {
 		case payload := <-data:
 			if payload.Choices[0].Delta.Content != nil {
-				result += *payload.Choices[0].Delta.Content
+				if c, err := payload.Choices[0].Delta.ContentString(); err == nil {
+					result += c
+				}
 				tokens++
 			}
 			// every 10 tokens update the message
 			if tokens%10 == 0 {
-				c.Bot().Edit(&SentMessage, result)
+				_, _ = c.Bot().Edit(&SentMessage, result)
 			}
-			if payload.Choices[0].Message.FunctionCall != nil && payload.Choices[0].Message.FunctionCall.Name != "" {
+			if len(payload.Choices[0].Message.ToolCalls) > 0 {
 				msg = &payload.Choices[0].Message
 			}
 
 		case err := <-done:
 			if msg != nil {
-				if msg.FunctionCall != nil {
+				if len(msg.ToolCalls) > 0 {
 					result, err = s.handleFunctionCall(c, *msg)
 
-					c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
+					_, _ = c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
 						ReplyTo:   c.Message(),
 						ParseMode: tele.ModeMarkdown,
 					})
@@ -221,7 +256,7 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 			if len(result) == 0 {
 				return "", err
 			}
-			c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
+			_, _ = c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			})
@@ -237,54 +272,28 @@ func (s Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMes
 	}
 }
 
-func (s Server) setFunctions() openai.ChatCompletionOptions {
-	return openai.ChatCompletionOptions{}.
-		SetFunctions([]openai.ChatCompletionFunction{
-			openai.NewChatCompletionFunction(
-				"set_reminder",
-				"Set a reminder to do something at a specific time.",
-				map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"reminder": map[string]any{
-							"type":        "string",
-							"description": "A reminder of what to do, e.g. 'buy groceries'.",
-						},
-						"time": map[string]any{
-							"type":        "number",
-							"description": "A time at which to be reminded in minutes from now, e.g. 1440.",
-						},
-					},
-					"required": []string{"reminder", "time"},
-				},
-			),
-			openai.NewChatCompletionFunction(
-				"make_summary",
-				"Make a summary of a web page.",
-				map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"url": map[string]any{
-							"type":        "string",
-							"description": "A valid URL to a web page.",
-						},
-					},
-					"required": []string{"url"},
-				},
-			),
-			openai.NewChatCompletionFunction(
-				"get_crypto_rate",
-				"Get the current rate of various crypto currencies",
-				map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"asset": map[string]any{"type": "string", "description": "Asset of the crypto"},
-					},
-					"required": []string{"asset"},
-				},
-			),
-		}).
-		SetFunctionCall(openai.ChatCompletionFunctionCallAuto)
+func (s Server) getTools() []openai.ChatCompletionTool {
+	return []openai.ChatCompletionTool{
+		openai.NewChatCompletionTool(
+			"set_reminder",
+			"Set a reminder to do something at a specific time.",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("reminder", "string", "A reminder of what to do, e.g. 'buy groceries'").
+				AddPropertyWithDescription("time", "number", "A time at which to be reminded in minutes from now, e.g. 1440").
+				SetRequiredParameters([]string{"reminder", "time"})),
+		openai.NewChatCompletionTool(
+			"make_summary",
+			"Make a summary of a web page.",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
+				SetRequiredParameters([]string{"url"})),
+		openai.NewChatCompletionTool(
+			"get_crypto_rate",
+			"Get the current rate of various crypto currencies",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
+				SetRequiredParameters([]string{"asset"})),
+	}
 }
 
 func (s Server) saveHistory(chat Chat, answer string) {
@@ -294,7 +303,7 @@ func (s Server) saveHistory(chat Chat, answer string) {
 
 	// iterate over history
 	// drop messages that are older than chat.ConversationAge days
-	history := []ChatMessage{}
+	var history []ChatMessage
 	for _, h := range chat.History {
 		if h.ID == 0 {
 			history = append(history, h)
@@ -316,7 +325,7 @@ func (s Server) saveHistory(chat Chat, answer string) {
 			log.Println("Failed to summarise chat history: ", err)
 			return
 		}
-		summary := *response.Choices[0].Message.Content
+		summary, _ := response.Choices[0].Message.ContentString()
 
 		if s.conf.Verbose {
 			log.Println("Summary: ", summary)

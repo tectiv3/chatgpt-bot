@@ -29,6 +29,8 @@ const (
 	cmdToJapanese = "/ja"
 	cmdToEnglish  = "/en"
 	cmdToRussian  = "/ru"
+	cmdToItalian  = "/it"
+	cmdToChinese  = "/cn"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
@@ -37,10 +39,10 @@ const (
 )
 
 var (
-	menu   = &tele.ReplyMarkup{ResizeKeyboard: true}
-	btn3   = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
-	btn4   = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-1106-preview"}
-	btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
+	menu = &tele.ReplyMarkup{ResizeKeyboard: true}
+	btn3 = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
+	btn4 = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
+	//btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
 	//btn4v  = tele.Btn{Text: "GPT4-V", Unique: "btnModel", Data: "gpt-4-vision-preview"}
 	btnT0  = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2  = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
@@ -66,18 +68,18 @@ func (s Server) run() {
 	b.Use(s.whitelist())
 	s.bot = b
 
-	usage, err := s.getUsageMonth()
-	if err != nil {
-		log.Println(err)
-	}
-	log.Printf("Current usage: %0.2f", usage)
+	//usage, err := s.getUsageMonth()
+	//if err != nil {
+	//	log.Println(err)
+	//}
+	//log.Printf("Current usage: %0.2f", usage)
 
 	b.Handle(cmdStart, func(c tele.Context) error {
 		return c.Send(msgStart, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
-		menu.Inline(menu.Row(btn3, btn4, btn316))
+		menu.Inline(menu.Row(btn3, btn4))
 
 		return c.Send("Select model", menu)
 	})
@@ -194,6 +196,18 @@ func (s Server) run() {
 		return nil
 	})
 
+	b.Handle(cmdToItalian, func(c tele.Context) error {
+		go s.onTranslate(c, "To Italian: ")
+
+		return nil
+	})
+
+	b.Handle(cmdToChinese, func(c tele.Context) error {
+		go s.onTranslate(c, "To Chinese: ")
+
+		return nil
+	})
+
 	b.Handle(&btn3, func(c tele.Context) error {
 		log.Printf("%s selected", c.Data())
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
@@ -204,14 +218,14 @@ func (s Server) run() {
 	})
 
 	// On inline button pressed (callback)
-	b.Handle(&btn316, func(c tele.Context) error {
-		log.Printf("%s selected", c.Data())
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
-		chat.ModelName = c.Data()
-		s.db.Save(&chat)
-
-		return c.Edit("Model set to " + c.Data())
-	})
+	//b.Handle(&btn316, func(c tele.Context) error {
+	//	log.Printf("%s selected", c.Data())
+	//	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	//	chat.ModelName = c.Data()
+	//	s.db.Save(&chat)
+	//
+	//	return c.Edit("Model set to " + c.Data())
+	//})
 
 	// On inline button pressed (callback)
 	//b.Handle(&btn4v, func(c tele.Context) error {
@@ -451,7 +465,7 @@ func (s Server) complete(c tele.Context, message string, reply bool, image *stri
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
 		}); err != nil {
-			c.Bot().Edit(sentMessage, text)
+			_, _ = c.Bot().Edit(sentMessage, text)
 		}
 		return
 	}
@@ -469,8 +483,9 @@ func (s Server) getChat(chatID int64, username string) Chat {
 	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
-		chat.ModelName = "gpt-3.5-turbo"
+		chat.ModelName = "gpt-4-turbo-preview"
 		chat.Temperature = 0.8
+		chat.Stream = true
 		chat.ConversationAge = 1
 		s.db.Save(&chat)
 	}

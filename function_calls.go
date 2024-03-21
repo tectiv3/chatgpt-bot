@@ -14,80 +14,80 @@ import (
 	"time"
 )
 
-func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessageResponse) (string, error) {
-	functionName := result.FunctionCall.Name
-	if functionName == "" {
-		err := fmt.Sprint("there was no returned function call name")
-		log.Println(err)
+func (s Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (string, error) {
+	// refactor to handle multiple function calls not just the first one
+	for _, toolCall := range result.ToolCalls {
+		function := toolCall.Function
 
-		return err, fmt.Errorf(err)
+		if function.Name == "" {
+			err := fmt.Sprint("there was no returned function call name")
+			log.Println(err)
+
+			return err, fmt.Errorf(err)
+		}
+		//if function.Arguments == nil {
+		//	err := fmt.Sprint("there were no returned function call arguments")
+		//	log.Println(err)
+		//
+		//	return err, fmt.Errorf(err)
+		//}
+		//arguments, _ := toolCall.ArgumentsParsed()
+
+		switch function.Name {
+		case "set_reminder":
+			type parsed struct {
+				Reminder string `json:"reminder"`
+				Minutes  int64  `json:"time"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			} else {
+				log.Printf("Will call %s(\"%s\", %d)", function.Name, arguments.Reminder, arguments.Minutes)
+
+				if err := s.setReminder(c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
+					return "", err
+				}
+			}
+
+			return "Reminder set", nil
+		case "make_summary":
+			type parsed struct {
+				URL string `json:"url"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			} else {
+				log.Printf("Will call %s(\"%s\")", function.Name, arguments.URL)
+
+				go s.getPageSummary(c.Chat().ID, arguments.URL)
+
+				return "Downloading summary. Please wait.", nil
+			}
+		case "get_crypto_rate":
+			type parsed struct {
+				Asset string `json:"asset"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			} else {
+				log.Printf("Will call %s(\"%s\")", function.Name, arguments.Asset)
+
+				return s.getCryptoRate(arguments.Asset)
+			}
+		}
+		arguments, _ := toolCall.ArgumentsParsed()
+		log.Printf("Got a function call %s(%v)", function.Name, arguments)
+
+		return fmt.Sprintf("Function call in response (%s)", function.Name), nil
 	}
-	if result.FunctionCall.Arguments == nil {
-		err := fmt.Sprint("there were no returned function call arguments")
-		log.Println(err)
 
-		return err, fmt.Errorf(err)
-	}
-	arguments, _ := result.FunctionCall.ArgumentsParsed()
-
-	if functionName == "set_reminder" {
-		var reminder string
-		var minutes int64
-		if l, exists := arguments["reminder"]; exists {
-			reminder = l.(string)
-		} else {
-			err := fmt.Sprint("there was no returned parameter 'reminder' from function call")
-			log.Println(err)
-
-			return err, fmt.Errorf(err)
-		}
-		if u, exists := arguments["time"]; exists {
-			minutes = int64(u.(float64))
-		} else {
-			err := fmt.Sprint("there was no returned parameter 'time' from function call")
-			log.Println(err)
-
-			return err, fmt.Errorf(err)
-		}
-		log.Printf("Will call %s(\"%s\", %d)", functionName, reminder, minutes)
-
-		if err := s.setReminder(c.Chat().ID, reminder, minutes); err != nil {
-			return "", err
-		}
-
-		return "Reminder set", nil
-	} else if functionName == "make_summary" {
-		var url string
-		if l, exists := arguments["url"]; exists {
-			url = l.(string)
-		} else {
-			err := fmt.Sprint("there was no returned parameter 'url' from function call")
-			log.Println(err)
-
-			return err, fmt.Errorf(err)
-		}
-		log.Printf("Will call %s(\"%s\")", functionName, url)
-
-		go s.getPageSummary(c.Chat().ID, url)
-
-		return "Downloading summary. Please wait.", nil
-	} else if functionName == "get_crypto_rate" {
-		var asset string
-		if l, exists := arguments["asset"]; exists {
-			asset = l.(string)
-		} else {
-			err := fmt.Sprint("there was no returned parameter 'asset' from function call")
-			log.Println(err)
-
-			return err, fmt.Errorf(err)
-		}
-		log.Printf("Will call %s(\"%s\")", functionName, asset)
-
-		return s.getCryptoRate(asset)
-	}
-	log.Printf("Got a function call %s(%v)", functionName, arguments)
-
-	return fmt.Sprintf("Function call in response (%s)", functionName), nil
+	return "", nil
 }
 
 func (s Server) setReminder(chatID int64, reminder string, minutes int64) error {
@@ -133,12 +133,11 @@ func (s Server) getPageSummary(chatID int64, url string) {
 	chat := s.getChat(chatID, "")
 	chat.TotalTokens += response.Usage.TotalTokens
 	s.db.Save(&chat)
+	str, _ := response.Choices[0].Message.ContentString()
 	if _, err := s.bot.Send(tele.ChatID(chatID),
-		*response.Choices[0].Message.Content,
+		str,
 		"text",
-		&tele.SendOptions{
-			ParseMode: tele.ModeMarkdown,
-		},
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	); err != nil {
 		log.Println(err)
 	}
