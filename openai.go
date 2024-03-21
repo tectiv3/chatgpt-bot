@@ -1,13 +1,9 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
-	"io"
 	"log"
-	"net/http"
 	"time"
 )
 
@@ -110,50 +106,6 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	}
 
 	return &response, nil
-}
-
-// get billing usage
-func (s *Server) getUsageMonth() (float64, error) {
-	now := time.Now()
-	//firstDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	//lastDay := firstDay.AddDate(0, 1, -1)
-
-	client := &http.Client{}
-	client.Timeout = 10 * time.Second
-
-	req, err := http.NewRequest("GET", "https://api.openai.com/v1/usage", nil)
-	if err != nil {
-		return 0, err
-	}
-
-	query := req.URL.Query()
-	query.Add("date", now.Format("2006-01-02"))
-	//query.Add("end_date", lastDay.Format("2006-01-02"))
-	req.URL.RawQuery = query.Encode()
-
-	req.Header.Add("Authorization", "Bearer "+s.conf.OpenAIAPIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		// dump response body
-		if body, err := io.ReadAll(resp.Body); err == nil {
-			log.Printf("Response body: %s", string(body))
-		}
-		return 0, fmt.Errorf("http status %d", resp.StatusCode)
-	}
-
-	var usageData UsageResponseBody
-	err = json.NewDecoder(resp.Body).Decode(&usageData)
-	if err != nil {
-		return 0, err
-	}
-
-	return usageData.CurrentUsageUsd / 100, nil
 }
 
 // launchStream starts a stream with the given chat and history
