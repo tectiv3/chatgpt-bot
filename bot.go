@@ -39,10 +39,11 @@ const (
 )
 
 var (
-	menu      = &tele.ReplyMarkup{ResizeKeyboard: true}
-	replyMenu = &tele.ReplyMarkup{ResizeKeyboard: true}
-	btn3      = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
-	btn4      = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
+	menu       = &tele.ReplyMarkup{ResizeKeyboard: true}
+	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
+	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
+	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
+	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
 	//btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
 	//btn4v  = tele.Btn{Text: "GPT4-V", Unique: "btnModel", Data: "gpt-4-vision-preview"}
 	btnT0    = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
@@ -69,10 +70,10 @@ func (s *Server) run() {
 	//b.Use(middleware.Logger())
 	s.loadUsers()
 
-	s.RLock()
+	s.Lock()
 	b.Use(s.whitelist())
 	s.bot = b
-	s.RUnlock()
+	s.Unlock()
 	replyMenu.Inline(menu.Row(btnReset))
 
 	//usage, err := s.getUsageMonth()
@@ -349,8 +350,8 @@ func (s *Server) run() {
 }
 
 func (s *Server) loadUsers() {
-	s.RLock()
-	defer s.RUnlock()
+	s.Lock()
+	defer s.Unlock()
 	admins := s.conf.AllowedTelegramUsers
 	var usernames []string
 	s.db.Model(&User{}).Pluck("username", &usernames)

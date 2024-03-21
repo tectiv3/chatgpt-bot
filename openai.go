@@ -32,7 +32,7 @@ func (s *Server) answer(message string, c tele.Context, image *string) (string, 
 	log.Printf("Chat history %d\n", len(history))
 
 	if chat.Stream && image == nil {
-		return s.launchStream(chat, c, history)
+		return s.launchStream(&chat, c, history)
 	}
 	options := openai.ChatCompletionOptions{}
 	if image == nil {
@@ -72,7 +72,7 @@ func (s *Server) answer(message string, c tele.Context, image *string) (string, 
 			return err.Error(), err
 		}
 		chat.TotalTokens += response.Usage.TotalTokens
-		s.saveHistory(chat, answer)
+		s.saveHistory(&chat, answer)
 	} else {
 		answer = "No response from API."
 	}
@@ -84,6 +84,7 @@ func (s *Server) answer(message string, c tele.Context, image *string) (string, 
 	return answer, nil
 }
 
+// summarize summarizes the chat history
 func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
 	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.")
 	system := openai.NewChatSystemMessage("Be as brief as possible")
@@ -155,42 +156,16 @@ func (s *Server) getUsageMonth() (float64, error) {
 	return usageData.CurrentUsageUsd / 100, nil
 }
 
-func (s *Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
+// launchStream starts a stream with the given chat and history
+func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
+	chat.mutex.Lock()
+	defer chat.mutex.Unlock()
+
 	data := make(chan openai.ChatCompletion)
 	done := make(chan error)
 	defer close(data)
 	defer close(done)
 
-	//type completion struct {
-	//	response openai.ChatCompletion
-	//	done     bool
-	//	err      error
-	//}
-	//ch := make(chan completion, 1)
-	//
-	//SetStream(func(response openai.ChatCompletion, done bool, err error) {
-	//	ch <- completion{response: response, done: done, err: err}
-	//	if done {
-	//		toolCall := response.Choices[0].Message.ToolCalls[0]
-	//		function := toolCall.Function
-	//
-	//		// parse returned arguments into a struct
-	//		type parsed struct {
-	//			Locations []string `json:"locations"`
-	//			Unit      string   `json:"unit"`
-	//		}
-	//		var arguments parsed
-	//		if err := toolCall.ArgumentsInto(&arguments); err != nil {
-	//			t.Errorf("failed to parse arguments into struct: %s", err)
-	//		} else {
-	//			t.Logf("will call %s(%+v, \"%s\")", function.Name, arguments.Locations, arguments.Unit)
-	//
-	//			// NOTE: get your local function's result with the generated arguments
-	//		}
-	//
-	//		close(ch)
-	//	}
-	//})
 	_, err := s.ai.CreateChatCompletion(chat.ModelName, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getTools()).
@@ -207,7 +182,11 @@ func (s *Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMe
 	if err != nil {
 		return err.Error(), err
 	}
-
+	//if chat.LastMessage != nil {
+	//	log.Println("Removing last message")
+	//	_, _ = c.Bot().Edit(chat.LastMessage, removeMenu)
+	//	chat.LastMessage = nil
+	//}
 	result := ""
 	reply := ""
 	SentMessage := tele.Message{}
@@ -220,6 +199,7 @@ func (s *Server) launchStream(chat Chat, c tele.Context, history []openai.ChatMe
 		})
 		SentMessage = *msgPointer
 	}
+	//chat.LastMessage = &SentMessage
 	tokens := 0
 	var msg *openai.ChatMessage
 	for {
@@ -295,7 +275,7 @@ func (s *Server) getTools() []openai.ChatCompletionTool {
 	}
 }
 
-func (s *Server) saveHistory(chat Chat, answer string) {
+func (s *Server) saveHistory(chat *Chat, answer string) {
 	msg := openai.NewChatAssistantMessage(answer)
 	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: &answer, ChatID: chat.ChatID})
 	log.Printf("chat history len: %d", len(chat.History))

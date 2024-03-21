@@ -46,13 +46,13 @@ func main() {
 
 		// Migrate the schema
 		if err := db.AutoMigrate(&User{}); err != nil {
-			panic("failed to migrate database")
+			panic("failed to migrate user")
 		}
 		if err := db.AutoMigrate(&Chat{}); err != nil {
-			panic("failed to migrate database")
+			panic("failed to migrate chat")
 		}
 		if err := db.AutoMigrate(&ChatMessage{}); err != nil {
-			panic("failed to migrate database")
+			panic("failed to migrate chat message")
 		}
 
 		log.Printf("Allowed users: %d\n", len(conf.AllowedTelegramUsers))

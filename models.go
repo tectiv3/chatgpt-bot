@@ -77,7 +77,9 @@ type Chat struct {
 	Stream          bool
 	Voice           bool
 	ConversationAge int64
-	TotalTokens     int `json:"total_tokens"`
+	TotalTokens     int        `json:"total_tokens"`
+	mutex           sync.Mutex `gorm:"-"`
+	//LastMessage     *tele.Message `gorm:"-"`
 }
 
 type ChatMessage struct {
