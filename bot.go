@@ -44,16 +44,14 @@ var (
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
 	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
-	//btn316 = tele.Btn{Text: "GPT3-16k", Unique: "btnModel", Data: "gpt-3.5-turbo-16k"}
-	//btn4v  = tele.Btn{Text: "GPT4-V", Unique: "btnModel", Data: "gpt-4-vision-preview"}
-	btnT0    = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
-	btnT2    = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
-	btnT4    = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
-	btnT6    = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
-	btnT8    = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
-	btnT10   = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
-	btnReset = tele.Btn{Text: "Reset", Unique: "btnreset", Data: "r"}
-	btnEmpty = tele.Btn{Text: "", Data: "no_data"}
+	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
+	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
+	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
+	btnT6      = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
+	btnT8      = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
+	btnT10     = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
+	btnReset   = tele.Btn{Text: "Reset", Unique: "btnreset", Data: "r"}
+	btnEmpty   = tele.Btn{Text: "", Data: "no_data"}
 )
 
 // launch bot with given parameters

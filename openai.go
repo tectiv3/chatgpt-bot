@@ -33,7 +33,7 @@ func (s *Server) answer(message string, c tele.Context, image *string) (string, 
 	}
 	options := openai.ChatCompletionOptions{}
 	if image == nil {
-		options.SetTools(s.getTools())
+		options.SetTools(s.getFunctionTools())
 	}
 	s.ai.Verbose = s.conf.Verbose
 	//options.SetMaxTokens(3000)
@@ -121,7 +121,7 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 
 	if _, err := s.ai.CreateChatCompletion(chat.ModelName, history,
 		openai.ChatCompletionOptions{}.
-			SetTools(s.getTools()).
+			SetTools(s.getFunctionTools()).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature).
@@ -205,30 +205,6 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 
 			return "", err
 		}
-	}
-}
-
-func (s *Server) getTools() []openai.ChatCompletionTool {
-	return []openai.ChatCompletionTool{
-		openai.NewChatCompletionTool(
-			"set_reminder",
-			"Set a reminder to do something at a specific time.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("reminder", "string", "A reminder of what to do, e.g. 'buy groceries'").
-				AddPropertyWithDescription("time", "number", "A time at which to be reminded in minutes from now, e.g. 1440").
-				SetRequiredParameters([]string{"reminder", "time"})),
-		openai.NewChatCompletionTool(
-			"make_summary",
-			"Make a summary of a web page.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
-				SetRequiredParameters([]string{"url"})),
-		openai.NewChatCompletionTool(
-			"get_crypto_rate",
-			"Get the current rate of various crypto currencies",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
-				SetRequiredParameters([]string{"asset"})),
 	}
 }
 
