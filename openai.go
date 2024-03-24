@@ -4,6 +4,7 @@ import (
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -118,7 +119,7 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 	defer close(data)
 	defer close(done)
 
-	_, err := s.ai.CreateChatCompletion(chat.ModelName, history,
+	if _, err := s.ai.CreateChatCompletion(chat.ModelName, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getTools()).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
@@ -130,28 +131,32 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 				} else {
 					data <- r
 				}
-			}))
-	if err != nil {
+			})); err != nil {
 		return err.Error(), err
 	}
-	//if chat.LastMessage != nil {
-	//	log.Println("Removing last message")
-	//	_, _ = c.Bot().Edit(chat.LastMessage, removeMenu)
-	//	chat.LastMessage = nil
-	//}
+
+	if chat.MessageID != nil {
+		log.Println("Removing last message")
+		if _, err := c.Bot().EditReplyMarkup(
+			tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID}, removeMenu); err != nil {
+			log.Println("Failed to remove last message: ", err)
+		}
+		chat.MessageID = nil
+	}
 	result := ""
 	reply := ""
-	SentMessage := tele.Message{}
+	sentMessage := tele.Message{}
 	if c.Get("reply") != nil {
 		reply = c.Get("reply").(tele.Message).Text + "\n"
-		SentMessage = c.Get("reply").(tele.Message)
+		sentMessage = c.Get("reply").(tele.Message)
 	} else {
 		msgPointer, _ := c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
 		})
-		SentMessage = *msgPointer
+		sentMessage = *msgPointer
 	}
-	//chat.LastMessage = &SentMessage
+	chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
+
 	tokens := 0
 	var msg *openai.ChatMessage
 	for {
@@ -165,7 +170,7 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 			}
 			// every 10 tokens update the message
 			if tokens%10 == 0 {
-				_, _ = c.Bot().Edit(&SentMessage, result)
+				_, _ = c.Bot().Edit(&sentMessage, result)
 			}
 			if len(payload.Choices[0].Message.ToolCalls) > 0 {
 				msg = &payload.Choices[0].Message
@@ -176,7 +181,7 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 				if len(msg.ToolCalls) > 0 {
 					result, err = s.handleFunctionCall(c, *msg)
 
-					_, _ = c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
+					_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
 						ReplyTo:   c.Message(),
 						ParseMode: tele.ModeMarkdown,
 					}, replyMenu)
@@ -187,7 +192,7 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 			if len(result) == 0 {
 				return "", err
 			}
-			_, _ = c.Bot().Edit(&SentMessage, reply+result, "text", &tele.SendOptions{
+			_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			}, replyMenu)

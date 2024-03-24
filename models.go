@@ -68,8 +68,8 @@ type User struct {
 
 type Chat struct {
 	gorm.Model
-	ChatID          int64
-	UserID          uint `json:"user_id" gorm:"nullable:true"`
+	ChatID          int64 `sql:"chat_id" json:"chat_id"`
+	UserID          uint  `json:"user_id" gorm:"nullable:true"`
 	History         []ChatMessage
 	Temperature     float64
 	ModelName       string
@@ -79,16 +79,17 @@ type Chat struct {
 	ConversationAge int64
 	TotalTokens     int        `json:"total_tokens"`
 	mutex           sync.Mutex `gorm:"-"`
-	//LastMessage     *tele.Message `gorm:"-"`
+	MessageID       *string    `json:"last_message_id"`
 }
 
 type ChatMessage struct {
 	ID        uint `gorm:"primarykey"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	ChatID    int64
-	Role      openai.ChatMessageRole `json:"role"`
-	Content   *string                `json:"content,omitempty"`
+	ChatID    int64 `sql:"chat_id" json:"chat_id"`
+
+	Role    openai.ChatMessageRole `json:"role"`
+	Content *string                `json:"content,omitempty"`
 }
 
 // WAV writer struct

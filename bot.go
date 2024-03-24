@@ -53,6 +53,7 @@ var (
 	btnT8    = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
 	btnT10   = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
 	btnReset = tele.Btn{Text: "Reset", Unique: "btnreset", Data: "r"}
+	btnEmpty = tele.Btn{Text: "", Data: "no_data"}
 )
 
 // launch bot with given parameters
@@ -75,6 +76,7 @@ func (s *Server) run() {
 	s.bot = b
 	s.Unlock()
 	replyMenu.Inline(menu.Row(btnReset))
+	removeMenu.Inline(menu.Row(btnEmpty))
 
 	//usage, err := s.getUsageMonth()
 	//if err != nil {
@@ -431,7 +433,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		}
 	}()
 
-	query := c.Message().Payload
+	query := c.Message().Text
 	if len(query) < 1 {
 		_ = c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
 			ReplyTo: c.Message(),
@@ -440,7 +442,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		return
 	}
 
-	response, err := s.answer(prefix+query, c, nil)
+	response, err := s.answer(fmt.Sprintf("%s\n%s", prefix, query), c, nil)
 	if err != nil {
 		log.Println(err)
 		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
