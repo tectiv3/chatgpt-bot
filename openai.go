@@ -8,6 +8,54 @@ import (
 	"time"
 )
 
+func (s *Server) simpleAnswer(request string, c tele.Context) (string, error) {
+	_ = c.Notify(tele.Typing)
+	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	msg := openai.NewChatUserMessage(request)
+	system := openai.NewChatSystemMessage(chat.MasterPrompt)
+	s.ai.Verbose = s.conf.Verbose
+	history := []openai.ChatMessage{system}
+	history = append(history, msg)
+
+	response, err := s.ai.CreateChatCompletion(chat.ModelName, history,
+		openai.ChatCompletionOptions{}.
+			SetUser(userAgent(c.Sender().ID)).
+			SetTemperature(chat.Temperature))
+
+	if err != nil {
+		log.Printf("failed to create chat completion: %s", err)
+		return err.Error(), err
+	}
+	if s.conf.Verbose {
+		log.Printf("[verbose] %s ===> %+v", request, response.Choices)
+	}
+	_ = c.Notify(tele.Typing)
+
+	result := response.Choices[0].Message
+	if len(result.ToolCalls) > 0 {
+		return s.handleFunctionCall(c, result)
+	}
+
+	var answer string
+	if len(response.Choices) > 0 {
+		answer, err = response.Choices[0].Message.ContentString()
+		if err != nil {
+			log.Printf("failed to get content string: %s", err)
+			return err.Error(), err
+		}
+		chat.TotalTokens += response.Usage.TotalTokens
+		s.db.Save(&chat)
+	} else {
+		answer = "No response from API."
+	}
+
+	if s.conf.Verbose {
+		log.Printf("[verbose] sending answer: '%s'", answer)
+	}
+
+	return answer, nil
+}
+
 // generate an answer to given message and send it to the chat
 func (s *Server) answer(message string, c tele.Context, image *string) (string, error) {
 	_ = c.Notify(tele.Typing)

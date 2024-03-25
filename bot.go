@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -342,9 +343,52 @@ func (s *Server) loadUsers() {
 }
 
 func (s *Server) onDocument(c tele.Context) {
-	// body
-	log.Printf("Got a file: %d", c.Message().Document.FileSize)
-	// c.Message().Photo
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(string(debug.Stack()), err)
+		}
+	}()
+	log.Printf("Got a file: %s (%s), size: %d",
+		c.Message().Document.FileName,
+		c.Message().Document.MIME,
+		c.Message().Document.FileSize)
+	if c.Message().Document.MIME != "text/plain" {
+		_ = c.Send("Please provide a text file", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return
+	}
+
+	reader, err := s.bot.File(&c.Message().Document.File)
+	if err != nil {
+		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return
+	}
+	defer reader.Close()
+	bytes, err := io.ReadAll(reader)
+	if err != nil {
+		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return
+	}
+
+	response, err := s.simpleAnswer(string(bytes), c)
+	if err != nil {
+		_ = c.Send(response)
+		return
+	}
+	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
+
+	if len(response) == 0 {
+		return
+	}
+
+	if len(response) > 4096 {
+		file := tele.FromReader(strings.NewReader(response))
+		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
+		return
+	}
+	_ = c.Send(response, "text", &tele.SendOptions{
+		ReplyTo:   c.Message(),
+		ParseMode: tele.ModeMarkdown,
+	})
 }
 
 func (s *Server) onText(c tele.Context) {
