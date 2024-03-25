@@ -76,12 +76,6 @@ func (s *Server) run() {
 	replyMenu.Inline(menu.Row(btnReset))
 	removeMenu.Inline(menu.Row(btnEmpty))
 
-	//usage, err := s.getUsageMonth()
-	//if err != nil {
-	//	log.Println(err)
-	//}
-	//log.Printf("Current usage: %0.2f", usage)
-
 	b.Handle(cmdStart, func(c tele.Context) error {
 		return c.Send(msgStart, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
@@ -226,26 +220,6 @@ func (s *Server) run() {
 	})
 
 	// On inline button pressed (callback)
-	//b.Handle(&btn316, func(c tele.Context) error {
-	//	log.Printf("%s selected", c.Data())
-	//	chat := s.getChat(c.Chat().ID, c.Sender().Username)
-	//	chat.ModelName = c.Data()
-	//	s.db.Save(&chat)
-	//
-	//	return c.Edit("Model set to " + c.Data())
-	//})
-
-	// On inline button pressed (callback)
-	//b.Handle(&btn4v, func(c tele.Context) error {
-	//	log.Printf("%s selected", c.Data())
-	//	chat := s.getChat(c.Chat().ID, c.Sender().Username)
-	//	chat.ModelName = c.Data()
-	//	s.db.Save(&chat)
-	//
-	//	return c.Edit("Model set to " + c.Data())
-	//})
-
-	// On inline button pressed (callback)
 	b.Handle(&btnT0, func(c tele.Context) error {
 		log.Printf("Temp: %s\n", c.Data())
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
@@ -258,13 +232,17 @@ func (s *Server) run() {
 	b.Handle(&btnReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		s.deleteHistory(chat.ID)
+		chat.MessageID = nil
+		s.db.Save(&chat)
 
-		return c.Edit(c.Message().Text)
+		return c.Edit(removeMenu)
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		s.deleteHistory(chat.ID)
+		chat.MessageID = nil
+		s.db.Save(&chat)
 
 		return nil //c.Send(msgReset, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
