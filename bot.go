@@ -52,14 +52,17 @@ var (
 	btnEmpty   = tele.Btn{Text: "", Data: "no_data"}
 )
 
+func init() {
+	replyMenu.Inline(menu.Row(btnReset))
+	removeMenu.Inline(menu.Row(btnEmpty))
+}
+
 // launch bot with given parameters
 func (s *Server) run() {
-	pref := tele.Settings{
+	b, err := tele.NewBot(tele.Settings{
 		Token:  s.conf.TelegramBotToken,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
-	}
-
-	b, err := tele.NewBot(pref)
+	})
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -71,8 +74,6 @@ func (s *Server) run() {
 	b.Use(s.whitelist())
 	s.bot = b
 	s.Unlock()
-	replyMenu.Inline(menu.Row(btnReset))
-	removeMenu.Inline(menu.Row(btnEmpty))
 
 	b.Handle(cmdStart, func(c tele.Context) error {
 		return c.Send(msgStart, "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -140,17 +141,17 @@ func (s *Server) run() {
 		return c.Send("Stream is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
-	b.Handle(cmdVoice, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
-		chat.Voice = !chat.Voice
-		s.db.Save(&chat)
-		status := "disabled"
-		if chat.Voice {
-			status = "enabled"
-		}
-
-		return c.Send("Voice is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
-	})
+	//b.Handle(cmdVoice, func(c tele.Context) error {
+	//	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	//	chat.Voice = !chat.Voice
+	//	s.db.Save(&chat)
+	//	status := "disabled"
+	//	if chat.Voice {
+	//		status = "enabled"
+	//	}
+	//
+	//	return c.Send("Voice is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
+	//})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
 
@@ -211,7 +212,6 @@ func (s *Server) run() {
 		return c.Edit("Model set to " + c.Data())
 	})
 
-	// On inline button pressed (callback)
 	b.Handle(&btnT0, func(c tele.Context) error {
 		log.Printf("Temp: %s\n", c.Data())
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
@@ -330,14 +330,14 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 		c.Set("reply", *sentMessage)
 	}
 
-	response, err := s.answer(message, c, image)
+	response, err := s.answer(c, message, image)
 	if err != nil {
 		_ = c.Send(response, replyMenu)
 		return
 	}
 	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
 
-	if len(response) == 0 {
+	if len(response) == 0 || chat.Stream {
 		return
 	}
 
@@ -345,10 +345,6 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 		file := tele.FromReader(strings.NewReader(response))
 		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
 		return
-	}
-
-	if chat.Voice {
-		s.sendAudio(c, response)
 	}
 
 	if !reply {
@@ -366,11 +362,6 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 		ReplyTo:   c.Message(),
 		ParseMode: tele.ModeMarkdown,
 	}, replyMenu)
-}
-
-// generate a user-agent value
-func userAgent(userID int64) string {
-	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
 }
 
 // Restrict returns a middleware that handles a list of provided

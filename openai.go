@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 	"log"
@@ -8,7 +9,12 @@ import (
 	"time"
 )
 
-func (s *Server) simpleAnswer(request string, c tele.Context) (string, error) {
+// generate a user-agent value
+func userAgent(userID int64) string {
+	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
+}
+
+func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	msg := openai.NewChatUserMessage(request)
@@ -57,7 +63,7 @@ func (s *Server) simpleAnswer(request string, c tele.Context) (string, error) {
 }
 
 // generate an answer to given message and send it to the chat
-func (s *Server) answer(message string, c tele.Context, image *string) (string, error) {
+func (s *Server) answer(c tele.Context, message string, image *string) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
 	msg := openai.NewChatUserMessage(message)
@@ -228,12 +234,16 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 			if msg != nil {
 				if len(msg.ToolCalls) > 0 {
 					result, err = s.handleFunctionCall(c, *msg)
+					if err != nil {
+						return err.Error(), err
+					}
 
 					_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
 						ReplyTo:   c.Message(),
 						ParseMode: tele.ModeMarkdown,
 					}, replyMenu)
-					return "", nil
+
+					return result, nil
 				}
 			}
 
@@ -244,14 +254,13 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			}, replyMenu)
+
 			log.Println("Stream total tokens: ", tokens)
 			chat.TotalTokens += tokens
-			if chat.Voice {
-				s.sendAudio(c, result)
-			}
+
 			s.saveHistory(chat, result)
 
-			return "", err
+			return result, nil
 		}
 	}
 }

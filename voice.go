@@ -114,7 +114,7 @@ func (s *Server) handleVoice(c tele.Context) {
 		return
 	}
 	audioFile := c.Message().Voice.File
-	log.Println("Audio file: ", audioFile.FilePath, audioFile.FileSize, audioFile.FileID, audioFile.FileURL)
+	//log.Println("Audio file: ", audioFile.FilePath, audioFile.FileSize, audioFile.FileID, audioFile.FileURL)
 
 	reader, err := c.Bot().File(&audioFile)
 	if err != nil {
@@ -159,15 +159,21 @@ func (s *Server) handleVoice(c tele.Context) {
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		s.deleteHistory(chat.ID)
 		log.Println("Resetting history")
-		if chat.Voice {
-			v := &tele.Voice{File: tele.FromDisk("erased.ogg")}
-			_ = c.Send(v)
-		}
+		v := &tele.Voice{File: tele.FromDisk("erased.ogg")}
+		_ = c.Send(v)
 
 		return
 	}
 
-	s.complete(c, *transcript.Text, false, nil)
+	response, err := s.answer(c, *transcript.Text, nil)
+
+	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
+
+	if len(response) == 0 {
+		return
+	}
+
+	s.sendAudio(c, response)
 
 	return
 }
@@ -199,7 +205,9 @@ func (s *Server) sendAudio(c tele.Context, text string) {
 	}
 
 	_, err = io.Copy(out, resp.Body)
-	out.Close()
+	if err := out.Close(); err != nil {
+		return
+	}
 	log.Println(out.Name())
 	v := &tele.Voice{File: tele.FromDisk(out.Name())}
 	defer os.Remove(out.Name())

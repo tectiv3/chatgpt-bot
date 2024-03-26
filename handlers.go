@@ -39,7 +39,7 @@ func (s *Server) onDocument(c tele.Context) {
 		return
 	}
 
-	response, err := s.simpleAnswer(string(bytes), c)
+	response, err := s.simpleAnswer(c, string(bytes))
 	if err != nil {
 		_ = c.Send(response)
 		return
@@ -152,7 +152,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		return
 	}
 
-	response, err := s.answer(fmt.Sprintf("%s\n%s", prefix, query), c, nil)
+	response, err := s.answer(c, fmt.Sprintf("%s\n%s", prefix, query), nil)
 	if err != nil {
 		log.Println(err)
 		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
