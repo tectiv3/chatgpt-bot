@@ -4,11 +4,7 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +22,7 @@ const (
 	cmdPromptCL   = "/defaultprompt"
 	cmdStream     = "/stream"
 	cmdStop       = "/stop"
+	cmdVoice      = "/voice"
 	cmdInfo       = "/info"
 	cmdToJapanese = "/ja"
 	cmdToEnglish  = "/en"
@@ -94,6 +91,20 @@ func (s *Server) run() {
 		return c.Send(fmt.Sprintf("Set temperature from less random (0.0) to more random (1.0.\nCurrent: %0.2f (default: 0.8)", chat.Temperature), menu)
 	})
 
+	b.Handle(cmdAge, func(c tele.Context) error {
+		age, err := strconv.Atoi(c.Message().Payload)
+		if err != nil {
+			return c.Send("Please provide a number", "text", &tele.SendOptions{
+				ReplyTo: c.Message(),
+			})
+		}
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat.ConversationAge = int64(age)
+		s.db.Save(&chat)
+
+		return c.Send(fmt.Sprintf("Conversation age set to %d days", age), "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
 	b.Handle(cmdPrompt, func(c tele.Context) error {
 		query := c.Message().Payload
 		if len(query) < 3 {
@@ -107,20 +118,6 @@ func (s *Server) run() {
 		s.db.Save(&chat)
 
 		return nil
-	})
-
-	b.Handle(cmdAge, func(c tele.Context) error {
-		age, err := strconv.Atoi(c.Message().Payload)
-		if err != nil {
-			return c.Send("Please provide a number", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
-		}
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
-		chat.ConversationAge = int64(age)
-		s.db.Save(&chat)
-
-		return c.Send(fmt.Sprintf("Conversation age set to %d days", age), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
@@ -143,7 +140,7 @@ func (s *Server) run() {
 		return c.Send("Stream is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
-	b.Handle("/voice", func(c tele.Context) error {
+	b.Handle(cmdVoice, func(c tele.Context) error {
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.Voice = !chat.Voice
 		s.db.Save(&chat)
@@ -166,12 +163,6 @@ func (s *Server) run() {
 		if chat.Stream {
 			status = "enabled"
 		}
-
-		//usage, err := s.getUsageMonth()
-		//if err != nil {
-		//	log.Println(err)
-		//}
-		//log.Printf("Current usage: %0.2f", usage)
 
 		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d",
 			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
@@ -245,7 +236,7 @@ func (s *Server) run() {
 		chat.MessageID = nil
 		s.db.Save(&chat)
 
-		return nil //c.Send(msgReset, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return nil
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
@@ -264,7 +255,7 @@ func (s *Server) run() {
 	b.Handle(tele.OnDocument, func(c tele.Context) error {
 		go s.onDocument(c)
 
-		return nil
+		return c.Send("Processing document. Please wait...")
 	})
 
 	b.Handle(tele.OnVoice, func(c tele.Context) error {
@@ -275,13 +266,6 @@ func (s *Server) run() {
 
 	b.Handle(tele.OnPhoto, func(c tele.Context) error {
 		go s.onPhoto(c)
-
-		return nil
-	})
-
-	b.Handle(tele.OnUserShared, func(c tele.Context) error {
-		user := c.Message().UserShared
-		log.Println("Shared user ID:", user.UserID)
 
 		return nil
 	})
@@ -326,176 +310,6 @@ func (s *Server) run() {
 	})
 
 	b.Start()
-}
-
-func (s *Server) loadUsers() {
-	s.Lock()
-	defer s.Unlock()
-	admins := s.conf.AllowedTelegramUsers
-	var usernames []string
-	s.db.Model(&User{}).Pluck("username", &usernames)
-	for _, username := range admins {
-		if !in_array(username, usernames) {
-			usernames = append(usernames, username)
-		}
-	}
-	s.users = append(s.users, usernames...)
-}
-
-func (s *Server) onDocument(c tele.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
-		}
-	}()
-	log.Printf("Got a file: %s (%s), size: %d",
-		c.Message().Document.FileName,
-		c.Message().Document.MIME,
-		c.Message().Document.FileSize)
-	if c.Message().Document.MIME != "text/plain" {
-		_ = c.Send("Please provide a text file", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		return
-	}
-
-	reader, err := s.bot.File(&c.Message().Document.File)
-	if err != nil {
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
-		return
-	}
-	defer reader.Close()
-	bytes, err := io.ReadAll(reader)
-	if err != nil {
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
-		return
-	}
-
-	response, err := s.simpleAnswer(string(bytes), c)
-	if err != nil {
-		_ = c.Send(response)
-		return
-	}
-	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
-
-	if len(response) == 0 {
-		return
-	}
-
-	if len(response) > 4096 {
-		file := tele.FromReader(strings.NewReader(response))
-		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
-		return
-	}
-	_ = c.Send(response, "text", &tele.SendOptions{
-		ReplyTo:   c.Message(),
-		ParseMode: tele.ModeMarkdown,
-	})
-}
-
-func (s *Server) onText(c tele.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
-		}
-	}()
-
-	message := c.Message().Payload
-	if len(message) == 0 {
-		message = c.Message().Text
-	}
-
-	s.complete(c, message, true, nil)
-}
-
-func (s *Server) onVoice(c tele.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
-		}
-	}()
-
-	log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
-
-	s.handleVoice(c)
-}
-
-func (s *Server) onPhoto(c tele.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
-		}
-	}()
-
-	log.Printf("Got a photo, size %d, caption: %s\n", c.Message().Photo.FileSize, c.Message().Photo.Caption)
-
-	s.handlePhoto(c)
-}
-
-func (s *Server) onShare(c tele.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
-		}
-	}()
-
-	//log.Printf("Got a share: %s\n", c.Message().Text)
-	if c.Message().Photo != nil {
-		s.handlePhoto(c)
-		return
-	}
-
-	s.onText(c)
-}
-
-func (s *Server) onTranslate(c tele.Context, prefix string) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
-		}
-	}()
-
-	query := c.Message().Text
-	if len(query) < 1 {
-		_ = c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
-
-		return
-	}
-
-	response, err := s.answer(fmt.Sprintf("%s\n%s", prefix, query), c, nil)
-	if err != nil {
-		log.Println(err)
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
-
-		return
-	}
-
-	_ = c.Send(response, "text", &tele.SendOptions{
-		ReplyTo:   c.Message(),
-		ParseMode: tele.ModeMarkdown,
-	}, replyMenu)
-}
-
-func (s *Server) onGetUsers(c tele.Context) error {
-	users := s.getUsers()
-	text := "Users:\n"
-	for _, user := range users {
-		threads := user.Threads
-		var historyLen int64
-		var updatedAt time.Time
-		var totalTokens int
-		var model string
-		if len(threads) > 0 {
-			s.db.Model(&ChatMessage{}).Where("chat_id = ?", threads[0].ID).Count(&historyLen)
-			updatedAt = threads[0].UpdatedAt
-			totalTokens = threads[0].TotalTokens
-			model = threads[0].ModelName
-		}
-
-		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*, usage: *%d*, model: *%s*\n", user.Username, historyLen, updatedAt.Format("2006/01/02 15:04"), totalTokens, model)
-	}
-
-	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
 func (s *Server) complete(c tele.Context, message string, reply bool, image *string) {
@@ -554,65 +368,6 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 	}, replyMenu)
 }
 
-// getChat returns chat from db or creates a new one
-func (s *Server) getChat(chatID int64, username string) Chat {
-	var chat Chat
-
-	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
-	if len(chat.MasterPrompt) == 0 {
-		chat.MasterPrompt = masterPrompt
-		chat.ModelName = "gpt-4-turbo-preview"
-		chat.Temperature = 0.8
-		chat.Stream = true
-		chat.ConversationAge = 1
-		s.db.Save(&chat)
-	}
-
-	if len(username) > 0 && chat.UserID == 0 {
-		user := s.getUser(username)
-		chat.UserID = user.ID
-		s.db.Save(&chat)
-	}
-
-	if chat.ConversationAge == 0 {
-		chat.ConversationAge = 1
-		s.db.Save(&chat)
-	}
-
-	s.db.Find(&chat.History, "chat_id = ?", chat.ID)
-	log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
-
-	return chat
-}
-
-// getUsers returns all users from db
-func (s *Server) getUsers() []User {
-	var users []User
-	s.db.Model(&User{}).Preload("Threads").Find(&users)
-
-	return users
-}
-
-// getUser returns user from db
-func (s *Server) getUser(username string) User {
-	var user User
-	s.db.First(&user, User{Username: username})
-
-	return user
-}
-
-func (s *Server) addUser(username string) {
-	s.db.Create(&User{Username: username})
-}
-
-func (s *Server) delUser(userNane string) {
-	s.db.Where("username = ?", userNane).Delete(&User{})
-}
-
-func (s *Server) deleteHistory(chatID uint) {
-	s.db.Where("chat_id = ?", chatID).Delete(&ChatMessage{})
-}
-
 // generate a user-agent value
 func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
@@ -653,44 +408,4 @@ func (s *Server) whitelist() tele.MiddlewareFunc {
 			},
 		})(next)
 	}
-}
-
-func (s *Server) handlePhoto(c tele.Context) {
-	if c.Message().Photo.FileSize == 0 {
-		return
-	}
-	photo := c.Message().Photo.File
-	log.Println("Photo file: ", photo.FilePath, photo.FileSize, photo.FileID, photo.FileURL, c.Message().Photo.Caption)
-
-	reader, err := c.Bot().File(&photo)
-	if err != nil {
-		log.Println("Error getting file content:", err)
-		return
-	}
-	defer reader.Close()
-
-	bytes, err := ioutil.ReadAll(reader)
-	if err != nil {
-		fmt.Println("Error reading file content:", err)
-		return
-	}
-
-	var base64Encoding string
-
-	// Determine the content type of the image file
-	mimeType := http.DetectContentType(bytes)
-
-	// Prepend the appropriate URI scheme header depending
-	// on the MIME type
-	switch mimeType {
-	case "image/jpeg":
-		base64Encoding += "data:image/jpeg;base64,"
-	case "image/png":
-		base64Encoding += "data:image/png;base64,"
-	}
-
-	// Append the base64 encoded output
-	encoded := base64Encoding + toBase64(bytes)
-
-	s.complete(c, c.Message().Caption, true, &encoded)
 }
