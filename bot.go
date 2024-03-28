@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/tectiv3/chatgpt-bot/tools"
 	"log"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ const (
 	cmdToRussian  = "/ru"
 	cmdToItalian  = "/it"
 	cmdToChinese  = "/cn"
+	cmdDdg        = "/ddg"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
@@ -201,6 +203,23 @@ func (s *Server) run() {
 		go s.onTranslate(c, "To Chinese: ")
 
 		return nil
+	})
+
+	b.Handle(cmdDdg, func(c tele.Context) error {
+		param, err := tools.NewSearchParam(c.Message().Payload)
+		if err != nil {
+			return c.Send("Error: " + err.Error())
+		}
+		result := tools.Search(param)
+		if result.IsErr() {
+			return c.Send("Error: " + result.Error().Error())
+		}
+		res := *result.Unwrap()
+		if len(res) == 0 {
+			return c.Send("No results found", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		}
+
+		return c.Send(fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(&btn3, func(c tele.Context) error {

@@ -3,9 +3,12 @@ module github.com/tectiv3/chatgpt-bot
 go 1.20
 
 require (
+	github.com/PuerkitoBio/goquery v1.5.1
+	github.com/eminarican/safetypes v0.0.8
 	github.com/go-shiori/go-readability v0.0.0-20240204090920-819593fddc6b
 	github.com/meinside/openai-go v0.4.5
 	github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794
+	golang.org/x/net v0.22.0
 	gopkg.in/telebot.v3 v3.2.1
 	gorm.io/driver/sqlite v1.5.5
 	gorm.io/gorm v1.25.8
@@ -18,7 +21,6 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
-	golang.org/x/net v0.22.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 )
 
