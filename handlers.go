@@ -50,15 +50,8 @@ func (s *Server) onDocument(c tele.Context) {
 		return
 	}
 
-	if len(response) > 4096 {
-		file := tele.FromReader(strings.NewReader(response))
-		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
-		return
-	}
-	_ = c.Send(response, "text", &tele.SendOptions{
-		ReplyTo:   c.Message(),
-		ParseMode: tele.ModeMarkdown,
-	})
+	file := tele.FromReader(strings.NewReader(response))
+	_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
 }
 
 func (s *Server) onText(c tele.Context) {
@@ -145,14 +138,17 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 
 	query := c.Message().Text
 	if len(query) < 1 {
-		_ = c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
+		_ = c.Send("Please provide a longer prompt", "text", &tele.SendOptions{ReplyTo: c.Message()})
 
 		return
 	}
+	// get the text after the command
+	if len(c.Message().Entities) > 0 {
+		command := c.Message().EntityText(c.Message().Entities[0])
+		query = query[len(command):]
+	}
 
-	response, err := s.answer(c, fmt.Sprintf("%s\n%s", prefix, query), nil)
+	_, err := s.answer(c, fmt.Sprintf("%s\n%s", prefix, query), nil)
 	if err != nil {
 		log.Println(err)
 		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -160,10 +156,6 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		return
 	}
 
-	_ = c.Send(response, "text", &tele.SendOptions{
-		ReplyTo:   c.Message(),
-		ParseMode: tele.ModeMarkdown,
-	}, replyMenu)
 }
 
 func (s *Server) onGetUsers(c tele.Context) error {

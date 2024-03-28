@@ -223,9 +223,9 @@ func (s *Server) run() {
 
 	b.Handle(&btnReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)
-		s.deleteHistory(chat.ID)
 		chat.MessageID = nil
 		s.db.Save(&chat)
+		s.deleteHistory(chat.ID)
 
 		return c.Edit(removeMenu)
 	})
@@ -337,7 +337,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 	}
 	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
 
-	if len(response) == 0 || chat.Stream {
+	if len(response) == 0 || (chat.Stream && image == nil) {
 		return
 	}
 
