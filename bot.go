@@ -222,6 +222,26 @@ func (s *Server) run() {
 		return c.Send(fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
+	b.Handle("/ddi", func(c tele.Context) error {
+		param, _ := tools.NewSearchImageParam(c.Message().Payload, "wt-wt", "photo")
+		result := tools.SearchImages(param)
+
+		if result.IsErr() {
+			return c.Send("Error: " + result.Error().Error())
+		}
+		res := *result.Unwrap()
+		if len(res) == 0 {
+			return c.Send("No results found", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		}
+
+		img := tele.FromURL(res[0].Image)
+		return c.Send(&tele.Photo{
+			File:    img,
+			Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
+		}, "photo", &tele.SendOptions{ReplyTo: c.Message()})
+
+	})
+
 	b.Handle(&btn3, func(c tele.Context) error {
 		log.Printf("%s selected", c.Data())
 		chat := s.getChat(c.Chat().ID, c.Sender().Username)

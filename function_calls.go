@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/go-shiori/go-readability"
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/tools"
 	tele "gopkg.in/telebot.v3"
 	"log"
 	"net/http"
@@ -17,18 +18,45 @@ import (
 func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	return []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
+			"search_images",
+			"Search image or GIFs for a given query",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("query", "string", "The query to search for").
+				AddPropertyWithEnums("type", "string", []string{"photo", "gif"}, "The type of image to search for. Default to `photo` if not specified").
+				AddPropertyWithEnums("region", "string",
+					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+						"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"},
+					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified").
+				SetRequiredParameters([]string{"query", "type", "region"}),
+		),
+		openai.NewChatCompletionTool(
+			"web_search",
+			"This is DuckDuckGo. Use this tool to search the internet. Input should be a string",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("query", "string", "A query to search the web for").
+				SetRequiredParameters([]string{"query"}),
+		),
+		openai.NewChatCompletionTool(
 			"set_reminder",
 			"Set a reminder to do something at a specific time.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("reminder", "string", "A reminder of what to do, e.g. 'buy groceries'").
 				AddPropertyWithDescription("time", "number", "A time at which to be reminded in minutes from now, e.g. 1440").
-				SetRequiredParameters([]string{"reminder", "time"})),
+				SetRequiredParameters([]string{"reminder", "time"}),
+		),
 		openai.NewChatCompletionTool(
 			"make_summary",
 			"Make a summary of a web page.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
-				SetRequiredParameters([]string{"url"})),
+				SetRequiredParameters([]string{"url"}),
+		),
 		openai.NewChatCompletionTool(
 			"get_crypto_rate",
 			"Get the current rate of various crypto currencies",
@@ -49,15 +77,65 @@ func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (
 
 			return err, fmt.Errorf(err)
 		}
-		//if function.Arguments == nil {
-		//	err := fmt.Sprint("there were no returned function call arguments")
-		//	log.Println(err)
-		//
-		//	return err, fmt.Errorf(err)
-		//}
-		//arguments, _ := toolCall.ArgumentsParsed()
 
 		switch function.Name {
+		case "search_images":
+			type parsed struct {
+				Query  string `json:"query"`
+				Type   string `json:"type"`
+				Region string `json:"region"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			} else {
+				log.Printf("Will call %s(\"%s\", \"%s\", \"%s\")", function.Name, arguments.Query, arguments.Type, arguments.Region)
+				param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
+				if err != nil {
+					return "", err
+				}
+				result := tools.SearchImages(param)
+				if result.IsErr() {
+					return "", result.Error()
+				}
+				res := *result.Unwrap()
+				if len(res) == 0 {
+					return "No results found", nil
+				}
+				img := tele.FromURL(res[0].Image)
+				return "Got it", c.Send(&tele.Photo{
+					File:    img,
+					Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
+				}, "photo", replyMenu)
+			}
+		case "web_search":
+			type parsed struct {
+				Query string `json:"query"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			} else {
+				log.Printf("Will call %s(\"%s\")", function.Name, arguments.Query)
+				param, err := tools.NewSearchParam(arguments.Query)
+				if err != nil {
+					return "", err
+				}
+				result := tools.Search(param)
+				if result.IsErr() {
+					return "", result.Error()
+				}
+				res := *result.Unwrap()
+				if len(res) == 0 {
+					return "No results found", nil
+				}
+				// shuffle the results
+				//rand.Shuffle(len(res), func(i, j int) { res[i], res[j] = res[j], res[i] })
+
+				return fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), nil
+			}
 		case "set_reminder":
 			type parsed struct {
 				Reminder string `json:"reminder"`
