@@ -63,12 +63,21 @@ func init() {
 func (s *Server) run() {
 	b, err := tele.NewBot(tele.Settings{
 		Token:  s.conf.TelegramBotToken,
+		URL:    s.conf.TelegramServerURL,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
 	})
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
+	//if done, err := b.Logout(); err != nil {
+	//	log.Fatal(err)
+	//	return
+	//} else {
+	//	log.Println("Logout: ", done)
+	//	return
+	//}
+
 	//b.Use(middleware.Logger())
 	s.loadUsers()
 

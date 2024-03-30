@@ -18,7 +18,8 @@ var modelCosts map[string]ModelCosts
 // config struct for loading a configuration file
 type config struct {
 	// telegram bot api
-	TelegramBotToken string `json:"telegram_bot_token"`
+	TelegramBotToken  string `json:"telegram_bot_token"`
+	TelegramServerURL string `json:"telegram_server_url"`
 
 	// openai api
 	OpenAIAPIKey         string `json:"openai_api_key"`

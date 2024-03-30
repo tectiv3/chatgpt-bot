@@ -31,6 +31,11 @@ and set your values:
 
 On macOS, you might also need `brew install pkg-config`.
 
+#### Ubuntu:
+```bash
+$ sudo apt-get install libmp3lame0 libopus0 libopusfile0 libogg0
+```
+
 ## Build
 
 ```bash

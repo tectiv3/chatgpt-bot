@@ -32,7 +32,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
 						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
 						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"},
-					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified").
+					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.").
 				SetRequiredParameters([]string{"query", "type", "region"}),
 		),
 		openai.NewChatCompletionTool(
@@ -107,7 +107,7 @@ func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (
 				return "Got it", c.Send(&tele.Photo{
 					File:    img,
 					Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
-				}, "photo", replyMenu)
+				})
 			}
 		case "web_search":
 			type parsed struct {
