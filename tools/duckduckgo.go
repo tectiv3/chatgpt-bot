@@ -40,6 +40,7 @@ type SearchResult struct {
 }
 
 type Result struct {
+	Answer  string `json:"Answer"`
 	Results []struct {
 		Height    int    `json:"height"`
 		Image     string `json:"image"`
@@ -76,16 +77,16 @@ func NewClientOption(referrer, userAgent string, timeout time.Duration) *ClientO
 	}
 }
 
-func NewSearchParam(query string) (*SearchParam, error) {
+func NewSearchParam(query, region string) (*SearchParam, error) {
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return nil, errors.New("search query is empty")
 	}
 
-	return &SearchParam{Query: q}, nil
+	return &SearchParam{Query: q, Region: region}, nil
 }
 
-func NewSearchImageParam(query string, region string, imageType string) (*SearchParam, error) {
+func NewSearchImageParam(query, region, imageType string) (*SearchParam, error) {
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return nil, errors.New("search query is empty")
@@ -106,6 +107,7 @@ func (param *SearchParam) buildURL() (*url.URL, error) {
 	}
 	q := u.Query()
 	q.Add("q", param.Query)
+	q.Add("l", param.Region)
 	q.Add("v", "1")
 	q.Add("o", "json")
 	q.Add("api", "/d.js")
@@ -127,7 +129,7 @@ func buildRequest(param *SearchParam, opt *ClientOption) (*http.Request, error) 
 
 	req.Header.Add("Referrer", opt.Referrer)
 	req.Header.Add("User-Agent", opt.UserAgent)
-	req.Header.Add("Cookie", "kl=wt-wt")
+	req.Header.Add("Cookie", "kl="+param.Region)
 	req.Header.Add("Content-Type", "x-www-form-urlencoded")
 
 	return req, nil
@@ -207,7 +209,7 @@ func buildImagesRequest(param *SearchParam, opt *ClientOption) (*http.Request, e
 
 	req.Header.Add("Referrer", opt.Referrer)
 	req.Header.Add("User-Agent", opt.UserAgent)
-	req.Header.Add("Cookie", "kl=wt-wt")
+	req.Header.Add("Cookie", "kl="+param.Region)
 	req.Header.Add("Content-Type", "x-www-form-urlencoded")
 
 	return req, nil

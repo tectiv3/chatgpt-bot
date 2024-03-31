@@ -5,7 +5,6 @@ import (
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 	"log"
-	"strconv"
 	"time"
 )
 
@@ -39,7 +38,7 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 
 	result := response.Choices[0].Message
 	if len(result.ToolCalls) > 0 {
-		return s.handleFunctionCall(c, result)
+		return s.handleFunctionCall(&chat, c, result)
 	}
 
 	var answer string
@@ -66,35 +65,44 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 func (s *Server) answer(c tele.Context, message string, image *string) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat().ID, c.Sender().Username)
-	msg := openai.NewChatUserMessage(message)
-	system := openai.NewChatSystemMessage(chat.MasterPrompt)
-
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: &message, ChatID: chat.ChatID, CreatedAt: time.Now()})
-	history := []openai.ChatMessage{system}
-	for _, h := range chat.History {
-		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
-			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
-			if image != nil && h.Content == &message {
-				content = append(content, openai.NewChatMessageContentWithImageURL(*image))
-			}
-			history = append(history, openai.ChatMessage{Role: h.Role, Content: content})
-		}
-	}
-	log.Printf("Chat history %d\n", len(history))
+	history := chat.getConversationContext(&message, image)
+	log.Println("Context length ", len(history))
 
 	if chat.Stream && image == nil {
-		return s.launchStream(&chat, c, history)
+		chat.mutex.Lock()
+		if chat.MessageID != nil {
+			if _, err := c.Bot().EditReplyMarkup(
+				tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID},
+				removeMenu); err != nil {
+				log.Println("Failed to remove last message: ", err)
+			}
+			chat.MessageID = nil
+		}
+		chat.mutex.Unlock()
+
+		return s.getStreamAnswer(&chat, c, history)
 	}
+
+	return s.getAnswer(&chat, c, history, image != nil)
+}
+
+func (s *Server) getAnswer(
+	chat *Chat,
+	c tele.Context,
+	history []openai.ChatMessage,
+	vision bool,
+) (string, error) {
 	options := openai.ChatCompletionOptions{}
-	if image == nil {
+	if !vision {
 		options.SetTools(s.getFunctionTools())
 	}
 	s.ai.Verbose = s.conf.Verbose
 	//options.SetMaxTokens(3000)
 	model := chat.ModelName
-	if image != nil {
+	if vision {
 		model = "gpt-4-vision-preview"
 	}
+
 	response, err := s.ai.CreateChatCompletion(model, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
@@ -105,14 +113,12 @@ func (s *Server) answer(c tele.Context, message string, image *string) (string, 
 		return err.Error(), err
 	}
 	if s.conf.Verbose {
-		log.Printf("[verbose] %s ===> %+v", message, response.Choices)
+		log.Printf("Choices: %+v", response.Choices)
 	}
-
-	_ = c.Notify(tele.Typing)
 
 	result := response.Choices[0].Message
 	if len(result.ToolCalls) > 0 {
-		return s.handleFunctionCall(c, result)
+		return s.handleFunctionCall(chat, c, result)
 	}
 
 	var answer string
@@ -122,17 +128,16 @@ func (s *Server) answer(c tele.Context, message string, image *string) (string, 
 			log.Printf("failed to get content string: %s", err)
 			return err.Error(), err
 		}
+		chat.mutex.Lock()
 		chat.TotalTokens += response.Usage.TotalTokens
-		s.saveHistory(&chat, answer)
-	} else {
-		answer = "No response from API."
+		chat.mutex.Unlock()
+		chat.addMessageToHistory(openai.NewChatAssistantMessage(answer))
+		s.saveHistory(chat)
+
+		return answer, nil
 	}
 
-	if s.conf.Verbose {
-		log.Printf("[verbose] sending answer: '%s'", answer)
-	}
-
-	return answer, nil
+	return "No response from API.", nil
 }
 
 // summarize summarizes the chat history
@@ -142,6 +147,9 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 
 	history := []openai.ChatMessage{system}
 	for _, h := range chatHistory {
+		if h.Role == openai.ChatMessageRoleTool {
+			continue
+		}
 		history = append(history, openai.ChatMessage{Role: h.Role, Content: []openai.ChatMessageContent{{
 			Type: "text", Text: h.Content,
 		}}})
@@ -163,15 +171,16 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	return &response, nil
 }
 
-// launchStream starts a stream with the given chat and history
-func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
-	chat.mutex.Lock()
-	defer chat.mutex.Unlock()
+// getStreamAnswer starts a stream with the given chat and history
+func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.ChatMessage) (string, error) {
+	type completion struct {
+		response openai.ChatCompletion
+		done     bool
+		err      error
+	}
+	ch := make(chan completion, 1)
 
-	data := make(chan openai.ChatCompletion)
-	done := make(chan error)
-	defer close(data)
-	defer close(done)
+	sentMessage := chat.getSentMessage(c)
 
 	if _, err := s.ai.CreateChatCompletion(chat.ModelName, history,
 		openai.ChatCompletionOptions{}.
@@ -180,44 +189,31 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature).
 			SetStream(func(r openai.ChatCompletion, d bool, e error) {
+				ch <- completion{response: r, done: d, err: e}
 				if d {
-					done <- e
-				} else {
-					data <- r
+					close(ch)
 				}
 			})); err != nil {
 		return err.Error(), err
 	}
 
-	if chat.MessageID != nil {
-		log.Println("Removing last message")
-		if _, err := c.Bot().EditReplyMarkup(
-			tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID}, removeMenu); err != nil {
-			log.Println("Failed to remove last message: ", err)
-		}
-		chat.MessageID = nil
-	}
-	result := ""
 	reply := ""
-	sentMessage := tele.Message{}
+	result := ""
 	if c.Get("reply") != nil {
-		reply = c.Get("reply").(tele.Message).Text + "\n"
-		sentMessage = c.Get("reply").(tele.Message)
-	} else {
-		msgPointer, _ := c.Bot().Send(c.Recipient(), "...", "text", &tele.SendOptions{
-			ReplyTo: c.Message(),
-		})
-		sentMessage = *msgPointer
+		if msg, ok := c.Get("reply").(tele.Message); ok {
+			result = msg.Text
+		}
 	}
-	chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
 
 	tokens := 0
-	var msg *openai.ChatMessage
-	for {
-		select {
-		case payload := <-data:
-			if payload.Choices[0].Delta.Content != nil {
-				if c, err := payload.Choices[0].Delta.ContentString(); err == nil {
+	for comp := range ch {
+		if comp.err != nil {
+			return comp.err.Error(), comp.err
+		}
+		if !comp.done {
+			// streaming the result, append the response to the result
+			if comp.response.Choices[0].Delta.Content != nil {
+				if c, err := comp.response.Choices[0].Delta.ContentString(); err == nil {
 					result += c
 				}
 				tokens++
@@ -226,29 +222,25 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 			if tokens%10 == 0 {
 				_, _ = c.Bot().Edit(&sentMessage, result)
 			}
-			if len(payload.Choices[0].Message.ToolCalls) > 0 {
-				msg = &payload.Choices[0].Message
-			}
-
-		case err := <-done:
-			if msg != nil {
-				if len(msg.ToolCalls) > 0 {
-					result, err = s.handleFunctionCall(c, *msg)
-					if err != nil {
-						return err.Error(), err
-					}
-
-					_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
-						ReplyTo:   c.Message(),
-						ParseMode: tele.ModeMarkdown,
-					}, replyMenu)
-
-					return result, nil
+		} else {
+			// stream is done, send the final result
+			if len(comp.response.Choices[0].Message.ToolCalls) > 0 &&
+				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
+				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
+				if err != nil {
+					return err.Error(), err
 				}
+
+				_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
+					ReplyTo:   c.Message(),
+					ParseMode: tele.ModeMarkdown,
+				}, replyMenu)
+
+				return result, nil
 			}
 
 			if len(result) == 0 {
-				return "", err
+				return "", nil
 			}
 			_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
@@ -256,23 +248,27 @@ func (s *Server) launchStream(chat *Chat, c tele.Context, history []openai.ChatM
 			}, replyMenu)
 
 			log.Println("Stream total tokens: ", tokens)
+			chat.mutex.Lock()
 			chat.TotalTokens += tokens
-
-			s.saveHistory(chat, result)
+			chat.mutex.Unlock()
+			chat.addMessageToHistory(openai.NewChatAssistantMessage(result))
+			s.saveHistory(chat)
 
 			return result, nil
 		}
 	}
+
+	return "", nil
 }
 
-func (s *Server) saveHistory(chat *Chat, answer string) {
-	msg := openai.NewChatAssistantMessage(answer)
-	chat.History = append(chat.History, ChatMessage{Role: msg.Role, Content: &answer, ChatID: chat.ChatID})
+func (s *Server) saveHistory(chat *Chat) {
 	log.Printf("chat history len: %d", len(chat.History))
 
 	// iterate over history
 	// drop messages that are older than chat.ConversationAge days
 	var history []ChatMessage
+	chat.mutex.Lock()
+	defer chat.mutex.Unlock()
 	for _, h := range chat.History {
 		if h.ID == 0 {
 			history = append(history, h)
@@ -302,8 +298,14 @@ func (s *Server) saveHistory(chat *Chat, answer string) {
 		maxID := chat.History[len(chat.History)-3].ID
 		log.Printf("Deleting chat history for chat ID %d up to message ID %d\n", chat.ID, maxID)
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
-		msg = openai.NewChatUserMessage(summary)
-		chat.History = []ChatMessage{{Role: msg.Role, Content: &summary, ChatID: chat.ChatID}}
+
+		chat.History = []ChatMessage{{
+			Role:      openai.ChatMessageRoleAssistant,
+			Content:   &summary,
+			ChatID:    chat.ChatID,
+			CreatedAt: time.Now(),
+		}}
+
 		log.Println("Chat history after summarising: ", len(chat.History))
 		chat.TotalTokens += response.Usage.TotalTokens
 	}

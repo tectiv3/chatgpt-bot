@@ -1,7 +1,10 @@
 package main
 
 import (
+	"database/sql/driver"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
@@ -12,8 +15,6 @@ import (
 	"sync"
 	"time"
 )
-
-var modelCosts map[string]ModelCosts
 
 // config struct for loading a configuration file
 type config struct {
@@ -31,24 +32,6 @@ type config struct {
 	Model                string   `json:"openai_model"`
 }
 
-type UsageResponseBody struct {
-	Object string `json:"object"`
-	Data   []struct {
-		AggregationTimestamp  int    `json:"aggregation_timestamp"`
-		NRequests             int    `json:"n_requests"`
-		Operation             string `json:"operation"`
-		SnapshotID            string `json:"snapshot_id"`
-		NContext              int    `json:"n_context"`
-		NContextTokensTotal   int    `json:"n_context_tokens_total"`
-		NGenerated            int    `json:"n_generated"`
-		NGeneratedTokensTotal int    `json:"n_generated_tokens_total"`
-	} `json:"data"`
-	FtData          []interface{} `json:"ft_data"`
-	DalleAPIData    []interface{} `json:"dalle_api_data"`
-	CurrentUsageUsd float64       `json:"current_usage_usd"`
-}
-
-// add mutex to protect the usage
 type Server struct {
 	sync.RWMutex
 	conf  config
@@ -89,8 +72,53 @@ type ChatMessage struct {
 	UpdatedAt time.Time
 	ChatID    int64 `sql:"chat_id" json:"chat_id"`
 
-	Role    openai.ChatMessageRole `json:"role"`
-	Content *string                `json:"content,omitempty"`
+	Role       openai.ChatMessageRole `json:"role"`
+	ToolCallID *string                `json:"tool_call_id,omitempty"`
+	Content    *string                `json:"content,omitempty"`
+
+	// for function call
+	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'
+}
+
+// ToolCalls is a custom type that will allow us to implement
+// the driver.Valuer and sql.Scanner interfaces on a slice of ToolCall.
+type ToolCalls []ToolCall
+
+type ToolCall struct {
+	ID       string                  `json:"id"`
+	Type     string                  `json:"type"` // == 'function'
+	Function openai.ToolCallFunction `json:"function"`
+}
+
+// Value implements the driver.Valuer interface, allowing
+// for converting the ToolCalls to a JSON string for database storage.
+func (tc ToolCalls) Value() (driver.Value, error) {
+	if tc == nil {
+		return nil, nil
+	}
+	return json.Marshal(tc)
+}
+
+// Scan implements the sql.Scanner interface, allowing for
+// converting a JSON string from the database back into the ToolCalls slice.
+func (tc *ToolCalls) Scan(value interface{}) error {
+	if value == nil {
+		*tc = nil
+		return nil
+	}
+
+	b, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("type assertion to []byte failed")
+	}
+
+	return json.Unmarshal(b, &tc)
+}
+
+type GPTResponse interface {
+	Type() string       // direct, array, image, audio, async
+	Value() interface{} // string, []string
+	CanReply() bool     // if true replyMenu need to be shown
 }
 
 // WAV writer struct
@@ -138,26 +166,6 @@ func in_array(needle string, haystack []string) bool {
 	}
 
 	return false
-}
-
-type ModelCosts struct {
-	Context   float64
-	Generated float64
-}
-
-func init() {
-	modelCosts = map[string]ModelCosts{
-		"gpt-3.5-turbo-0301":     {Context: 0.0015, Generated: 0.002},
-		"gpt-3.5-turbo-0613":     {Context: 0.0015, Generated: 0.002},
-		"gpt-3.5-turbo-16k":      {Context: 0.003, Generated: 0.004},
-		"gpt-3.5-turbo-16k-0613": {Context: 0.003, Generated: 0.004},
-		"gpt-4-0314":             {Context: 0.03, Generated: 0.06},
-		"gpt-4-0613":             {Context: 0.03, Generated: 0.06},
-		"gpt-4-32k":              {Context: 0.06, Generated: 0.12},
-		"gpt-4-32k-0314":         {Context: 0.06, Generated: 0.12},
-		"gpt-4-32k-0613":         {Context: 0.06, Generated: 0.12},
-		"whisper-1":              {Context: 0.006 / 60, Generated: 0}, // Cost is per second, so convert to minutes
-	}
 }
 
 type CoinCap struct {

@@ -50,7 +50,7 @@ var (
 	btnT6      = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
 	btnT8      = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
 	btnT10     = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
-	btnReset   = tele.Btn{Text: "Reset", Unique: "btnreset", Data: "r"}
+	btnReset   = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
 	btnEmpty   = tele.Btn{Text: "", Data: "no_data"}
 )
 
@@ -215,7 +215,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(cmdDdg, func(c tele.Context) error {
-		param, err := tools.NewSearchParam(c.Message().Payload)
+		param, err := tools.NewSearchParam(c.Message().Payload, "wt-wt")
 		if err != nil {
 			return c.Send("Error: " + err.Error())
 		}
@@ -375,6 +375,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
 		})
+		chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
 		c.Set("reply", *sentMessage)
 	}
 

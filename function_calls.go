@@ -37,10 +37,20 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 		openai.NewChatCompletionTool(
 			"web_search",
-			"This is DuckDuckGo. Use this tool to search the internet. Input should be a string",
+			"This is DuckDuckGo. Use this tool to search the internet. Use it when you need access to real time information. Input should be a string.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "A query to search the web for").
-				SetRequiredParameters([]string{"query"}),
+				AddPropertyWithEnums("region", "string",
+					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+						"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"},
+					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.").
+				SetRequiredParameters([]string{"query", "region"}),
 		),
 		openai.NewChatCompletionTool(
 			"set_reminder",
@@ -66,16 +76,18 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	}
 }
 
-func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (string, error) {
+func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
 	// refactor to handle multiple function calls not just the first one
-	for _, toolCall := range result.ToolCalls {
+	result := ""
+	var resultErr error
+	var toolID string
+	for _, toolCall := range response.ToolCalls {
 		function := toolCall.Function
 
 		if function.Name == "" {
 			err := fmt.Sprint("there was no returned function call name")
-			log.Println(err)
-
-			return err, fmt.Errorf(err)
+			resultErr = fmt.Errorf(err)
+			continue
 		}
 
 		switch function.Name {
@@ -89,53 +101,68 @@ func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
 				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
 				return "", err
-			} else {
-				log.Printf("Will call %s(\"%s\", \"%s\", \"%s\")", function.Name, arguments.Query, arguments.Type, arguments.Region)
-				param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
-				if err != nil {
-					return "", err
-				}
-				result := tools.SearchImages(param)
-				if result.IsErr() {
-					return "", result.Error()
-				}
-				res := *result.Unwrap()
-				if len(res) == 0 {
-					return "No results found", nil
-				}
-				img := tele.FromURL(res[0].Image)
-				return "Got it", c.Send(&tele.Photo{
-					File:    img,
-					Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
-				})
 			}
+			if s.conf.Verbose {
+				log.Printf("Will call %s(\"%s\", \"%s\", \"%s\")", function.Name, arguments.Query, arguments.Type, arguments.Region)
+			}
+			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
+			if err != nil {
+				return "", err
+			}
+			result := tools.SearchImages(param)
+			if result.IsErr() {
+				return "", result.Error()
+			}
+			res := *result.Unwrap()
+			if len(res) == 0 {
+				return "", fmt.Errorf("no results found")
+			}
+			img := tele.FromURL(res[0].Image)
+			return "Got it", c.Send(&tele.Photo{
+				File:    img,
+				Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
+			})
+
 		case "web_search":
 			type parsed struct {
-				Query string `json:"query"`
+				Query  string `json:"query"`
+				Region string `json:"region"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
 				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
 				return "", err
-			} else {
-				log.Printf("Will call %s(\"%s\")", function.Name, arguments.Query)
-				param, err := tools.NewSearchParam(arguments.Query)
-				if err != nil {
-					return "", err
-				}
-				result := tools.Search(param)
-				if result.IsErr() {
-					return "", result.Error()
-				}
-				res := *result.Unwrap()
-				if len(res) == 0 {
-					return "No results found", nil
-				}
-				// shuffle the results
-				//rand.Shuffle(len(res), func(i, j int) { res[i], res[j] = res[j], res[i] })
-
-				return fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), nil
 			}
+			if s.conf.Verbose {
+				log.Printf("Will call %s(\"%s\", \"%s\")", function.Name, arguments.Query, arguments.Region)
+			}
+			param, err := tools.NewSearchParam(arguments.Query, arguments.Region)
+			if err != nil {
+				return "", err
+			}
+			r := tools.Search(param)
+			if r.IsErr() {
+				return "", r.Error()
+			}
+			res := *r.Unwrap()
+			if len(res) == 0 {
+				return "", fmt.Errorf("no results found")
+			}
+			limit := 3
+			if limit > len(res) {
+				limit = len(res)
+			}
+			jsonRes, err := json.Marshal(res[0:limit])
+			if err != nil {
+				return "", err
+			}
+			result = string(jsonRes)
+			resultErr = nil
+			toolID = toolCall.ID
+			response.Role = openai.ChatMessageRoleAssistant
+			chat.addMessageToHistory(response)
+			//return fmt.Sprintf("Title: %s\nSnippet: %s\nLink: %s", res[0].Title, res[0].Snippet, res[0].Link), nil
+
 		case "set_reminder":
 			type parsed struct {
 				Reminder string `json:"reminder"`
@@ -145,15 +172,17 @@ func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
 				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
 				return "", err
-			} else {
+			}
+			if s.conf.Verbose {
 				log.Printf("Will call %s(\"%s\", %d)", function.Name, arguments.Reminder, arguments.Minutes)
-
-				if err := s.setReminder(c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
-					return "", err
-				}
 			}
 
-			return "Reminder set", nil
+			if err := s.setReminder(c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
+				return "", err
+			}
+
+			return fmt.Sprintf("Reminder set for %d minutes from now", arguments.Minutes), nil
+
 		case "make_summary":
 			type parsed struct {
 				URL string `json:"url"`
@@ -162,13 +191,14 @@ func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
 				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
 				return "", err
-			} else {
-				log.Printf("Will call %s(\"%s\")", function.Name, arguments.URL)
-
-				go s.getPageSummary(c.Chat().ID, arguments.URL)
-
-				return "Downloading summary. Please wait.", nil
 			}
+			if s.conf.Verbose {
+				log.Printf("Will call %s(\"%s\")", function.Name, arguments.URL)
+			}
+			go s.getPageSummary(c.Chat().ID, arguments.URL)
+
+			return "Downloading summary. Please wait.", nil
+
 		case "get_crypto_rate":
 			type parsed struct {
 				Asset string `json:"asset"`
@@ -177,19 +207,25 @@ func (s *Server) handleFunctionCall(c tele.Context, result openai.ChatMessage) (
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
 				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
 				return "", err
-			} else {
-				log.Printf("Will call %s(\"%s\")", function.Name, arguments.Asset)
-
-				return s.getCryptoRate(arguments.Asset)
 			}
-		}
-		arguments, _ := toolCall.ArgumentsParsed()
-		log.Printf("Got a function call %s(%v)", function.Name, arguments)
+			if s.conf.Verbose {
+				log.Printf("Will call %s(\"%s\")", function.Name, arguments.Asset)
+			}
 
-		return fmt.Sprintf("Function call in response (%s)", function.Name), nil
+			return s.getCryptoRate(arguments.Asset)
+		}
 	}
 
-	return "", nil
+	if len(result) == 0 {
+		return "", resultErr
+	}
+	chat.addToolResultToHistory(toolID, result)
+
+	if chat.Stream {
+		return s.getStreamAnswer(chat, c, chat.getConversationContext(nil, nil))
+	}
+
+	return s.getAnswer(chat, c, chat.getConversationContext(nil, nil), false)
 }
 
 func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
@@ -217,8 +253,10 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 		log.Fatalf("failed to parse %s, %v\n", url, err)
 	}
 
-	log.Printf("Page title	: %s\n", article.Title)
-	log.Printf("Page content	: %d\n", len(article.TextContent))
+	if s.conf.Verbose {
+		log.Printf("Page title	: %s\n", article.Title)
+		log.Printf("Page content	: %d\n", len(article.TextContent))
+	}
 
 	msg := openai.NewChatUserMessage(article.TextContent)
 	// You are acting as a summarization AI, and for the input text please summarize it to the most important 3 to 5 bullet points for brevity:
@@ -234,8 +272,9 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 	}
 	chat := s.getChat(chatID, "")
 	chat.TotalTokens += response.Usage.TotalTokens
-	s.db.Save(&chat)
 	str, _ := response.Choices[0].Message.ContentString()
+	chat.addMessageToHistory(openai.NewChatAssistantMessage(str))
+	s.db.Save(&chat)
 	if _, err := s.bot.Send(tele.ChatID(chatID),
 		str,
 		"text",

@@ -1,6 +1,12 @@
 package main
 
-import "log"
+import (
+	"github.com/meinside/openai-go"
+	tele "gopkg.in/telebot.v3"
+	"log"
+	"strconv"
+	"time"
+)
 
 // getChat returns chat from db or creates a new one
 func (s *Server) getChat(chatID int64, username string) Chat {
@@ -73,4 +79,99 @@ func (s *Server) loadUsers() {
 		}
 	}
 	s.users = append(s.users, usernames...)
+}
+
+func (c *Chat) getSentMessage(context tele.Context) tele.Message {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if c.MessageID != nil {
+		id, _ := strconv.Atoi(*c.MessageID)
+
+		return tele.Message{ID: id, Chat: &tele.Chat{ID: c.ChatID}}
+	}
+	// if we already have a message ID, use it, otherwise create a new message
+	if context.Get("reply") != nil {
+		sentMessage := context.Get("reply").(tele.Message)
+		c.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
+		return sentMessage
+	}
+
+	msgPointer, _ := context.Bot().Send(context.Recipient(), "...", "text", &tele.SendOptions{ReplyTo: context.Message()})
+	c.MessageID = &([]string{strconv.Itoa(msgPointer.ID)}[0])
+
+	return *msgPointer
+}
+
+func (c *Chat) addToolResultToHistory(id, content string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	msg := openai.NewChatToolMessage(id, content)
+	//log.Printf("Adding tool message to history: %v\n", msg)
+	c.History = append(c.History,
+		ChatMessage{
+			Role:       msg.Role,
+			Content:    &content,
+			ChatID:     c.ChatID,
+			ToolCallID: &id,
+			CreatedAt:  time.Now(),
+		})
+}
+
+func (c *Chat) addMessageToHistory(msg openai.ChatMessage) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	//log.Printf("Adding message to history: %v\n", msg)
+	toolCalls := make([]ToolCall, 0)
+	for _, tc := range msg.ToolCalls {
+		toolCalls = append(toolCalls, ToolCall{
+			ID:       tc.ID,
+			Type:     tc.Type,
+			Function: tc.Function,
+		})
+	}
+	content, _ := msg.ContentString()
+	c.History = append(c.History,
+		ChatMessage{
+			Role:      msg.Role,
+			Content:   &content,
+			ToolCalls: toolCalls,
+			ChatID:    c.ChatID,
+			CreatedAt: time.Now(),
+		})
+}
+
+func (c *Chat) getConversationContext(request *string, image *string) []openai.ChatMessage {
+	system := openai.NewChatSystemMessage(c.MasterPrompt)
+	if request != nil {
+		c.addMessageToHistory(openai.NewChatUserMessage(*request))
+	}
+
+	history := []openai.ChatMessage{system}
+	for _, h := range c.History {
+		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(c.ConversationAge))) {
+			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
+			if image != nil && h.Content == request {
+				content = append(content, openai.NewChatMessageContentWithImageURL(*image))
+			}
+			message := openai.ChatMessage{Role: h.Role, Content: content}
+			if h.Role == openai.ChatMessageRoleAssistant && h.ToolCalls != nil {
+				message.ToolCalls = make([]openai.ToolCall, 0)
+				for _, tc := range h.ToolCalls {
+					message.ToolCalls = append(message.ToolCalls, openai.ToolCall{
+						ID:       tc.ID,
+						Type:     tc.Type,
+						Function: tc.Function,
+					})
+				}
+			}
+			if h.ToolCallID != nil {
+				message.ToolCallID = h.ToolCallID
+			}
+			history = append(history, message)
+		}
+	}
+
+	//log.Printf("Conversation context: %v\n", history)
+
+	return history
 }
