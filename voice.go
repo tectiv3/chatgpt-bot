@@ -114,12 +114,27 @@ func (s *Server) handleVoice(c tele.Context) {
 		return
 	}
 	audioFile := c.Message().Voice.File
-	//log.Println("Audio file: ", audioFile.FilePath, audioFile.FileSize, audioFile.FileID, audioFile.FileURL)
+	var reader io.ReadCloser
+	var err error
 
-	reader, err := c.Bot().File(&audioFile)
-	if err != nil {
-		log.Println("Error getting file content:", err)
-		return
+	if s.conf.TelegramServerURL != "" {
+		f, err := c.Bot().FileByID(audioFile.FileID)
+		if err != nil {
+			log.Println("Error getting file ID:", err)
+			return
+		}
+		// start reader from f.FilePath
+		reader, err = os.Open(f.FilePath)
+		if err != nil {
+			log.Println("Error opening file:", err)
+			return
+		}
+	} else {
+		reader, err = c.Bot().File(&audioFile)
+		if err != nil {
+			log.Println("Error getting file content:", err)
+			return
+		}
 	}
 	defer reader.Close()
 

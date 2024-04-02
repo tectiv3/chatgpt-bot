@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -94,13 +95,31 @@ func (s *Server) onPhoto(c tele.Context) {
 		return
 	}
 	photo := c.Message().Photo.File
-	log.Println("Photo file: ", photo.FilePath, photo.FileSize, photo.FileID, photo.FileURL, c.Message().Photo.Caption)
+	//log.Println("Photo file: ", photo.FilePath, photo.FileSize, photo.FileID, photo.FileURL, c.Message().Photo.Caption)
 
-	reader, err := c.Bot().File(&photo)
-	if err != nil {
-		log.Println("Error getting file content:", err)
-		return
+	var reader io.ReadCloser
+	var err error
+
+	if s.conf.TelegramServerURL != "" {
+		f, err := c.Bot().FileByID(photo.FileID)
+		if err != nil {
+			log.Println("Error getting file ID:", err)
+			return
+		}
+		// start reader from f.FilePath
+		reader, err = os.Open(f.FilePath)
+		if err != nil {
+			log.Println("Error opening file:", err)
+			return
+		}
+	} else {
+		reader, err = c.Bot().File(&photo)
+		if err != nil {
+			log.Println("Error getting file content:", err)
+			return
+		}
 	}
+
 	defer reader.Close()
 
 	bytes, err := ioutil.ReadAll(reader)
