@@ -9,9 +9,6 @@ import (
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
 	"io"
-	"io/ioutil"
-	"log"
-	"net/http"
 	"sync"
 	"time"
 )
@@ -178,29 +175,4 @@ type CoinCap struct {
 
 func toBase64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
-}
-
-func getBase64(filename string) string {
-	// Read the entire file into a byte slice
-	bytes, err := ioutil.ReadFile(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var base64Encoding string
-
-	// Determine the content type of the image file
-	mimeType := http.DetectContentType(bytes)
-
-	// Prepend the appropriate URI scheme header depending
-	// on the MIME type
-	switch mimeType {
-	case "image/jpeg":
-		base64Encoding += "data:image/jpeg;base64,"
-	case "image/png":
-		base64Encoding += "data:image/png;base64,"
-	}
-
-	// Append the base64 encoded output
-	return toBase64(bytes)
 }

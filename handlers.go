@@ -4,7 +4,6 @@ import (
 	"fmt"
 	tele "gopkg.in/telebot.v3"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -122,7 +121,7 @@ func (s *Server) onPhoto(c tele.Context) {
 
 	defer reader.Close()
 
-	bytes, err := ioutil.ReadAll(reader)
+	bytes, err := io.ReadAll(reader)
 	if err != nil {
 		fmt.Println("Error reading file content:", err)
 		return

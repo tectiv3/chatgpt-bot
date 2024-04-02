@@ -148,27 +148,31 @@ func (c *Chat) getConversationContext(request *string, image *string) []openai.C
 
 	history := []openai.ChatMessage{system}
 	for _, h := range c.History {
-		if h.CreatedAt.After(time.Now().AddDate(0, 0, -int(c.ConversationAge))) {
-			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
-			if image != nil && h.Content == request {
-				content = append(content, openai.NewChatMessageContentWithImageURL(*image))
-			}
-			message := openai.ChatMessage{Role: h.Role, Content: content}
-			if h.Role == openai.ChatMessageRoleAssistant && h.ToolCalls != nil {
-				message.ToolCalls = make([]openai.ToolCall, 0)
-				for _, tc := range h.ToolCalls {
-					message.ToolCalls = append(message.ToolCalls, openai.ToolCall{
-						ID:       tc.ID,
-						Type:     tc.Type,
-						Function: tc.Function,
-					})
-				}
-			}
-			if h.ToolCallID != nil {
-				message.ToolCallID = h.ToolCallID
-			}
-			history = append(history, message)
+		if h.CreatedAt.Before(time.Now().
+			AddDate(0, 0, -int(c.ConversationAge))) {
+			continue
 		}
+
+		content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
+
+		if image != nil && request != nil && *h.Content == *request {
+			content = append(content, openai.NewChatMessageContentWithImageURL(*image))
+		}
+		message := openai.ChatMessage{Role: h.Role, Content: content}
+		if h.Role == openai.ChatMessageRoleAssistant && h.ToolCalls != nil {
+			message.ToolCalls = make([]openai.ToolCall, 0)
+			for _, tc := range h.ToolCalls {
+				message.ToolCalls = append(message.ToolCalls, openai.ToolCall{
+					ID:       tc.ID,
+					Type:     tc.Type,
+					Function: tc.Function,
+				})
+			}
+		}
+		if h.ToolCallID != nil {
+			message.ToolCallID = h.ToolCallID
+		}
+		history = append(history, message)
 	}
 
 	//log.Printf("Conversation context: %v\n", history)
