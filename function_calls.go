@@ -22,8 +22,9 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			"Search image or GIFs for a given query",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "The query to search for").
-				AddPropertyWithEnums("type", "string", []string{"photo", "gif"}, "The type of image to search for. Default to `photo` if not specified").
+				AddPropertyWithEnums("type", "string", "The type of image to search for. Default to `photo` if not specified", []string{"photo", "gif"}).
 				AddPropertyWithEnums("region", "string",
+					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
 					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
 						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
 						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
@@ -31,8 +32,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
 						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
 						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"},
-					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.").
+						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
 				SetRequiredParameters([]string{"query", "type", "region"}),
 		),
 		openai.NewChatCompletionTool(
@@ -41,6 +41,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "A query to search the web for").
 				AddPropertyWithEnums("region", "string",
+					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
 					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
 						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
 						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
@@ -48,8 +49,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
 						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
 						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"},
-					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.").
+						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
 				SetRequiredParameters([]string{"query", "region"}),
 		),
 		openai.NewChatCompletionTool(
@@ -89,7 +89,9 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			resultErr = fmt.Errorf(err)
 			continue
 		}
-
+		if !s.conf.Verbose {
+			log.Println("Function call: ", function.Name)
+		}
 		switch function.Name {
 		case "search_images":
 			type parsed struct {
