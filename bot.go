@@ -36,6 +36,7 @@ const (
 	cmdDelUser    = "/del"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
+	ollama        = "ollama"
 )
 
 var (
@@ -44,6 +45,7 @@ var (
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
 	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
+	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: ollama}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -91,7 +93,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
-		menu.Inline(menu.Row(btn3, btn4))
+		menu.Inline(menu.Row(btn3, btn4, btn5))
 
 		return c.Send("Select model", menu)
 	})

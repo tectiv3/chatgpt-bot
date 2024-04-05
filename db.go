@@ -153,12 +153,15 @@ func (c *Chat) getConversationContext(request *string, image *string) []openai.C
 			continue
 		}
 
-		content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
+		var message openai.ChatMessage
 
 		if image != nil && request != nil && *h.Content == *request {
+			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
 			content = append(content, openai.NewChatMessageContentWithImageURL(*image))
+			message = openai.ChatMessage{Role: h.Role, Content: content}
+		} else {
+			message = openai.ChatMessage{Role: h.Role, Content: h.Content}
 		}
-		message := openai.ChatMessage{Role: h.Role, Content: content}
 		if h.Role == openai.ChatMessageRoleAssistant && h.ToolCalls != nil {
 			message.ToolCalls = make([]openai.ToolCall, 0)
 			for _, tc := range h.ToolCalls {

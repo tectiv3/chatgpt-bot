@@ -102,6 +102,14 @@ func (s *Server) getAnswer(
 	if vision {
 		model = "gpt-4-vision-preview"
 	}
+	if model == ollama && len(s.conf.OllamaURL) > 0 {
+		s.ai.SetBaseURL(s.conf.OllamaURL)
+		s.ai.APIKey = "ollama"
+		model = s.conf.OllamaModel
+	} else {
+		s.ai.SetBaseURL("")
+		s.ai.APIKey = s.conf.OpenAIAPIKey
+	}
 
 	response, err := s.ai.CreateChatCompletion(model, history,
 		options.
@@ -182,7 +190,18 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 
 	sentMessage := chat.getSentMessage(c)
 
-	if _, err := s.ai.CreateChatCompletion(chat.ModelName, history,
+	model := chat.ModelName
+	if model == ollama && len(s.conf.OllamaURL) > 0 {
+
+		s.ai.SetBaseURL(s.conf.OllamaURL)
+		s.ai.APIKey = "ollama"
+		model = s.conf.OllamaModel
+	} else {
+		s.ai.SetBaseURL("")
+		s.ai.APIKey = s.conf.OpenAIAPIKey
+	}
+
+	if _, err := s.ai.CreateChatCompletion(model, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getFunctionTools()).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).

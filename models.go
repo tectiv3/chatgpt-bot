@@ -22,6 +22,8 @@ type config struct {
 	// openai api
 	OpenAIAPIKey         string `json:"openai_api_key"`
 	OpenAIOrganizationID string `json:"openai_org_id"`
+	OllamaURL            string `json:"ollama_url"`
+	OllamaModel          string `json:"ollama_model"`
 
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`

@@ -26,11 +26,26 @@ func (s *Server) onDocument(c tele.Context) {
 		_ = c.Send("Please provide a text file", "text", &tele.SendOptions{ReplyTo: c.Message()})
 		return
 	}
-
-	reader, err := s.bot.File(&c.Message().Document.File)
-	if err != nil {
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
-		return
+	var reader io.ReadCloser
+	var err error
+	if s.conf.TelegramServerURL != "" {
+		f, err := c.Bot().FileByID(c.Message().Document.FileID)
+		if err != nil {
+			log.Println("Error getting file ID:", err)
+			return
+		}
+		// start reader from f.FilePath
+		reader, err = os.Open(f.FilePath)
+		if err != nil {
+			log.Println("Error opening file:", err)
+			return
+		}
+	} else {
+		reader, err = s.bot.File(&c.Message().Document.File)
+		if err != nil {
+			_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			return
+		}
 	}
 	defer reader.Close()
 	bytes, err := io.ReadAll(reader)
