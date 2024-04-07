@@ -6,6 +6,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.9.1
 	github.com/eminarican/safetypes v0.0.8
 	github.com/go-shiori/go-readability v0.0.0-20240204090920-819593fddc6b
+	github.com/joho/godotenv v1.5.1
 	github.com/meinside/openai-go v0.4.6
 	github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794
 	golang.org/x/net v0.24.0

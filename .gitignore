@@ -4,3 +4,4 @@ chatgpt-bot
 .DS_Store
 lib*
 bot.db
+.env

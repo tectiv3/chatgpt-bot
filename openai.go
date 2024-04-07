@@ -102,7 +102,7 @@ func (s *Server) getAnswer(
 	if vision {
 		model = "gpt-4-vision-preview"
 	}
-	if model == ollama && len(s.conf.OllamaURL) > 0 {
+	if model == cOllama && len(s.conf.OllamaURL) > 0 {
 		s.ai.SetBaseURL(s.conf.OllamaURL)
 		s.ai.APIKey = "ollama"
 		model = s.conf.OllamaModel
@@ -191,7 +191,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 	sentMessage := chat.getSentMessage(c)
 
 	model := chat.ModelName
-	if model == ollama && len(s.conf.OllamaURL) > 0 {
+	if model == cOllama && len(s.conf.OllamaURL) > 0 {
 
 		s.ai.SetBaseURL(s.conf.OllamaURL)
 		s.ai.APIKey = "ollama"

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	tele "gopkg.in/telebot.v3"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime/debug"
@@ -15,13 +15,14 @@ import (
 func (s *Server) onDocument(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
+			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
-	log.Printf("Got a file: %s (%s), size: %d",
-		c.Message().Document.FileName,
-		c.Message().Document.MIME,
-		c.Message().Document.FileSize)
+	slog.Info("Got a file",
+		"name", c.Message().Document.FileName,
+		"mime", c.Message().Document.MIME,
+		"size", c.Message().Document.FileSize)
+
 	if c.Message().Document.MIME != "text/plain" {
 		_ = c.Send("Please provide a text file", "text", &tele.SendOptions{ReplyTo: c.Message()})
 		return
@@ -31,13 +32,13 @@ func (s *Server) onDocument(c tele.Context) {
 	if s.conf.TelegramServerURL != "" {
 		f, err := c.Bot().FileByID(c.Message().Document.FileID)
 		if err != nil {
-			log.Println("Error getting file ID:", err)
+			slog.Warn("Error getting file ID", "error", err)
 			return
 		}
 		// start reader from f.FilePath
 		reader, err = os.Open(f.FilePath)
 		if err != nil {
-			log.Println("Error opening file:", err)
+			slog.Warn("Error opening file", "error", err)
 			return
 		}
 	} else {
@@ -59,7 +60,7 @@ func (s *Server) onDocument(c tele.Context) {
 		_ = c.Send(response)
 		return
 	}
-	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
+	slog.Info("Response", "user", c.Sender().Username, "length", len(response))
 
 	if len(response) == 0 {
 		return
@@ -72,7 +73,7 @@ func (s *Server) onDocument(c tele.Context) {
 func (s *Server) onText(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
+			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
@@ -87,11 +88,11 @@ func (s *Server) onText(c tele.Context) {
 func (s *Server) onVoice(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
+			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
-	log.Printf("Got a voice, size %d, caption: %s\n", c.Message().Voice.FileSize, c.Message().Voice.Caption)
+	slog.Info("Got a voice", "size", c.Message().Voice.FileSize, "caption", c.Message().Voice.Caption)
 
 	s.handleVoice(c)
 }
@@ -99,17 +100,16 @@ func (s *Server) onVoice(c tele.Context) {
 func (s *Server) onPhoto(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
+			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
-	log.Printf("Got a photo, size %d, caption: %s\n", c.Message().Photo.FileSize, c.Message().Photo.Caption)
+	slog.Info("Got a photo", "size", c.Message().Photo.FileSize, "caption", c.Message().Photo.Caption)
 
 	if c.Message().Photo.FileSize == 0 {
 		return
 	}
 	photo := c.Message().Photo.File
-	//log.Println("Photo file: ", photo.FilePath, photo.FileSize, photo.FileID, photo.FileURL, c.Message().Photo.Caption)
 
 	var reader io.ReadCloser
 	var err error
@@ -117,19 +117,19 @@ func (s *Server) onPhoto(c tele.Context) {
 	if s.conf.TelegramServerURL != "" {
 		f, err := c.Bot().FileByID(photo.FileID)
 		if err != nil {
-			log.Println("Error getting file ID:", err)
+			slog.Warn("Error getting file ID", "error", err)
 			return
 		}
 		// start reader from f.FilePath
 		reader, err = os.Open(f.FilePath)
 		if err != nil {
-			log.Println("Error opening file:", err)
+			slog.Warn("Error opening file", "error", err)
 			return
 		}
 	} else {
 		reader, err = c.Bot().File(&photo)
 		if err != nil {
-			log.Println("Error getting file content:", err)
+			slog.Warn("Error getting file content", "error", err)
 			return
 		}
 	}
@@ -138,7 +138,7 @@ func (s *Server) onPhoto(c tele.Context) {
 
 	bytes, err := io.ReadAll(reader)
 	if err != nil {
-		fmt.Println("Error reading file content:", err)
+		slog.Warn("Error reading file content", "error", err)
 		return
 	}
 
@@ -165,7 +165,7 @@ func (s *Server) onPhoto(c tele.Context) {
 func (s *Server) onTranslate(c tele.Context, prefix string) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
+			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
@@ -183,7 +183,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 
 	_, err := s.answer(c, fmt.Sprintf("%s\n%s", prefix, query), nil)
 	if err != nil {
-		log.Println(err)
+		slog.Warn("Translate error", "error", err)
 		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
 
 		return

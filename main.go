@@ -4,14 +4,15 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/joho/godotenv"
+	"github.com/meinside/openai-go"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log"
+	"log/slog"
 	"os"
 	"time"
-
-	"github.com/meinside/openai-go"
 )
 
 func main() {
@@ -55,7 +56,7 @@ func main() {
 			panic("failed to migrate chat message")
 		}
 
-		log.Printf("Allowed users: %d\n", len(conf.AllowedTelegramUsers))
+		slog.Info("Allowed users", "count", len(conf.AllowedTelegramUsers))
 		server := &Server{
 			conf: conf,
 			ai:   openai.NewClient(apiKey, orgID),
@@ -64,7 +65,7 @@ func main() {
 
 		server.run()
 	} else {
-		log.Printf("failed to load config: %s", err)
+		slog.Warn("failed to load config: ", "error", err)
 	}
 }
 
@@ -75,6 +76,10 @@ func loadConfig(fpath string) (conf config, err error) {
 		if err = json.Unmarshal(bytes, &conf); err == nil {
 			return conf, nil
 		}
+	}
+
+	if err := godotenv.Load(); err != nil {
+		slog.Warn("Error loading .env file", "error", err)
 	}
 
 	return config{}, err
