@@ -37,7 +37,8 @@ const (
 	cmdChain      = "/chain"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
-	cOllama       = "ollama"
+	mOllama       = "ollama"
+	mGPT4         = "gpt-4-turbo-preview"
 )
 
 var (
@@ -45,8 +46,8 @@ var (
 	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
-	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: "gpt-4-turbo-preview"}
-	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: cOllama}
+	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: mGPT4}
+	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: mOllama}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}

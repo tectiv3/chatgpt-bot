@@ -227,8 +227,12 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 	prompt := c.Message().Payload
 	clientQuery.Prompt = prompt
 	clientQuery.Session = c.Sender().Username
-	clientQuery.ModelName = "knoopx/hermes-2-pro-mistral:7b-q8_0"
-	clientQuery.MaxIterations = 30
+	if chat.ModelName == mOllama {
+		clientQuery.ModelName = "knoopx/hermes-2-pro-mistral:7b-q8_0"
+	} else {
+		clientQuery.ModelName = chat.ModelName
+	}
+	clientQuery.MaxIterations = 10
 
 	// Create a channel for communication with the llm agent chain
 	outputChan := make(chan types.HttpJsonStreamElement)
@@ -241,6 +245,7 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 	go s.startAgent(ctx, outputChan, clientQuery)
 
 	result := ""
+	tokens := 0
 	// Stream the output back to the client as it arrives
 	for {
 		select {
@@ -249,19 +254,26 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 				// Channel was closed, end the response
 				break
 			}
-			slog.Info("Got output", "output", output)
+			// slog.Info("Got output", "output", output)
 
 			if output.Stream {
+				tokens++
 				result += output.Message
 				result = strings.TrimSuffix(result, "<|im_end|>") // strip ollama end token
-				//if tokens%10 == 0 {
-				_, _ = c.Bot().Edit(&sentMessage, result)
-				//}
+				if tokens%10 == 0 {
+					_, _ = c.Bot().Edit(&sentMessage, result)
+				}
 			} else if output.Close {
+				slog.Info("Finished", "session", c.Sender().Username)
 				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,
-				}, replyMenu)
+				})
+			} else if output.StepType == types.StepHandleChainEnd {
+				_, _ = c.Bot().Edit(&sentMessage, result+"\n", "text", &tele.SendOptions{
+					ReplyTo:   c.Message(),
+					ParseMode: tele.ModeMarkdown,
+				})
 			}
 		case <-ctx.Done():
 			slog.Info("Done. Client disconnected")

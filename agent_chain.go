@@ -9,10 +9,11 @@ import (
 	"github.com/tectiv3/chatgpt-bot/types"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/tools"
 	"log/slog"
-	"time"
 )
 
 type Sessions map[string]*memory.ConversationBuffer
@@ -23,6 +24,9 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
 	s.RLock()
 	for _, modelName := range neededModels {
+		if modelName == mGPT4 {
+			continue
+		}
 		if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
 			slog.Error("Model does not exist and could not be pulled", "model", modelName, "error", err)
 			outputChan <- types.HttpJsonStreamElement{
@@ -35,7 +39,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	}
 	s.RUnlock()
 
-	startTime := time.Now()
+	//startTime := time.Now()
 	session := userQuery.Session
 
 	s.Lock()
@@ -52,12 +56,13 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	mem := sessions[session]
 	s.Unlock()
 
-	slog.Info("Starting agent chain", "session", session, "userQuery", userQuery, "startTime", startTime)
+	slog.Info("Starting agent chain", "session", session) //, "userQuery", userQuery, "startTime", startTime)
 
-	llm, err := ollama.NewOllama(userQuery.ModelName, s.conf.OllamaURL)
-	if err != nil {
-		slog.Error("Error creating new LLM", "error", err)
-		return
+	var llm llms.Model
+	if userQuery.ModelName == "gpt-4-turbo-preview" {
+		llm, _ = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(userQuery.ModelName), openai.WithOrganization(s.conf.OpenAIOrganizationID))
+	} else {
+		llm, _ = ollama.NewOllama(userQuery.ModelName, s.conf.OllamaURL)
 	}
 
 	agentTools := []tools.Tool{
@@ -103,9 +108,9 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 
 	temp := 0.0
 	prompt := fmt.Sprintf(`
-    1. Format your answer (after AI:) in markdown.
-    2. You have to use your tools to answer questions. 
-    3. You have to provide the sources / links you've used to answer the quesion.
+    1. Format your answer (after AI:) in valid Telegram MarkDown V1 markup every time. Use STRICTLY ONLY simple telegram markdown v1 markup.
+    2. You have to use your tools to answer questions.
+    3. You have to provide the sources / links you've used to answer the quesion. 
     4. You may use tools more than once.
     5. Create your reply in the same language as the search string.
 	6. Do not confuse your own instructions with users question.
