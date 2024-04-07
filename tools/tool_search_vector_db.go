@@ -3,18 +3,16 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"github.com/tmc/langchaingo/llms/openai"
 	"log/slog"
 	"os"
 
+	"github.com/tectiv3/chatgpt-bot/ollama"
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/tools"
 	"github.com/tmc/langchaingo/vectorstores"
 	"github.com/tmc/langchaingo/vectorstores/chroma"
 )
-
-const mEmbedding = "text-embedding-3-large"
 
 // SearchVectorDB is a tool that finds the most relevant documents in the vector db.
 type SearchVectorDB struct {
@@ -47,7 +45,7 @@ func (c SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 		c.CallbacksHandler.HandleToolStart(ctx, input)
 	}
 
-	llm, err := openai.New(openai.WithEmbeddingModel(mEmbedding))
+	llm, err := ollama.NewOllamaEmbeddingLLM()
 	if err != nil {
 		return "", err
 	}
