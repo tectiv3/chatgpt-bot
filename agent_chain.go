@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/tectiv3/chatgpt-bot/chain"
-	"github.com/tectiv3/chatgpt-bot/ollama"
 	llm_tools "github.com/tectiv3/chatgpt-bot/tools"
 	"github.com/tectiv3/chatgpt-bot/types"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
-	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/tools"
@@ -20,25 +18,11 @@ type Sessions map[string]*memory.ConversationBuffer
 
 var sessions = make(Sessions)
 
-func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJsonStreamElement, userQuery types.ClientQuery) {
-	neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
-	s.RLock()
-	for _, modelName := range neededModels {
-		if modelName == mGPT4 {
-			continue
-		}
-		if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
-			slog.Error("Model does not exist and could not be pulled", "model", modelName, "error", err)
-			outputChan <- types.HttpJsonStreamElement{
-				Message:  fmt.Sprintf("Model %s does not exist and could not be pulled: %s", modelName, err.Error()),
-				StepType: types.StepHandleLlmError,
-				Stream:   false,
-			}
-			return
-		}
-	}
-	s.RUnlock()
+func parsingErrorPrompt() string {
+	return "Parsing Error: Check your output and make sure it conforms to the format."
+}
 
+func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJsonStreamElement, userQuery types.ClientQuery) {
 	//startTime := time.Now()
 	session := userQuery.Session
 
@@ -58,12 +42,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 
 	slog.Info("Starting agent chain", "session", session) //, "userQuery", userQuery, "startTime", startTime)
 
-	var llm llms.Model
-	if userQuery.ModelName == "gpt-4-turbo-preview" {
-		llm, _ = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(userQuery.ModelName), openai.WithOrganization(s.conf.OpenAIOrganizationID))
-	} else {
-		llm, _ = ollama.NewOllama(userQuery.ModelName, s.conf.OllamaURL)
-	}
+	llm, _ := openai.New(openai.WithModel(userQuery.ModelName))
 
 	agentTools := []tools.Tool{
 		tools.Calculator{},
@@ -87,7 +66,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 		agents.ConversationalReactDescription,
 		agents.WithParserErrorHandler(agents.NewParserErrorHandler(func(s string) string {
 			slog.Error("Parsing Error", "error", s)
-			return ollama.ParsingErrorPrompt()
+			return parsingErrorPrompt()
 		})),
 
 		agents.WithMaxIterations(userQuery.MaxIterations),

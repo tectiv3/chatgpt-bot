@@ -3,12 +3,12 @@ package vectordb
 import (
 	"context"
 	"github.com/go-shiori/go-readability"
+	"github.com/tmc/langchaingo/llms/openai"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/tectiv3/chatgpt-bot/ollama"
 	"github.com/tmc/langchaingo/documentloaders"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/schema"
@@ -16,8 +16,11 @@ import (
 	"github.com/tmc/langchaingo/vectorstores/chroma"
 )
 
+const mEmbedding = "text-embedding-3-large"
+
 func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionString string) error {
-	llm, err := ollama.NewOllamaEmbeddingLLM()
+	//llm, err := ollama.NewOllamaEmbeddingLLM()
+	llm, err := openai.New(openai.WithEmbeddingModel(mEmbedding))
 	if err != nil {
 		return err
 	}

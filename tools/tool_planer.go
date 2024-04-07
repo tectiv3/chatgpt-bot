@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/tmc/langchaingo/callbacks"
-	"github.com/tmc/langchaingo/llms/ollama"
+	"github.com/tmc/langchaingo/llms"
 
 	"github.com/tmc/langchaingo/tools"
 )
@@ -14,7 +14,7 @@ type Feedback struct {
 	CallbacksHandler callbacks.Handler
 	sessionString    string
 	Query            ClientQuery
-	Llm              *ollama.LLM
+	Llm              llms.Model
 }
 
 type ClientQuery struct {
