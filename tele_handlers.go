@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	tele "gopkg.in/telebot.v3"
 	"io"
@@ -15,7 +16,7 @@ import (
 func (s *Server) onDocument(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 	slog.Info("Got a file",
@@ -73,7 +74,7 @@ func (s *Server) onDocument(c tele.Context) {
 func (s *Server) onText(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
@@ -88,7 +89,7 @@ func (s *Server) onText(c tele.Context) {
 func (s *Server) onVoice(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
@@ -100,7 +101,7 @@ func (s *Server) onVoice(c tele.Context) {
 func (s *Server) onPhoto(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
@@ -165,7 +166,7 @@ func (s *Server) onPhoto(c tele.Context) {
 func (s *Server) onTranslate(c tele.Context, prefix string) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Warn("Panic", "stack", string(debug.Stack()), "error", err)
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 
@@ -211,4 +212,53 @@ func (s *Server) onGetUsers(c tele.Context) error {
 	}
 
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
+}
+
+func (s *Server) onChain(c tele.Context, chat *Chat) {
+	defer func() {
+		if err := recover(); err != nil {
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+		}
+	}()
+	clientQuery := ClientQuery{}
+
+	// get request params
+	prompt := c.Message().Payload
+	clientQuery.Prompt = prompt
+	clientQuery.Session = c.Sender().Username
+	clientQuery.ModelName = "knoopx/hermes-2-pro-mistral:7b-q8_0"
+	clientQuery.MaxIterations = 30
+
+	// Create a channel for communication with the llm agent chain
+	outputChan := make(chan HttpJsonStreamElement)
+	defer close(outputChan)
+
+	// Start the agent chain function in a goroutine
+	ctx := context.Background()
+	sentMessage := chat.getSentMessage(c)
+
+	go s.startAgent(ctx, outputChan, clientQuery)
+
+	result := ""
+	// Stream the output back to the client as it arrives
+	for {
+		select {
+		case output, ok := <-outputChan:
+			if !ok {
+				// Channel was closed, end the response
+				break
+			}
+			result += output.Message
+			_, _ = c.Bot().Edit(&sentMessage, output.Message)
+		case <-ctx.Done():
+			_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
+				ReplyTo:   c.Message(),
+				ParseMode: tele.ModeMarkdown,
+			}, replyMenu)
+
+			slog.Info("Done. Client disconnected")
+			break
+		}
+	}
+
 }

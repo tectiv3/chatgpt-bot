@@ -34,6 +34,7 @@ const (
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
+	cmdChain      = "/chain"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	cOllama       = "ollama"
@@ -231,6 +232,23 @@ func (s *Server) run() {
 		}
 
 		return c.Send(fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
+	b.Handle(cmdChain, func(c tele.Context) error {
+		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		if chat.MessageID != nil {
+			return c.Send("Chain is already running", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		}
+
+		chat.MessageID = nil
+		prompt := c.Message().Payload
+		if prompt == "" {
+			return c.Send("Prompt is required", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		}
+
+		go s.onChain(c, &chat)
+
+		return nil
 	})
 
 	b.Handle("/ddi", func(c tele.Context) error {

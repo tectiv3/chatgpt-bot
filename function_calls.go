@@ -8,6 +8,7 @@ import (
 	"github.com/tectiv3/chatgpt-bot/tools"
 	tele "gopkg.in/telebot.v3"
 	"log"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -90,7 +91,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			continue
 		}
 		if !s.conf.Verbose {
-			log.Println("Function call: ", function.Name)
+			slog.Info("Function call", "name", function.Name)
 		}
 		switch function.Name {
 		case "search_images":
@@ -105,7 +106,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				log.Printf("Will call %s(\"%s\", \"%s\", \"%s\")", function.Name, arguments.Query, arguments.Type, arguments.Region)
+				slog.Info("Will call", "name", function.Name, "query", arguments.Query, "type", arguments.Type, "region", arguments.Region)
 			}
 			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
 			if err != nil {
@@ -247,7 +248,7 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 func (s *Server) getPageSummary(chatID int64, url string) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(string(debug.Stack()), err)
+			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
 	article, err := readability.FromURL(url, 30*time.Second)

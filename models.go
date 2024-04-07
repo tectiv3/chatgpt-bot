@@ -175,6 +175,58 @@ type CoinCap struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
+type StepType string
+
+const (
+	StepHandleAgentAction             StepType = "HandleAgentAction"
+	StepHandleAgentFinish             StepType = "HandleAgentFinish"
+	StepHandleChainEnd                StepType = "HandleChainEnd"
+	StepHandleChainError              StepType = "HandleChainError"
+	StepHandleChainStart              StepType = "HandleChainStart"
+	StepHandleFinalAnswer             StepType = "HandleFinalAnswer"
+	StepHandleLLMGenerateContentEnd   StepType = "HandleLLMGenerateContentEnd"
+	StepHandleLLMGenerateContentStart StepType = "HandleLLMGenerateContentStart"
+	StepHandleLlmEnd                  StepType = "HandleLlmEnd"
+	StepHandleLlmError                StepType = "HandleLlmError"
+	StepHandleLlmStart                StepType = "HandleLlmStart"
+	StepHandleNewSession              StepType = "HandleNewSession"
+	StepHandleOllamaStart             StepType = "HandleOllamaStart"
+	StepHandleParseError              StepType = "HandleParseError"
+	StepHandleRetrieverEnd            StepType = "HandleRetrieverEnd"
+	StepHandleRetrieverStart          StepType = "HandleRetrieverStart"
+	StepHandleSourceAdded             StepType = "HandleSourceAdded"
+	StepHandleToolEnd                 StepType = "HandleToolEnd"
+	StepHandleToolError               StepType = "HandleToolError"
+	StepHandleToolStart               StepType = "HandleToolStart"
+	StepHandleVectorFound             StepType = "HandleVectorFound"
+)
+
+type ClientQuery struct {
+	Prompt        string `json:"prompt"`
+	MaxIterations int    `json:"maxIterations"`
+	ModelName     string `json:"modelName"`
+	Session       string `json:"session"`
+}
+
+type Source struct {
+	Name    string `json:"name"`
+	Link    string `json:"link"`
+	Summary string `json:"summary"`
+}
+
+type HttpJsonStreamElement struct {
+	Close    bool     `json:"close"`
+	Message  string   `json:"message"`
+	Stream   bool     `json:"stream"`
+	StepType StepType `json:"stepType"`
+	Source   Source   `json:"source"`
+	Session  string   `json:"session"`
+}
+
 func toBase64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+func getSessionString() string {
+	return fmt.Sprintf("session_%s", time.Now().Format("2006-01-02T15:04:05"))
 }
