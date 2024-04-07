@@ -33,7 +33,7 @@ func (l CustomHandler) HandleLLMGenerateContentStart(_ context.Context, ms []llm
 }
 
 func (l CustomHandler) HandleLLMGenerateContentEnd(_ context.Context, res *llms.ContentResponse) {
-	fmt.Println("Exiting LLM with response:")
+	l.LogDebug("Exiting LLM with response:")
 	for _, c := range res.Choices {
 		if c.Content != "" {
 			l.LogDebug(fmt.Sprintf("Content: %s", c.Content))

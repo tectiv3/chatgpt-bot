@@ -22,6 +22,7 @@ import (
 type WebSearch struct {
 	CallbacksHandler callbacks.Handler
 	SessionString    string
+	Ollama           bool
 }
 
 type SeaXngResult struct {
@@ -115,7 +116,7 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 					slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 				}
 			}()
-
+			ctx = context.WithValue(ctx, "ollama", t.Ollama)
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, apiResponse.Results[i].URL, t.SessionString)
 			if err != nil {
 				slog.Warn("Error downloading website", "error", err)
@@ -124,10 +125,7 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 			}
 			ch, ok := t.CallbacksHandler.(chain.CustomHandler)
 			if ok {
-				newSource := types.Source{
-					Name: "WebSearch",
-					Link: apiResponse.Results[i].URL,
-				}
+				newSource := types.Source{Name: "WebSearch", Link: apiResponse.Results[i].URL}
 
 				ch.HandleSourceAdded(ctx, newSource)
 				usedLinks[t.SessionString] = append(usedLinks[t.SessionString], apiResponse.Results[i].URL)
@@ -137,11 +135,11 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 	}
 	wg.Wait()
 	result, err := SearchVectorDB.Call(
-		SearchVectorDB{
-			CallbacksHandler: nil,
-			SessionString:    t.SessionString,
-		},
-		context.Background(), input)
+		SearchVectorDB{CallbacksHandler: nil, SessionString: t.SessionString, Ollama: t.Ollama},
+		context.Background(),
+		input,
+	)
+
 	if err != nil {
 		return fmt.Sprintf("error from vector db search: %s", err.Error()), nil //nolint:nilerr
 	}

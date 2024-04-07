@@ -3,12 +3,14 @@ package vectordb
 import (
 	"context"
 	"github.com/go-shiori/go-readability"
+	"github.com/tectiv3/chatgpt-bot/ollama"
+	"github.com/tmc/langchaingo/llms/openai"
+	"github.com/tmc/langchaingo/vectorstores"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/tectiv3/chatgpt-bot/ollama"
 	"github.com/tmc/langchaingo/documentloaders"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/schema"
@@ -16,26 +18,52 @@ import (
 	"github.com/tmc/langchaingo/vectorstores/chroma"
 )
 
-func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionString string) error {
-	llm, err := ollama.NewOllamaEmbeddingLLM()
+const mEmbedding = "text-embedding-3-large"
+
+func newStore(ctx context.Context, sessionString string) (*chroma.Store, error) {
+	var llm embeddings.EmbedderClient
+	var err error
+	suffix := ""
+	var useOllama bool
+	if o, ok := ctx.Value("ollama").(bool); ok {
+		useOllama = o
+	}
+	if useOllama {
+		//slog.Info("Using Ollama")
+		llm, err = ollama.NewOllamaEmbeddingLLM()
+	} else {
+		//slog.Info("Using OpenAI")
+		llm, err = openai.New(openai.WithEmbeddingModel(mEmbedding))
+		suffix = "openai"
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	embedder, err := embeddings.NewEmbedder(llm)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	store, errNs := chroma.New(
+	opts := []chroma.Option{
 		chroma.WithChromaURL(os.Getenv("CHROMA_DB_URL")),
 		chroma.WithEmbedder(embedder),
 		chroma.WithDistanceFunction("cosine"),
-		chroma.WithNameSpace(sessionString),
-	)
+		chroma.WithNameSpace(sessionString + suffix),
+	}
+	if !useOllama {
+		opts = append(opts, chroma.WithOpenAIAPIKey(os.Getenv("OPENAI_API_KEY")))
+	}
 
-	if errNs != nil {
-		return errNs
+	store, err := chroma.New(opts...)
+
+	return &store, err
+}
+
+func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionString string) error {
+	store, err := newStore(timeoutCtx, sessionString)
+	if err != nil {
+		return err
 	}
 
 	for i := range docs {
@@ -49,14 +77,12 @@ func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionS
 		slog.Warn("Error adding document", "error", err)
 		return err
 	}
-
 	slog.Info("Added documents", "count", len(docs))
 
 	return nil
 }
 
 func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString string) error {
-	// log.Printf("downloading: %s", url)
 	article, err := readability.FromURL(url, 10*time.Second)
 	if err != nil {
 		return err
@@ -71,9 +97,28 @@ func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString st
 	for i := range docs {
 		docs[i].Metadata = map[string]interface{}{"url": url}
 	}
-
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	var useOllama bool
+	if o, ok := ctx.Value("ollama").(bool); ok {
+		useOllama = o
+	}
+	timeoutCtx = context.WithValue(timeoutCtx, "ollama", useOllama)
+
 	return saveToVectorDb(timeoutCtx, docs, sessionString)
+}
+
+func SearchVectorDB(ctx context.Context, input string, sessionString string) ([]schema.Document, error) {
+	amountOfResults := 3
+	scoreThreshold := 0.4
+	store, err := newStore(ctx, sessionString)
+	if err != nil {
+		return []schema.Document{}, err
+	}
+
+	options := []vectorstores.Option{vectorstores.WithScoreThreshold(float32(scoreThreshold))}
+	retriever := vectorstores.ToRetriever(store, amountOfResults, options...)
+
+	return retriever.GetRelevantDocuments(context.Background(), input)
 }

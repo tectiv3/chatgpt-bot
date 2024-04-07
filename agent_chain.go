@@ -25,23 +25,27 @@ func parsingErrorPrompt() string {
 }
 
 func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJsonStreamElement, userQuery types.ClientQuery) {
-	neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
-	s.RLock()
-	for _, modelName := range neededModels {
-		if modelName == mGPT4 {
-			continue
-		}
-		if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
-			slog.Error("Model does not exist and could not be pulled", "model", modelName, "error", err)
-			outputChan <- types.HttpJsonStreamElement{
-				Message:  fmt.Sprintf("Model %s does not exist and could not be pulled: %s", modelName, err.Error()),
-				StepType: types.StepHandleLlmError,
-				Stream:   false,
+	if s.conf.OllamaEnabled {
+		slog.Info("Ollama enabled, checking if we have all required models pulled")
+		neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
+		s.RLock()
+		for _, modelName := range neededModels {
+			if modelName == mGPT4 {
+				continue
 			}
-			return
+			if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
+				slog.Error("Model does not exist and could not be pulled", "model", modelName, "error", err)
+				s.conf.OllamaEnabled = false
+				outputChan <- types.HttpJsonStreamElement{
+					Message:  fmt.Sprintf("Model %s does not exist and could not be pulled: %s", modelName, err.Error()),
+					StepType: types.StepHandleLlmError,
+					Stream:   false,
+				}
+				return
+			}
 		}
+		s.RUnlock()
 	}
-	s.RUnlock()
 
 	//startTime := time.Now()
 	session := userQuery.Session
@@ -63,25 +67,29 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	slog.Info("Starting agent chain", "session", session) //, "userQuery", userQuery, "startTime", startTime)
 
 	var llm llms.Model
-	if userQuery.ModelName == "gpt-4-turbo-preview" {
-		llm, _ = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(userQuery.ModelName), openai.WithOrganization(s.conf.OpenAIOrganizationID))
+	var err error
+
+	if s.conf.OllamaEnabled && userQuery.ModelName != mGPT4 {
+		llm, err = ollama.NewOllama(userQuery.ModelName, s.conf.OllamaURL)
 	} else {
-		llm, _ = ollama.NewOllama(userQuery.ModelName, s.conf.OllamaURL)
+		llm, err = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(userQuery.ModelName), openai.WithOrganization(s.conf.OpenAIOrganizationID))
+	}
+	if err != nil {
+		slog.Error("Error creating LLM", "error", err)
+		return
 	}
 
 	agentTools := []tools.Tool{
 		tools.Calculator{},
 		llm_tools.WebSearch{
-			CallbacksHandler: chain.CustomHandler{
-				OutputChan: outputChan,
-			},
-			SessionString: session,
+			CallbacksHandler: chain.CustomHandler{OutputChan: outputChan},
+			SessionString:    session,
+			Ollama:           s.conf.OllamaEnabled,
 		},
 		llm_tools.SearchVectorDB{
-			CallbacksHandler: chain.CustomHandler{
-				OutputChan: outputChan,
-			},
-			SessionString: session,
+			CallbacksHandler: chain.CustomHandler{OutputChan: outputChan},
+			SessionString:    session,
+			Ollama:           s.conf.OllamaEnabled,
 		},
 	}
 

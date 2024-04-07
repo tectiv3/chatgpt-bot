@@ -223,18 +223,17 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 	}()
 	clientQuery := types.ClientQuery{}
 
-	// get request params
 	prompt := c.Message().Payload
 	clientQuery.Prompt = prompt
 	clientQuery.Session = c.Sender().Username
-	if chat.ModelName == mOllama {
-		clientQuery.ModelName = "knoopx/hermes-2-pro-mistral:7b-q8_0"
+	clientQuery.ModelName = chat.ModelName
+	if chat.ModelName == mOllama && s.conf.OllamaEnabled {
+		clientQuery.ModelName = s.conf.OllamaModel
 	} else {
-		clientQuery.ModelName = chat.ModelName
+		clientQuery.ModelName = mGPT4
 	}
 	clientQuery.MaxIterations = 10
 
-	// Create a channel for communication with the llm agent chain
 	outputChan := make(chan types.HttpJsonStreamElement)
 	defer close(outputChan)
 
@@ -246,16 +245,13 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 
 	result := ""
 	tokens := 0
-	// Stream the output back to the client as it arrives
 	for {
 		select {
 		case output, ok := <-outputChan:
 			if !ok {
-				// Channel was closed, end the response
 				break
 			}
-			// slog.Info("Got output", "output", output)
-
+			//slog.Info("Got output", "output", output)
 			if output.Stream {
 				tokens++
 				result += output.Message
@@ -270,7 +266,8 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 					ParseMode: tele.ModeMarkdown,
 				})
 			} else if output.StepType == types.StepHandleChainEnd {
-				_, _ = c.Bot().Edit(&sentMessage, result+"\n", "text", &tele.SendOptions{
+				result += "\n"
+				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,
 				})
@@ -280,5 +277,4 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 			break
 		}
 	}
-
 }
