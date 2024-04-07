@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tectiv3/chatgpt-bot/types"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/tectiv3/chatgpt-bot/chain"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/tools"
@@ -20,12 +22,6 @@ import (
 type WebSearch struct {
 	CallbacksHandler callbacks.Handler
 	SessionString    string
-}
-
-type Source struct {
-	Name    string `json:"name"`
-	Link    string `json:"link"`
-	Summary string `json:"summary"`
 }
 
 type SeaXngResult struct {
@@ -56,26 +52,25 @@ var usedLinks = make(map[string][]string)
 
 var _ tools.Tool = WebSearch{}
 
-func (c WebSearch) Description() string {
+func (t WebSearch) Description() string {
 	return `Useful for searching the internet. You have to use this tool if you're not 100% certain. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the VectorDB tool.`
 }
 
-func (c WebSearch) Name() string {
+func (t WebSearch) Name() string {
 	return "WebSearch"
 }
 
-func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
-	if ws.CallbacksHandler != nil {
-		ws.CallbacksHandler.HandleToolStart(ctx, input)
+func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
+	if t.CallbacksHandler != nil {
+		t.CallbacksHandler.HandleToolStart(ctx, input)
 	}
 
 	input = strings.TrimPrefix(input, "\"")
 	input = strings.TrimSuffix(input, "\"")
 	inputQuery := url.QueryEscape(input)
 	searXNGDomain := os.Getenv("SEARXNG_DOMAIN")
-	slog.Info("Searching", "query", inputQuery)
-	url := fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery)
-	resp, err := http.Get(url)
+	//slog.Info("Searching", "query", inputQuery)
+	resp, err := http.Get(fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery))
 
 	if err != nil {
 		slog.Warn("Error making the request", "error", err)
@@ -83,12 +78,8 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	// body, _ := io.ReadAll(resp.Body)
-	// log.Println(string(body))
-
 	var apiResponse SeaXngResult
 	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
-		// if err := json.Unmarshal(body, &apiResponse); err != nil {
 		slog.Warn("Error decoding the response", "error", err)
 		return "", err
 	}
@@ -98,7 +89,7 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 	wg := sync.WaitGroup{}
 	counter := 0
 	for i := range apiResponse.Results {
-		for _, usedLink := range usedLinks[ws.SessionString] {
+		for _, usedLink := range usedLinks[t.SessionString] {
 			if usedLink == apiResponse.Results[i].URL {
 				continue
 			}
@@ -125,22 +116,22 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 				}
 			}()
 
-			err := vectordb.DownloadWebsiteToVectorDB(ctx, apiResponse.Results[i].URL, ws.SessionString)
+			err := vectordb.DownloadWebsiteToVectorDB(ctx, apiResponse.Results[i].URL, t.SessionString)
 			if err != nil {
 				slog.Warn("Error downloading website", "error", err)
 				wg.Done()
 				return
 			}
-			//ch, ok := ws.CallbacksHandler.(utils.CustomHandler)
-			//if ok {
-			//newSource := Source{
-			//	Name: "WebSearch",
-			//	Link: apiResponse.Results[i].URL,
-			//}
+			ch, ok := t.CallbacksHandler.(chain.CustomHandler)
+			if ok {
+				newSource := types.Source{
+					Name: "WebSearch",
+					Link: apiResponse.Results[i].URL,
+				}
 
-			//ch.HandleSourceAdded(ctx, newSource)
-			usedLinks[ws.SessionString] = append(usedLinks[ws.SessionString], apiResponse.Results[i].URL)
-			//}
+				ch.HandleSourceAdded(ctx, newSource)
+				usedLinks[t.SessionString] = append(usedLinks[t.SessionString], apiResponse.Results[i].URL)
+			}
 			wg.Done()
 		}(i)
 	}
@@ -148,15 +139,15 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 	result, err := SearchVectorDB.Call(
 		SearchVectorDB{
 			CallbacksHandler: nil,
-			SessionString:    ws.SessionString,
+			SessionString:    t.SessionString,
 		},
 		context.Background(), input)
 	if err != nil {
 		return fmt.Sprintf("error from vector db search: %s", err.Error()), nil //nolint:nilerr
 	}
 
-	if ws.CallbacksHandler != nil {
-		ws.CallbacksHandler.HandleToolEnd(ctx, result)
+	if t.CallbacksHandler != nil {
+		t.CallbacksHandler.HandleToolEnd(ctx, result)
 	}
 
 	if len(apiResponse.Results) == 0 {

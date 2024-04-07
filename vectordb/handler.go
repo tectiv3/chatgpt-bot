@@ -2,7 +2,6 @@ package vectordb
 
 import (
 	"context"
-	"fmt"
 	"github.com/go-shiori/go-readability"
 	"log/slog"
 	"os"
@@ -46,20 +45,19 @@ func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionS
 		}
 	}
 
-	_, errAd := store.AddDocuments(timeoutCtx, docs)
-
-	if errAd != nil {
-		slog.Warn("Error adding document", "error", errAd)
-		return fmt.Errorf("Error adding document: %v\n", errAd)
+	if _, err := store.AddDocuments(timeoutCtx, docs); err != nil {
+		slog.Warn("Error adding document", "error", err)
+		return err
 	}
 
-	// log.Printf("Added %d documents\n", len(res))
+	slog.Info("Added documents", "count", len(docs))
+
 	return nil
 }
 
 func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString string) error {
 	// log.Printf("downloading: %s", url)
-	article, err := readability.FromURL(url, 30*time.Second)
+	article, err := readability.FromURL(url, 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -74,7 +72,7 @@ func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString st
 		docs[i].Metadata = map[string]interface{}{"url": url}
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	return saveToVectorDb(timeoutCtx, docs, sessionString)

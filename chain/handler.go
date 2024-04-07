@@ -1,18 +1,20 @@
-package main
+package chain
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/tectiv3/chatgpt-bot/types"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
 )
 
 type CustomHandler struct {
-	OutputChan chan<- HttpJsonStreamElement
+	OutputChan chan<- types.HttpJsonStreamElement
 }
 
 func (l CustomHandler) HandleLLMGenerateContentStart(_ context.Context, ms []llms.MessageContent) {
@@ -54,37 +56,37 @@ func (l CustomHandler) HandleLLMGenerateContentEnd(_ context.Context, res *llms.
 }
 
 func (l CustomHandler) LogDebug(text string) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message: text,
 		Stream:  false,
 	}
 }
 
 func (l CustomHandler) HandleStreamingFunc(_ context.Context, chunk []byte) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message: string(chunk),
 		Stream:  true,
 	}
 }
 
 func (l CustomHandler) HandleText(_ context.Context, text string) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message: text,
 		Stream:  false,
 	}
 }
 
 func (l CustomHandler) HandleLLMStart(_ context.Context, prompts []string) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Entering LLM with prompts: %s", prompts),
 		Stream:   false,
-		StepType: StepHandleLlmStart,
+		StepType: types.StepHandleLlmStart,
 	}
 }
 
 func (l CustomHandler) HandleLLMError(_ context.Context, err error) {
-	fmt.Println("Exiting LLM with error:", err)
-	l.OutputChan <- HttpJsonStreamElement{
+	slog.Warn("Exiting LLM with error", "error", err)
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message: err.Error(),
 		Stream:  false,
 	}
@@ -98,10 +100,10 @@ func (l CustomHandler) HandleChainStart(_ context.Context, inputs map[string]any
 
 	charCount := utf8.RuneCountInString(string(chainValuesJson))
 
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Entering chain with %d tokens: %s", (charCount / 4), chainValuesJson),
 		Stream:   false,
-		StepType: StepHandleChainStart,
+		StepType: types.StepHandleChainStart,
 	}
 }
 
@@ -110,10 +112,10 @@ func (l CustomHandler) HandleChainEnd(_ context.Context, outputs map[string]any)
 	if err != nil {
 		fmt.Println("Error marshalling chain values:", err)
 	}
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Exiting chain with outputs: %s", chainValuesJson),
 		Stream:   false,
-		StepType: StepHandleChainEnd,
+		StepType: types.StepHandleChainEnd,
 	}
 }
 
@@ -124,33 +126,33 @@ func (l CustomHandler) HandleChainError(_ context.Context, err error) {
 	if l.OutputChan == nil {
 		fmt.Println("Output channel is nil")
 	} else {
-		l.OutputChan <- HttpJsonStreamElement{
+		l.OutputChan <- types.HttpJsonStreamElement{
 			Message:  message,
 			Stream:   false,
-			StepType: StepHandleChainError,
+			StepType: types.StepHandleChainError,
 		}
 	}
 }
 
 func (l CustomHandler) HandleToolStart(_ context.Context, input string) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Entering tool with input: %s", removeNewLines(input)),
 		Stream:   false,
-		StepType: StepHandleToolStart,
+		StepType: types.StepHandleToolStart,
 	}
 }
 
 func (l CustomHandler) HandleToolEnd(_ context.Context, output string) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Exiting tool with output: %s", removeNewLines(output)),
 		Stream:   false,
-		StepType: StepHandleToolEnd,
+		StepType: types.StepHandleToolEnd,
 	}
 }
 
 func (l CustomHandler) HandleToolError(_ context.Context, err error) {
 	fmt.Println("Exiting tool with error:", err)
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message: err.Error(),
 		Stream:  false,
 	}
@@ -162,10 +164,10 @@ func (l CustomHandler) HandleAgentAction(_ context.Context, action schema.AgentA
 		fmt.Println("Error marshalling action:", err)
 	}
 
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  string(actionJson),
 		Stream:   false,
-		StepType: StepHandleAgentAction,
+		StepType: types.StepHandleAgentAction,
 	}
 }
 
@@ -174,10 +176,10 @@ func (l CustomHandler) HandleAgentFinish(_ context.Context, finish schema.AgentF
 	if err != nil {
 		fmt.Println("Error marshalling finish:", err)
 	}
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  string(finishJson),
 		Stream:   false,
-		StepType: StepHandleAgentFinish,
+		StepType: types.StepHandleAgentFinish,
 	}
 }
 
@@ -187,27 +189,27 @@ func (l CustomHandler) HandleRetrieverStart(_ context.Context, query string) {
 
 func (l CustomHandler) HandleRetrieverEnd(_ context.Context, query string, documents []schema.Document) {
 	// fmt.Println("Exiting retriever with documents for query:", documents, query)
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Exiting retriever with documents for query: %s", query),
 		Stream:   false,
-		StepType: StepHandleRetrieverEnd,
+		StepType: types.StepHandleRetrieverEnd,
 	}
 }
 
 func (l CustomHandler) HandleVectorFound(_ context.Context, vectorString string) {
-	l.OutputChan <- HttpJsonStreamElement{
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  fmt.Sprintf("Found vector %s", vectorString),
 		Stream:   false,
-		StepType: StepHandleVectorFound,
+		StepType: types.StepHandleVectorFound,
 	}
 }
 
-func (l CustomHandler) HandleSourceAdded(_ context.Context, source Source) {
-	l.OutputChan <- HttpJsonStreamElement{
+func (l CustomHandler) HandleSourceAdded(_ context.Context, source types.Source) {
+	l.OutputChan <- types.HttpJsonStreamElement{
 		Message:  "Source added",
 		Source:   source,
 		Stream:   false,
-		StepType: StepHandleSourceAdded,
+		StepType: types.StepHandleSourceAdded,
 	}
 }
 

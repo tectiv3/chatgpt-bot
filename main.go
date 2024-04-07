@@ -71,15 +71,16 @@ func main() {
 
 // load config at given path
 func loadConfig(fpath string) (conf config, err error) {
+	if err := godotenv.Load(); err != nil {
+		slog.Warn("Error loading .env file", "error", err)
+	}
+	slog.Info("Loaded environment variables", "ollama", os.Getenv("OLLAMA_HOST"))
+
 	var bytes []byte
 	if bytes, err = os.ReadFile(fpath); err == nil {
 		if err = json.Unmarshal(bytes, &conf); err == nil {
 			return conf, nil
 		}
-	}
-
-	if err := godotenv.Load(); err != nil {
-		slog.Warn("Error loading .env file", "error", err)
 	}
 
 	return config{}, err

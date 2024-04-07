@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/tectiv3/chatgpt-bot/types"
 	tele "gopkg.in/telebot.v3"
 	"io"
 	"log/slog"
@@ -220,7 +221,7 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
 		}
 	}()
-	clientQuery := ClientQuery{}
+	clientQuery := types.ClientQuery{}
 
 	// get request params
 	prompt := c.Message().Payload
@@ -230,7 +231,7 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 	clientQuery.MaxIterations = 30
 
 	// Create a channel for communication with the llm agent chain
-	outputChan := make(chan HttpJsonStreamElement)
+	outputChan := make(chan types.HttpJsonStreamElement)
 	defer close(outputChan)
 
 	// Start the agent chain function in a goroutine
@@ -248,14 +249,21 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 				// Channel was closed, end the response
 				break
 			}
-			result += output.Message
-			_, _ = c.Bot().Edit(&sentMessage, output.Message)
-		case <-ctx.Done():
-			_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
-				ReplyTo:   c.Message(),
-				ParseMode: tele.ModeMarkdown,
-			}, replyMenu)
+			slog.Info("Got output", "output", output)
 
+			if output.Stream {
+				result += output.Message
+				result = strings.TrimSuffix(result, "<|im_end|>") // strip ollama end token
+				//if tokens%10 == 0 {
+				_, _ = c.Bot().Edit(&sentMessage, result)
+				//}
+			} else if output.Close {
+				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
+					ReplyTo:   c.Message(),
+					ParseMode: tele.ModeMarkdown,
+				}, replyMenu)
+			}
+		case <-ctx.Done():
 			slog.Info("Done. Client disconnected")
 			break
 		}

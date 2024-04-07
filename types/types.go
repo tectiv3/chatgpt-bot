@@ -1,4 +1,4 @@
-package main
+package types
 
 import (
 	"database/sql/driver"
@@ -7,77 +7,8 @@ import (
 	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
-	"gorm.io/gorm"
 	"io"
-	"sync"
-	"time"
 )
-
-// config struct for loading a configuration file
-type config struct {
-	// telegram bot api
-	TelegramBotToken  string `json:"telegram_bot_token"`
-	TelegramServerURL string `json:"telegram_server_url"`
-
-	// openai api
-	OpenAIAPIKey         string `json:"openai_api_key"`
-	OpenAIOrganizationID string `json:"openai_org_id"`
-	OllamaURL            string `json:"ollama_url"`
-	OllamaModel          string `json:"ollama_model"`
-
-	// other configurations
-	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
-	Verbose              bool     `json:"verbose,omitempty"`
-	Model                string   `json:"openai_model"`
-}
-
-type Server struct {
-	sync.RWMutex
-	conf  config
-	users []string
-	ai    *openai.Client
-	bot   *tele.Bot
-	db    *gorm.DB
-}
-
-type User struct {
-	gorm.Model
-	TelegramID *int64 `gorm:"nullable:true"`
-	Username   string
-	ApiKey     *string `gorm:"nullable:true"`
-	OrgID      *string `gorm:"nullable:true"`
-	Threads    []Chat
-}
-
-type Chat struct {
-	gorm.Model
-	ChatID          int64 `sql:"chat_id" json:"chat_id"`
-	UserID          uint  `json:"user_id" gorm:"nullable:true"`
-	History         []ChatMessage
-	Temperature     float64
-	ModelName       string
-	MasterPrompt    string
-	Stream          bool
-	Voice           bool
-	ConversationAge int64
-	TotalTokens     int        `json:"total_tokens"`
-	mutex           sync.Mutex `gorm:"-"`
-	MessageID       *string    `json:"last_message_id"`
-}
-
-type ChatMessage struct {
-	ID        uint `gorm:"primarykey"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	ChatID    int64 `sql:"chat_id" json:"chat_id"`
-
-	Role       openai.ChatMessageRole `json:"role"`
-	ToolCallID *string                `json:"tool_call_id,omitempty"`
-	Content    *string                `json:"content,omitempty"`
-
-	// for function call
-	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'
-}
 
 // ToolCalls is a custom type that will allow us to implement
 // the driver.Valuer and sql.Scanner interfaces on a slice of ToolCall.
@@ -173,6 +104,54 @@ type CoinCap struct {
 		PriceUsd string `json:"priceUsd"`
 	} `json:"data"`
 	Timestamp int64 `json:"timestamp"`
+}
+
+type StepType string
+
+const (
+	StepHandleAgentAction             StepType = "HandleAgentAction"
+	StepHandleAgentFinish             StepType = "HandleAgentFinish"
+	StepHandleChainEnd                StepType = "HandleChainEnd"
+	StepHandleChainError              StepType = "HandleChainError"
+	StepHandleChainStart              StepType = "HandleChainStart"
+	StepHandleFinalAnswer             StepType = "HandleFinalAnswer"
+	StepHandleLLMGenerateContentEnd   StepType = "HandleLLMGenerateContentEnd"
+	StepHandleLLMGenerateContentStart StepType = "HandleLLMGenerateContentStart"
+	StepHandleLlmEnd                  StepType = "HandleLlmEnd"
+	StepHandleLlmError                StepType = "HandleLlmError"
+	StepHandleLlmStart                StepType = "HandleLlmStart"
+	StepHandleNewSession              StepType = "HandleNewSession"
+	StepHandleOllamaStart             StepType = "HandleOllamaStart"
+	StepHandleParseError              StepType = "HandleParseError"
+	StepHandleRetrieverEnd            StepType = "HandleRetrieverEnd"
+	StepHandleRetrieverStart          StepType = "HandleRetrieverStart"
+	StepHandleSourceAdded             StepType = "HandleSourceAdded"
+	StepHandleToolEnd                 StepType = "HandleToolEnd"
+	StepHandleToolError               StepType = "HandleToolError"
+	StepHandleToolStart               StepType = "HandleToolStart"
+	StepHandleVectorFound             StepType = "HandleVectorFound"
+)
+
+type ClientQuery struct {
+	Prompt        string `json:"prompt"`
+	MaxIterations int    `json:"maxIterations"`
+	ModelName     string `json:"modelName"`
+	Session       string `json:"session"`
+}
+
+type Source struct {
+	Name    string `json:"name"`
+	Link    string `json:"link"`
+	Summary string `json:"summary"`
+}
+
+type HttpJsonStreamElement struct {
+	Close    bool     `json:"close"`
+	Message  string   `json:"message"`
+	Stream   bool     `json:"stream"`
+	StepType StepType `json:"stepType"`
+	Source   Source   `json:"source"`
+	Session  string   `json:"session"`
 }
 
 func toBase64(b []byte) string {

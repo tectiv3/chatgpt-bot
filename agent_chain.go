@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/tectiv3/chatgpt-bot/chain"
 	"github.com/tectiv3/chatgpt-bot/ollama"
 	llm_tools "github.com/tectiv3/chatgpt-bot/tools"
+	"github.com/tectiv3/chatgpt-bot/types"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/memory"
@@ -15,19 +17,19 @@ import (
 
 type Sessions map[string]*memory.ConversationBuffer
 
-var sessions Sessions = make(Sessions)
+var sessions = make(Sessions)
 
-func (s *Server) startAgent(ctx context.Context, outputChan chan<- HttpJsonStreamElement, userQuery ClientQuery) {
+func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJsonStreamElement, userQuery types.ClientQuery) {
 	neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
 	s.RLock()
 	for _, modelName := range neededModels {
 		if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
 			slog.Error("Model does not exist and could not be pulled", "model", modelName, "error", err)
-			//outputChan <- HttpJsonStreamElement{
-			//	Message:  fmt.Sprintf("Model %s does not exist and could not be pulled: %s", modelName, err.Error()),
-			//	StepType: StepHandleLlmError,
-			//	Stream:   false,
-			//}
+			outputChan <- types.HttpJsonStreamElement{
+				Message:  fmt.Sprintf("Model %s does not exist and could not be pulled: %s", modelName, err.Error()),
+				StepType: types.StepHandleLlmError,
+				Stream:   false,
+			}
 			return
 		}
 	}
@@ -41,11 +43,11 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- HttpJsonStrea
 		slog.Info("Creating new session", "session", session)
 		sessions[session] = memory.NewConversationBuffer()
 		memory.NewChatMessageHistory()
-		//outputChan <- HttpJsonStreamElement{
-		//	StepType: StepHandleNewSession,
-		//	Session:  session,
-		//	Stream:   false,
-		//}
+		outputChan <- types.HttpJsonStreamElement{
+			StepType: types.StepHandleNewSession,
+			Session:  session,
+			Stream:   false,
+		}
 	}
 	mem := sessions[session]
 	s.Unlock()
@@ -60,8 +62,18 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- HttpJsonStrea
 
 	agentTools := []tools.Tool{
 		tools.Calculator{},
-		llm_tools.WebSearch{SessionString: session},
-		llm_tools.SearchVectorDB{SessionString: session},
+		llm_tools.WebSearch{
+			CallbacksHandler: chain.CustomHandler{
+				OutputChan: outputChan,
+			},
+			SessionString: session,
+		},
+		llm_tools.SearchVectorDB{
+			CallbacksHandler: chain.CustomHandler{
+				OutputChan: outputChan,
+			},
+			SessionString: session,
+		},
 	}
 
 	executor, err := agents.Initialize(
@@ -74,7 +86,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- HttpJsonStrea
 		})),
 
 		agents.WithMaxIterations(userQuery.MaxIterations),
-		agents.WithCallbacksHandler(CustomHandler{OutputChan: outputChan}),
+		agents.WithCallbacksHandler(chain.CustomHandler{OutputChan: outputChan}),
 		agents.WithMemory(mem),
 	)
 
@@ -83,15 +95,20 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- HttpJsonStrea
 		return
 	}
 
-	outputChan <- HttpJsonStreamElement{StepType: StepHandleOllamaStart}
+	outputChan <- types.HttpJsonStreamElement{
+		StepType: types.StepHandleOllamaStart,
+		Session:  session,
+		Stream:   false,
+	}
 
 	temp := 0.0
 	prompt := fmt.Sprintf(`
-    1. Format your answer (after AI:) in markdown. 
+    1. Format your answer (after AI:) in markdown.
     2. You have to use your tools to answer questions. 
     3. You have to provide the sources / links you've used to answer the quesion.
     4. You may use tools more than once.
     5. Create your reply in the same language as the search string.
+	6. Do not confuse your own instructions with users question.
     Question: %s`, userQuery.Prompt)
 	_, err = chains.Run(ctx, executor, prompt, chains.WithTemperature(temp))
 	if err != nil {
@@ -99,5 +116,5 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- HttpJsonStrea
 		return
 	}
 
-	outputChan <- HttpJsonStreamElement{Close: true}
+	outputChan <- types.HttpJsonStreamElement{Close: true}
 }
