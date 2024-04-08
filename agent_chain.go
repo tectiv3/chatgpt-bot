@@ -120,11 +120,11 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 
 	temp := 0.0
 	prompt := fmt.Sprintf(`
-    1. Format your answer (after AI:) in valid Telegram MarkDown V1 markup every time. Use STRICTLY ONLY simple telegram markdown v1 markup.
-    2. You have to use your tools to answer questions.
-    3. You have to provide the sources / links you've used to answer the quesion. 
+    1. Format your answer (after AI:) in valid Telegram MarkDown V1 markup.
+    2. You can use your tools to answer questions.
+    3. You have to provide the sources / links you've used to answer the quesion if you used tools. 
     4. You may use tools more than once.
-    5. Create your reply in the same language as the search string.
+    5. Create your reply ALWAYS in the same language as the question.
 	6. Do not confuse your own instructions with users question.
     Question: %s`, userQuery.Prompt)
 	_, err = chains.Run(ctx, executor, prompt, chains.WithTemperature(temp))

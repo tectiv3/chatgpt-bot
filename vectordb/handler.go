@@ -74,7 +74,7 @@ func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionS
 	}
 
 	if _, err := store.AddDocuments(timeoutCtx, docs); err != nil {
-		slog.Warn("Error adding document", "error", err)
+		slog.Warn("Error adding document", "error", err, "docs", docs)
 		return err
 	}
 	slog.Info("Added documents", "count", len(docs))

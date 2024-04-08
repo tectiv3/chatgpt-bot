@@ -54,7 +54,15 @@ var usedLinks = make(map[string][]string)
 var _ tools.Tool = WebSearch{}
 
 func (t WebSearch) Description() string {
-	return `Useful for searching the internet. You have to use this tool if you're not 100% certain. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the VectorDB tool.`
+	return `Useful for searching the internet. You have to use this tool if you're not 100% certain. Do not append question mark to the query. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the VectorDB tool. Append region info to the query. For example :en-us. Infer this from the language used for the query. Default to empty if not specified or can not be inferred. Possible regions: ` + strings.Join(
+		[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+			"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+			"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+			"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+			"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+			"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+			"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+			"us-en", "ue-es", "ve-es", "vn-vi", "vn-en", "za-en"}, ", ")
 }
 
 func (t WebSearch) Name() string {
@@ -65,13 +73,14 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 	if t.CallbacksHandler != nil {
 		t.CallbacksHandler.HandleToolStart(ctx, input)
 	}
-
-	input = strings.TrimPrefix(input, "\"")
-	input = strings.TrimSuffix(input, "\"")
+	// remove quotes and question mark. Question mark even escaped still causes 404 in searx
+	input = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(input, "\""), "\""), "?")
 	inputQuery := url.QueryEscape(input)
 	searXNGDomain := os.Getenv("SEARXNG_DOMAIN")
-	//slog.Info("Searching", "query", inputQuery)
-	resp, err := http.Get(fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery))
+	query := fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery)
+	//slog.Info("Searching", "query", query)
+
+	resp, err := http.Get(query)
 
 	if err != nil {
 		slog.Warn("Error making the request", "error", err)
@@ -79,12 +88,20 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	var apiResponse SeaXngResult
-	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
-		slog.Warn("Error decoding the response", "error", err)
-		return "", err
+	if resp.StatusCode > 300 {
+		slog.Warn("Error with the response", "status", resp.Status)
+		return "", fmt.Errorf("error with the response: %s", resp.Status)
 	}
 
+	var apiResponse SeaXngResult
+	//body, err := io.ReadAll(resp.Body)
+	//slog.Info("Response", "body", string(body))
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
+		//if err := json.Unmarshal(body, &apiResponse); err != nil {
+		slog.Warn("Error decoding the response", "error", err) //, "body", string(body))
+		return "", err
+	}
 	slog.Info("Search found", "results", len(apiResponse.Results))
 
 	wg := sync.WaitGroup{}
