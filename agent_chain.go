@@ -13,6 +13,7 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/tools"
+	"github.com/tmc/langchaingo/tools/wikipedia"
 	"log/slog"
 )
 
@@ -81,6 +82,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 
 	agentTools := []tools.Tool{
 		tools.Calculator{},
+		wikipedia.New(""),
 		llm_tools.WebSearch{
 			CallbacksHandler: chain.CustomHandler{OutputChan: outputChan},
 			SessionString:    session,

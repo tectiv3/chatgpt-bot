@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/go-shiori/go-readability"
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
 	"github.com/tectiv3/chatgpt-bot/tools"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
 	tele "gopkg.in/telebot.v3"
@@ -92,6 +93,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	result := ""
 	var resultErr error
 	var toolID string
+	sentMessage := chat.getSentMessage(c)
 	for _, toolCall := range response.ToolCalls {
 		function := toolCall.Function
 		if function.Name == "" {
@@ -118,6 +120,9 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				slog.Info("Will call", "name", function.Name, "query", arguments.Query, "type", arguments.Type, "region", arguments.Region)
 			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
+			)
 			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
 			if err != nil {
 				return "", err
@@ -146,6 +151,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
 				return "", err
 			}
+
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
+			)
+
 			if s.conf.Verbose {
 				slog.Info("Will call", "function", function.Name, "query", arguments.Query, "region", arguments.Region)
 			}
@@ -172,7 +182,9 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				slog.Info("Will call", "function", function.Name, "query", arguments.Query)
 			}
-
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
+			)
 			var err error
 			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
 			if err != nil {
@@ -195,8 +207,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				log.Printf("Will call %s(\"%s\", %d)", function.Name, arguments.Reminder, arguments.Minutes)
+				slog.Info("Will call", "function", function.Name, "reminder", arguments.Reminder, "minutes", arguments.Minutes)
 			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Reminder+","+strconv.Itoa(int(arguments.Minutes))),
+			)
 
 			if err := s.setReminder(c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
 				return "", err
@@ -230,8 +245,10 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				log.Printf("Will call %s(\"%s\")", function.Name, arguments.Asset)
+				slog.Info("Will call", "function", function.Name, "asset", arguments.Asset)
 			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
 
 			return s.getCryptoRate(arguments.Asset)
 		}
@@ -253,11 +270,7 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 	timer := time.NewTimer(time.Minute * time.Duration(minutes))
 	go func() {
 		<-timer.C
-		fmt.Println("Timer fired")
-
-		if _, err := s.bot.Send(tele.ChatID(chatID), reminder); err != nil {
-			log.Println(err)
-		}
+		_, _ = s.bot.Send(tele.ChatID(chatID), reminder)
 	}()
 
 	return nil
@@ -275,8 +288,7 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 	}
 
 	if s.conf.Verbose {
-		log.Printf("Page title	: %s\n", article.Title)
-		log.Printf("Page content	: %d\n", len(article.TextContent))
+		slog.Info("Page", "title", article.Title, "content", len(article.TextContent))
 	}
 
 	msg := openai.NewChatUserMessage(article.TextContent)
@@ -288,20 +300,21 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 
 	if err != nil {
-		log.Printf("failed to create chat completion: %s", err)
+		slog.Warn("failed to create chat completion", "error", err)
 		return
 	}
-	chat := s.getChat(chatID, "")
+	chat := s.getChatByID(chatID)
 	chat.TotalTokens += response.Usage.TotalTokens
 	str, _ := response.Choices[0].Message.ContentString()
 	chat.addMessageToHistory(openai.NewChatAssistantMessage(str))
 	s.db.Save(&chat)
+
 	if _, err := s.bot.Send(tele.ChatID(chatID),
 		str,
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	); err != nil {
-		log.Println(err)
+		slog.Error("Sending", "error", err)
 	}
 }
 

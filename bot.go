@@ -1,11 +1,10 @@
 package main
 
-// bot.go
-
 import (
 	"fmt"
+	"github.com/tectiv3/chatgpt-bot/i18n"
 	"github.com/tectiv3/chatgpt-bot/tools"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -63,15 +62,15 @@ func init() {
 	removeMenu.Inline(menu.Row(btnEmpty))
 }
 
-// launch bot with given parameters
+// run will launch bot with given parameters
 func (s *Server) run() {
 	b, err := tele.NewBot(tele.Settings{
 		Token:  s.conf.TelegramBotToken,
 		URL:    s.conf.TelegramServerURL,
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
 	})
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("Fatal", "error", err)
 		return
 	}
 	//if done, err := b.Logout(); err != nil {
@@ -91,69 +90,69 @@ func (s *Server) run() {
 	s.Unlock()
 
 	b.Handle(cmdStart, func(c tele.Context) error {
-		return c.Send(msgStart, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(l.GetWithLocale(c.Sender().LanguageCode, msgStart), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
 		menu.Inline(menu.Row(btn3, btn4, btn5))
 
-		return c.Send("Select model", menu)
+		return c.Send(chat.t("Select model"), menu)
 	})
 
 	b.Handle(cmdTemp, func(c tele.Context) error {
 		menu.Inline(menu.Row(btnT0, btnT2, btnT4, btnT6, btnT8, btnT10))
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 
-		return c.Send(fmt.Sprintf("Set temperature from less random (0.0) to more random (1.0.\nCurrent: %0.2f (default: 0.8)", chat.Temperature), menu)
+		return c.Send(fmt.Sprintf(chat.t("Set temperature from less random (0.0) to more random (1.0).\nCurrent: %0.2f (default: 0.8)"), chat.Temperature), menu)
 	})
 
 	b.Handle(cmdAge, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
 		age, err := strconv.Atoi(c.Message().Payload)
 		if err != nil {
-			return c.Send("Please provide a number", "text", &tele.SendOptions{
+			return c.Send(chat.t("Please provide a number"), "text", &tele.SendOptions{
 				ReplyTo: c.Message(),
 			})
 		}
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.ConversationAge = int64(age)
 		s.db.Save(&chat)
 
-		return c.Send(fmt.Sprintf("Conversation age set to %d days", age), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(fmt.Sprintf(chat.t("Conversation age set to %d days"), age), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdPrompt, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
 		query := c.Message().Payload
 		if len(query) < 3 {
-			return c.Send("Please provide a longer prompt", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
+			return c.Send(chat.t("Please provide a longer prompt"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
 
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
 		chat.MasterPrompt = query
 		s.db.Save(&chat)
 
-		return nil
+		return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		chat.MasterPrompt = masterPrompt
 		s.db.Save(&chat)
 
-		return c.Send("Default prompt set", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(chat.t("Default prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdStream, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		chat.Stream = !chat.Stream
 		s.db.Save(&chat)
 		status := "disabled"
 		if chat.Stream {
 			status = "enabled"
 		}
+		text := chat.t("Stream is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
 
-		return c.Send("Stream is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	//b.Handle(cmdVoice, func(c tele.Context) error {
@@ -174,11 +173,12 @@ func (s *Server) run() {
 	})
 
 	b.Handle(cmdInfo, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		status := "disabled"
 		if chat.Stream {
 			status = "enabled"
 		}
+		status = chat.t(status)
 
 		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d",
 			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
@@ -236,7 +236,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(cmdChain, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		if chat.MessageID != nil {
 			return c.Send("Chain is already running", "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
@@ -244,10 +244,10 @@ func (s *Server) run() {
 		chat.MessageID = nil
 		prompt := c.Message().Payload
 		if prompt == "" {
-			return c.Send("Prompt is required", "text", &tele.SendOptions{ReplyTo: c.Message()})
+			return c.Send(chat.t("Prompt is required"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
 
-		go s.onChain(c, &chat)
+		go s.onChain(c, chat)
 
 		return nil
 	})
@@ -272,26 +272,33 @@ func (s *Server) run() {
 
 	})
 
+	b.Handle("/lang", func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		chat.Lang = c.Message().Payload
+		s.db.Save(&chat)
+		return c.Send(fmt.Sprintf("Language set to %s", chat.Lang), "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
 	b.Handle(&btn3, func(c tele.Context) error {
-		log.Printf("%s selected", c.Data())
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		slog.Info("Selected", "model", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
 		chat.ModelName = c.Data()
 		s.db.Save(&chat)
 
-		return c.Edit("Model set to " + c.Data())
+		return c.Edit(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": c.Data()}))
 	})
 
 	b.Handle(&btnT0, func(c tele.Context) error {
-		log.Printf("Temp: %s\n", c.Data())
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		slog.Info("Selected", "temperature", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
 		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
 		s.db.Save(&chat)
 
-		return c.Edit("Temperature set to " + c.Data())
+		return c.Edit(chat.t("Temperature set to {{.temp}}", &i18n.Replacements{"temp": c.Data()}))
 	})
 
 	b.Handle(&btnReset, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		chat.MessageID = nil
 		s.db.Save(&chat)
 		s.deleteHistory(chat.ID)
@@ -300,7 +307,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		s.deleteHistory(chat.ID)
 		chat.MessageID = nil
 		s.db.Save(&chat)
@@ -322,9 +329,10 @@ func (s *Server) run() {
 	})
 
 	b.Handle(tele.OnDocument, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
 		go s.onDocument(c)
 
-		return c.Send("Processing document. Please wait...")
+		return c.Send(chat.t("Processing document. Please wait..."))
 	})
 
 	b.Handle(tele.OnVoice, func(c tele.Context) error {
@@ -382,7 +390,7 @@ func (s *Server) run() {
 }
 
 func (s *Server) complete(c tele.Context, message string, reply bool, image *string) {
-	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	chat := s.getChat(c.Chat(), c.Sender())
 	if strings.HasPrefix(strings.ToLower(message), "reset") {
 		s.deleteHistory(chat.ID)
 		return
@@ -390,9 +398,9 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 
 	text := "..."
 	sentMessage := c.Message()
-	// reply is a flag to indicate if we need to reply to another message or it is a voice transcription
+	// reply is a flag to indicate if we need to reply to another message, or it is a voice transcription
 	if !reply {
-		text = fmt.Sprintf("_Transcript:_\n%s\n\n_Answer:_ \n\n", message)
+		text = fmt.Sprintf(chat.t("_Transcript:_\n%s\n\n_Answer:_ \n\n"), message)
 		sentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
 			ParseMode: tele.ModeMarkdown,
@@ -406,7 +414,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 		_ = c.Send(response, replyMenu)
 		return
 	}
-	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
+	slog.Info("Response", "length", len(response), "user", c.Sender().Username)
 
 	if len(response) == 0 || (chat.Stream && image == nil) {
 		return

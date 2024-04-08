@@ -5,3 +5,4 @@ chatgpt-bot
 lib*
 bot.db
 .env
+cmd/i18n/i18n

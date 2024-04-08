@@ -5,6 +5,7 @@ import (
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 	"log"
+	"log/slog"
 	"time"
 )
 
@@ -15,7 +16,7 @@ func userAgent(userID int64) string {
 
 func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	_ = c.Notify(tele.Typing)
-	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	chat := s.getChat(c.Chat(), c.Sender())
 	msg := openai.NewChatUserMessage(request)
 	system := openai.NewChatSystemMessage(chat.MasterPrompt)
 	s.ai.Verbose = s.conf.Verbose
@@ -28,24 +29,24 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 			SetTemperature(chat.Temperature))
 
 	if err != nil {
-		log.Printf("failed to create chat completion: %s", err)
+		slog.Warn("failed to create chat completion", "error", err)
 		return err.Error(), err
 	}
 	if s.conf.Verbose {
-		log.Printf("[verbose] %s ===> %+v", request, response.Choices)
+		slog.Info("[verbose]", "request", request, "choices", response.Choices)
 	}
 	_ = c.Notify(tele.Typing)
 
 	result := response.Choices[0].Message
 	if len(result.ToolCalls) > 0 {
-		return s.handleFunctionCall(&chat, c, result)
+		return s.handleFunctionCall(chat, c, result)
 	}
 
 	var answer string
 	if len(response.Choices) > 0 {
 		answer, err = response.Choices[0].Message.ContentString()
 		if err != nil {
-			log.Printf("failed to get content string: %s", err)
+			slog.Warn("failed to get content string", "error", err)
 			return err.Error(), err
 		}
 		chat.TotalTokens += response.Usage.TotalTokens
@@ -55,7 +56,7 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	}
 
 	if s.conf.Verbose {
-		log.Printf("[verbose] sending answer: '%s'", answer)
+		slog.Info("[verbose]", "answer", answer)
 	}
 
 	return answer, nil
@@ -64,9 +65,9 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 // generate an answer to given message and send it to the chat
 func (s *Server) answer(c tele.Context, message string, image *string) (string, error) {
 	_ = c.Notify(tele.Typing)
-	chat := s.getChat(c.Chat().ID, c.Sender().Username)
+	chat := s.getChat(c.Chat(), c.Sender())
 	history := chat.getConversationContext(&message, image)
-	log.Println("Context length ", len(history))
+	slog.Info("Context", "length", len(history))
 
 	if chat.Stream && image == nil {
 		chat.mutex.Lock()
@@ -74,16 +75,16 @@ func (s *Server) answer(c tele.Context, message string, image *string) (string, 
 			if _, err := c.Bot().EditReplyMarkup(
 				tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID},
 				removeMenu); err != nil {
-				log.Println("Failed to remove last message: ", err)
+				slog.Warn("Failed to remove last message", "error", err)
 			}
 			chat.MessageID = nil
 		}
 		chat.mutex.Unlock()
 
-		return s.getStreamAnswer(&chat, c, history)
+		return s.getStreamAnswer(chat, c, history)
 	}
 
-	return s.getAnswer(&chat, c, history, image != nil)
+	return s.getAnswer(chat, c, history, image != nil)
 }
 
 func (s *Server) getAnswer(
@@ -117,11 +118,11 @@ func (s *Server) getAnswer(
 			SetTemperature(chat.Temperature))
 
 	if err != nil {
-		log.Printf("failed to create chat completion: %s", err)
+		slog.Warn("failed to create chat completion", "error", err)
 		return err.Error(), err
 	}
 	if s.conf.Verbose {
-		log.Printf("Choices: %+v", response.Choices)
+		slog.Info("[verbose]", "choices", response.Choices)
 	}
 
 	result := response.Choices[0].Message
@@ -133,7 +134,7 @@ func (s *Server) getAnswer(
 	if len(response.Choices) > 0 {
 		answer, err = response.Choices[0].Message.ContentString()
 		if err != nil {
-			log.Printf("failed to get content string: %s", err)
+			slog.Warn("failed to get content string", "error", err)
 			return err.Error(), err
 		}
 		chat.mutex.Lock()
@@ -145,7 +146,7 @@ func (s *Server) getAnswer(
 		return answer, nil
 	}
 
-	return "No response from API.", nil
+	return chat.t("No response from API."), nil
 }
 
 // summarize summarizes the chat history
@@ -164,12 +165,12 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	}
 	history = append(history, msg)
 
-	log.Printf("Chat history %d\n", len(history))
+	slog.Info("Chat history", "length", len(history))
 
 	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
 
 	if err != nil {
-		log.Printf("failed to create chat completion: %s", err)
+		slog.Warn("failed to create chat completion", "error", err)
 		return nil, err
 	}
 	if response.Choices[0].Message.Content == nil {
@@ -244,8 +245,6 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 			// stream is done, send the final result
 			if len(comp.response.Choices[0].Message.ToolCalls) > 0 &&
 				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
-				_, _ = c.Bot().Edit(&sentMessage, "Using tool: "+comp.response.Choices[0].Message.ToolCalls[0].Function.Name)
-
 				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
 				if err != nil {
 					return err.Error(), err

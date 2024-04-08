@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/joho/godotenv"
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -14,6 +15,8 @@ import (
 	"os"
 	"time"
 )
+
+var l *i18n.Localizer
 
 func main() {
 	confFilepath := "config.json"
@@ -62,6 +65,7 @@ func main() {
 			ai:   openai.NewClient(apiKey, orgID),
 			db:   db,
 		}
+		l = i18n.New("ru", "en")
 
 		server.run()
 	} else {

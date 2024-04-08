@@ -2,17 +2,17 @@ package main
 
 import (
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
 	tele "gopkg.in/telebot.v3"
-	"log"
 	"strconv"
 	"time"
 )
 
 // getChat returns chat from db or creates a new one
-func (s *Server) getChat(chatID int64, username string) Chat {
+func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	var chat Chat
 
-	s.db.FirstOrCreate(&chat, Chat{ChatID: chatID})
+	s.db.FirstOrCreate(&chat, Chat{ChatID: c.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = "gpt-4-turbo-preview"
@@ -22,8 +22,8 @@ func (s *Server) getChat(chatID int64, username string) Chat {
 		s.db.Save(&chat)
 	}
 
-	if len(username) > 0 && chat.UserID == 0 {
-		user := s.getUser(username)
+	if chat.UserID == 0 {
+		user := s.getUser(u.Username)
 		chat.UserID = user.ID
 		s.db.Save(&chat)
 	}
@@ -32,11 +32,23 @@ func (s *Server) getChat(chatID int64, username string) Chat {
 		chat.ConversationAge = 1
 		s.db.Save(&chat)
 	}
+	if chat.Lang == "" {
+		chat.Lang = u.LanguageCode
+		s.db.Save(&chat)
+	}
 
 	s.db.Find(&chat.History, "chat_id = ?", chat.ID)
-	log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
+	//log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
 
-	return chat
+	return &chat
+}
+
+func (s *Server) getChatByID(chatID int64) *Chat {
+	var chat Chat
+	s.db.First(&chat, Chat{ChatID: chatID})
+	s.db.Find(&chat.History, "chat_id = ?", chat.ID)
+
+	return &chat
 }
 
 // getUsers returns all users from db
@@ -181,4 +193,8 @@ func (c *Chat) getConversationContext(request *string, image *string) []openai.C
 	//log.Printf("Conversation context: %v\n", history)
 
 	return history
+}
+
+func (c *Chat) t(key string, replacements ...*i18n.Replacements) string {
+	return l.GetWithLocale(c.Lang, key, replacements...)
 }

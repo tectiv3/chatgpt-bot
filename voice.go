@@ -171,9 +171,9 @@ func (s *Server) handleVoice(c tele.Context) {
 	}
 
 	if strings.HasPrefix(strings.ToLower(*transcript.Text), "reset") {
-		chat := s.getChat(c.Chat().ID, c.Sender().Username)
+		chat := s.getChat(c.Chat(), c.Sender())
 		s.deleteHistory(chat.ID)
-		log.Println("Resetting history")
+
 		v := &tele.Voice{File: tele.FromDisk("erased.ogg")}
 		_ = c.Send(v)
 

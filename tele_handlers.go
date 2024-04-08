@@ -26,7 +26,8 @@ func (s *Server) onDocument(c tele.Context) {
 		"size", c.Message().Document.FileSize)
 
 	if c.Message().Document.MIME != "text/plain" {
-		_ = c.Send("Please provide a text file", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		chat := s.getChat(c.Chat(), c.Sender())
+		_ = c.Send(chat.t("Please provide a text file"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 		return
 	}
 	var reader io.ReadCloser
@@ -160,7 +161,7 @@ func (s *Server) onPhoto(c tele.Context) {
 
 	// Append the base64 encoded output
 	encoded := base64Encoding + toBase64(bytes)
-
+	// TODO: save the image to the database if running locally
 	s.complete(c, c.Message().Caption, true, &encoded)
 }
 

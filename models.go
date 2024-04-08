@@ -54,6 +54,7 @@ type Chat struct {
 	gorm.Model
 	ChatID          int64 `sql:"chat_id" json:"chat_id"`
 	UserID          uint  `json:"user_id" gorm:"nullable:true"`
+	Lang            string
 	History         []ChatMessage
 	Temperature     float64
 	ModelName       string
