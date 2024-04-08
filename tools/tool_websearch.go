@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tectiv3/chatgpt-bot/chain"
 	"github.com/tectiv3/chatgpt-bot/types"
+	"github.com/tectiv3/chatgpt-bot/vectordb"
+	"github.com/tmc/langchaingo/callbacks"
+	"github.com/tmc/langchaingo/tools"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -12,11 +16,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
-
-	"github.com/tectiv3/chatgpt-bot/chain"
-	"github.com/tectiv3/chatgpt-bot/vectordb"
-	"github.com/tmc/langchaingo/callbacks"
-	"github.com/tmc/langchaingo/tools"
 )
 
 type WebSearch struct {
@@ -25,28 +24,30 @@ type WebSearch struct {
 	Ollama           bool
 }
 
-type SeaXngResult struct {
-	Query           string `json:"query"`
-	NumberOfResults int    `json:"number_of_results"`
-	Results         []struct {
-		URL           string   `json:"url"`
-		Title         string   `json:"title"`
-		Content       string   `json:"content"`
-		PublishedDate any      `json:"publishedDate,omitempty"`
-		ImgSrc        any      `json:"img_src,omitempty"`
-		Engine        string   `json:"engine"`
-		ParsedURL     []string `json:"parsed_url"`
-		Template      string   `json:"template"`
-		Engines       []string `json:"engines"`
-		Positions     []int    `json:"positions"`
-		Score         float64  `json:"score"`
-		Category      string   `json:"category"`
-	} `json:"results"`
-	Answers             []any    `json:"answers"`
-	Corrections         []any    `json:"corrections"`
-	Infoboxes           []any    `json:"infoboxes"`
-	Suggestions         []string `json:"suggestions"`
-	UnresponsiveEngines []any    `json:"unresponsive_engines"`
+type seaXngResult struct {
+	Query               string        `json:"query"`
+	NumberOfResults     int           `json:"number_of_results"`
+	Results             []SearXResult `json:"results"`
+	Answers             []any         `json:"answers"`
+	Corrections         []any         `json:"corrections"`
+	Infoboxes           []any         `json:"infoboxes"`
+	Suggestions         []string      `json:"suggestions"`
+	UnresponsiveEngines []any         `json:"unresponsive_engines"`
+}
+
+type SearXResult struct {
+	URL           string   `json:"url"`
+	Title         string   `json:"title"`
+	Content       string   `json:"content"`
+	PublishedDate any      `json:"publishedDate,omitempty"`
+	ImgSrc        any      `json:"img_src,omitempty"`
+	Engine        string   `json:"engine"`
+	ParsedURL     []string `json:"parsed_url"`
+	Template      string   `json:"template"`
+	Engines       []string `json:"engines"`
+	Positions     []int    `json:"positions"`
+	Score         float64  `json:"score"`
+	Category      string   `json:"category"`
 }
 
 var usedLinks = make(map[string][]string)
@@ -70,49 +71,21 @@ func (t WebSearch) Name() string {
 }
 
 func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
+	ctx = context.WithValue(ctx, "ollama", t.Ollama)
 	if t.CallbacksHandler != nil {
 		t.CallbacksHandler.HandleToolStart(ctx, input)
 	}
-	// remove quotes and question mark. Question mark even escaped still causes 404 in searx
-	input = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(input, "\""), "\""), "?")
-	inputQuery := url.QueryEscape(input)
-	searXNGDomain := os.Getenv("SEARXNG_DOMAIN")
-	query := fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery)
-	//slog.Info("Searching", "query", query)
-
-	resp, err := http.Get(query)
-
-	if err != nil {
-		slog.Warn("Error making the request", "error", err)
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode > 300 {
-		slog.Warn("Error with the response", "status", resp.Status)
-		return "", fmt.Errorf("error with the response: %s", resp.Status)
-	}
-
-	var apiResponse SeaXngResult
-	//body, err := io.ReadAll(resp.Body)
-	//slog.Info("Response", "body", string(body))
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
-		//if err := json.Unmarshal(body, &apiResponse); err != nil {
-		slog.Warn("Error decoding the response", "error", err) //, "body", string(body))
-		return "", err
-	}
-	slog.Info("Search found", "results", len(apiResponse.Results))
+	results, err := SearchSearX(input)
 
 	wg := sync.WaitGroup{}
 	counter := 0
-	for i := range apiResponse.Results {
+	for i := range results {
 		for _, usedLink := range usedLinks[t.SessionString] {
-			if usedLink == apiResponse.Results[i].URL {
+			if usedLink == results[i].URL {
 				continue
 			}
 		}
-		if apiResponse.Results[i].Score <= 0.5 {
+		if results[i].Score <= 0.5 {
 			continue
 		}
 
@@ -121,7 +94,7 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 		}
 
 		// if result link ends in .pdf, skip
-		if strings.HasSuffix(apiResponse.Results[i].URL, ".pdf") {
+		if strings.HasSuffix(results[i].URL, ".pdf") {
 			continue
 		}
 
@@ -134,7 +107,7 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 				}
 			}()
 			ctx = context.WithValue(ctx, "ollama", t.Ollama)
-			err := vectordb.DownloadWebsiteToVectorDB(ctx, apiResponse.Results[i].URL, t.SessionString)
+			err := vectordb.DownloadWebsiteToVectorDB(ctx, results[i].URL, t.SessionString)
 			if err != nil {
 				slog.Warn("Error downloading website", "error", err)
 				wg.Done()
@@ -142,15 +115,16 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 			}
 			ch, ok := t.CallbacksHandler.(chain.CustomHandler)
 			if ok {
-				newSource := types.Source{Name: "WebSearch", Link: apiResponse.Results[i].URL}
+				newSource := types.Source{Name: "WebSearch", Link: results[i].URL}
 
 				ch.HandleSourceAdded(ctx, newSource)
-				usedLinks[t.SessionString] = append(usedLinks[t.SessionString], apiResponse.Results[i].URL)
+				usedLinks[t.SessionString] = append(usedLinks[t.SessionString], results[i].URL)
 			}
 			wg.Done()
 		}(i)
 	}
 	wg.Wait()
+
 	result, err := SearchVectorDB.Call(
 		SearchVectorDB{CallbacksHandler: nil, SessionString: t.SessionString, Ollama: t.Ollama},
 		context.Background(),
@@ -165,9 +139,44 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 		t.CallbacksHandler.HandleToolEnd(ctx, result)
 	}
 
-	if len(apiResponse.Results) == 0 {
-		return "No results found", fmt.Errorf("no results, we might be rate limited")
+	return result, nil
+}
+
+func SearchSearX(input string) ([]SearXResult, error) {
+	// remove quotes and question mark. Question mark even escaped still causes 404 in searx
+	input = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(input, "\""), "\""), "?")
+	inputQuery := url.QueryEscape(input)
+	searXNGDomain := os.Getenv("SEARXNG_DOMAIN")
+	query := fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery)
+	//slog.Info("Searching", "query", query)
+
+	resp, err := http.Get(query)
+
+	if err != nil {
+		slog.Warn("Error making the request", "error", err)
+		return []SearXResult{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode > 300 {
+		slog.Warn("Error with the response", "status", resp.Status)
+		return []SearXResult{}, fmt.Errorf("error with the response: %s", resp.Status)
 	}
 
-	return result, nil
+	var apiResponse seaXngResult
+	//body, err := io.ReadAll(resp.Body)
+	//slog.Info("Response", "body", string(body))
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
+		//if err := json.Unmarshal(body, &apiResponse); err != nil {
+		slog.Warn("Error decoding the response", "error", err) //, "body", string(body))
+		return []SearXResult{}, err
+	}
+	slog.Info("Search found", "results", len(apiResponse.Results))
+
+	if len(apiResponse.Results) == 0 {
+		return []SearXResult{}, fmt.Errorf("no results found")
+	}
+
+	return apiResponse.Results, nil
 }

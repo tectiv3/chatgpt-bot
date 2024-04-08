@@ -23,6 +23,7 @@ type DocResult struct {
 	Source string
 }
 
+// usedResults is a map of used results for all users throughout the session. Potentially a memory leak.
 var usedResults = make(map[string][]string)
 
 func (t SearchVectorDB) Description() string {

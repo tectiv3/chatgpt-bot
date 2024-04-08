@@ -192,7 +192,6 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 
 	model := chat.ModelName
 	if model == mOllama && len(s.conf.OllamaURL) > 0 {
-
 		s.ai.SetBaseURL(s.conf.OllamaURL)
 		s.ai.APIKey = "ollama"
 		model = s.conf.OllamaModel
@@ -245,6 +244,8 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 			// stream is done, send the final result
 			if len(comp.response.Choices[0].Message.ToolCalls) > 0 &&
 				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
+				_, _ = c.Bot().Edit(&sentMessage, "Using tool: "+comp.response.Choices[0].Message.ToolCalls[0].Function.Name)
+
 				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
 				if err != nil {
 					return err.Error(), err

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/go-shiori/go-readability"
 	"github.com/meinside/openai-go"
 	"github.com/tectiv3/chatgpt-bot/tools"
+	"github.com/tectiv3/chatgpt-bot/vectordb"
 	tele "gopkg.in/telebot.v3"
 	"log"
 	"log/slog"
@@ -13,6 +15,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,7 +41,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 		openai.NewChatCompletionTool(
 			"web_search",
-			"This is DuckDuckGo. Use this tool to search the internet. Use it when you need access to real time information. Input should be a string.",
+			"This is web search. Use this tool to search the internet. Use it when you need access to real time information. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the vector_search tool. Input should be a string. Append sources to the response.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "A query to search the web for").
 				AddPropertyWithEnums("region", "string",
@@ -52,6 +55,13 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
 						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
 				SetRequiredParameters([]string{"query", "region"}),
+		),
+		openai.NewChatCompletionTool(
+			"vector_search",
+			`Useful for searching through added files and websites. Search for keywords in the text not whole questions, avoid relative words like "yesterday" think about what could be in the text. The input to this tool will be run against a vector db. The top results will be returned as json.`,
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("query", "string", "A query to search the vector db").
+				SetRequiredParameters([]string{"query"}),
 		),
 		openai.NewChatCompletionTool(
 			"set_reminder",
@@ -84,7 +94,6 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	var toolID string
 	for _, toolCall := range response.ToolCalls {
 		function := toolCall.Function
-
 		if function.Name == "" {
 			err := fmt.Sprint("there was no returned function call name")
 			resultErr = fmt.Errorf(err)
@@ -93,6 +102,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 		if !s.conf.Verbose {
 			slog.Info("Function call", "name", function.Name)
 		}
+
 		switch function.Name {
 		case "search_images":
 			type parsed struct {
@@ -137,34 +147,42 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				log.Printf("Will call %s(\"%s\", \"%s\")", function.Name, arguments.Query, arguments.Region)
+				slog.Info("Will call", "function", function.Name, "query", arguments.Query, "region", arguments.Region)
 			}
-			param, err := tools.NewSearchParam(arguments.Query, arguments.Region)
+			var err error
+			result, err = s.webSearchSearX(arguments.Query, arguments.Region, c.Sender().Username)
 			if err != nil {
-				return "", err
+				slog.Warn("Failed to search web", "error", err)
+				continue
 			}
-			r := tools.Search(param)
-			if r.IsErr() {
-				return "", r.Error()
-			}
-			res := *r.Unwrap()
-			if len(res) == 0 {
-				return "", fmt.Errorf("no results found")
-			}
-			limit := 3
-			if limit > len(res) {
-				limit = len(res)
-			}
-			jsonRes, err := json.Marshal(res[0:limit])
-			if err != nil {
-				return "", err
-			}
-			result = string(jsonRes)
 			resultErr = nil
 			toolID = toolCall.ID
 			response.Role = openai.ChatMessageRoleAssistant
 			chat.addMessageToHistory(response)
-			//return fmt.Sprintf("Title: %s\nSnippet: %s\nLink: %s", res[0].Title, res[0].Snippet, res[0].Link), nil
+
+		case "vector_search":
+			type parsed struct {
+				Query string `json:"query"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			}
+			if s.conf.Verbose {
+				slog.Info("Will call", "function", function.Name, "query", arguments.Query)
+			}
+
+			var err error
+			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
+			if err != nil {
+				slog.Warn("Failed to search vector", "error", err)
+				continue
+			}
+			resultErr = nil
+			toolID = toolCall.ID
+			response.Role = openai.ChatMessageRoleAssistant
+			chat.addMessageToHistory(response)
 
 		case "set_reminder":
 			type parsed struct {
@@ -327,4 +345,138 @@ func (s *Server) getCryptoRate(asset string) (string, error) {
 	price, _ := strconv.ParseFloat(symbol.Data.PriceUsd, 64)
 
 	return fmt.Sprintf(format, price), nil
+}
+
+func (s *Server) webSearchDDG(input, region, username string) (string, error) {
+	param, err := tools.NewSearchParam(input, region)
+	if err != nil {
+		return "", err
+	}
+	result := tools.Search(param)
+	if result.IsErr() {
+		return "", result.Error()
+	}
+	res := *result.Unwrap()
+	if len(res) == 0 {
+		return "", fmt.Errorf("no results found")
+	}
+	slog.Info("Search found", "results", len(res))
+	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
+	limit := 10
+
+	wg := sync.WaitGroup{}
+	counter := 0
+	for i := range res {
+		if counter > limit {
+			break
+		}
+		// if result link ends in .pdf, skip
+		if strings.HasSuffix(res[i].Link, ".pdf") {
+			continue
+		}
+
+		counter += 1
+		wg.Add(1)
+		go func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+				}
+			}()
+			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].Link, username)
+			if err != nil {
+				slog.Warn("Error downloading website", "error", err)
+				wg.Done()
+				return
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+
+	return s.vectorSearch(input, username)
+}
+
+func (s *Server) webSearchSearX(input, region, username string) (string, error) {
+	input = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(input, "\""), "\""), "?")
+	//if region != "" && region != "wt-wt" {
+	//	input += ":" + region
+	//}
+	res, err := tools.SearchSearX(input)
+	if err != nil {
+		return "", err
+	}
+
+	slog.Info("Search found", "results", len(res))
+	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
+	limit := 10
+
+	wg := sync.WaitGroup{}
+	counter := 0
+	for i := range res {
+		if counter > limit {
+			break
+		}
+		// if result link ends in .pdf, skip
+		if strings.HasSuffix(res[i].URL, ".pdf") {
+			continue
+		}
+
+		counter += 1
+		wg.Add(1)
+		go func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+				}
+			}()
+			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].URL, username)
+			if err != nil {
+				slog.Warn("Error downloading website", "error", err)
+				wg.Done()
+				return
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+
+	return s.vectorSearch(input, username)
+}
+
+func (s *Server) vectorSearch(input string, username string) (string, error) {
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "ollama", s.conf.OllamaEnabled)
+	docs, err := vectordb.SearchVectorDB(ctx, input, username)
+	type DocResult struct {
+		Text   string
+		Source string
+	}
+	var results []DocResult
+
+	for _, r := range docs {
+		newResult := DocResult{Text: r.PageContent}
+		source, ok := r.Metadata["url"].(string)
+		if ok {
+			newResult.Source = source
+		}
+
+		results = append(results, newResult)
+	}
+
+	if len(docs) == 0 {
+		response := "no results found. Try other db search keywords or download more websites."
+		slog.Warn("no results found", "input", input)
+		results = append(results, DocResult{Text: response})
+	} else if len(results) == 0 {
+		response := "No new results found, all returned results have been used already. Try other db search keywords or download more websites."
+		results = append(results, DocResult{Text: response})
+	}
+
+	resultJson, err := json.Marshal(results)
+	if err != nil {
+		return "", err
+	}
+
+	return string(resultJson), nil
 }
