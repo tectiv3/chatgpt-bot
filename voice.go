@@ -9,10 +9,11 @@ import (
 	"github.com/tectiv3/go-lame"
 	tele "gopkg.in/telebot.v3"
 	"io"
-	"io/ioutil"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -210,13 +211,14 @@ func (s *Server) sendAudio(c tele.Context, text string) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		slog.Warn("failed to send request", "error", err)
 	}
 	defer resp.Body.Close()
 
-	out, err := ioutil.TempFile("", "chatbot")
+	out, err := os.CreateTemp("", "chatbot")
 	if err != nil {
-		panic(err)
+		slog.Warn("failed to create temp file", "error", err)
+		return
 	}
 
 	_, err = io.Copy(out, resp.Body)
@@ -228,4 +230,51 @@ func (s *Server) sendAudio(c tele.Context, text string) {
 	defer os.Remove(out.Name())
 	_ = c.Send(v)
 
+}
+
+func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
+	switch lang {
+	case "en":
+	case "fr":
+	case "ru":
+		break
+	default:
+		return c.Send("Unsupported language")
+	}
+	if len(s.conf.PiperDir) == 0 {
+		return c.Send("PiperDir is not set")
+	}
+	cmd := exec.Command(s.conf.PiperDir+"piper", "-m", s.conf.PiperDir+lang+".onnx", "-f", "-")
+
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	go io.Copy(os.Stderr, stderr)
+
+	out, err := os.CreateTemp("", "piper.wav")
+	if err != nil {
+		return c.Send("Error creating temp file: " + err.Error())
+	}
+	defer out.Close()
+
+	if err := cmd.Start(); err != nil {
+		return c.Send("Error starting command: " + err.Error())
+	}
+	if _, err := stdin.Write([]byte(text)); err != nil {
+		return c.Send("Error writing to command: " + err.Error())
+	}
+	stdin.Close()
+	_, err = io.Copy(out, stdout)
+	if err != nil {
+		return c.Send("Error reading from the command: " + err.Error())
+	}
+	if err := cmd.Wait(); err != nil {
+		return c.Send("Error waiting for command: " + err.Error())
+	}
+
+	slog.Info("TTS done", "file", out.Name())
+	v := &tele.Voice{File: tele.FromDisk(out.Name())}
+	defer os.Remove(out.Name())
+
+	return c.Send(v)
 }

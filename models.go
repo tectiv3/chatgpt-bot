@@ -30,6 +30,7 @@ type config struct {
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
 	Model                string   `json:"openai_model"`
+	PiperDir             string   `json:"piper_dir"`
 }
 
 type Server struct {

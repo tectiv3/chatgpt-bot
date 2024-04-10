@@ -155,17 +155,9 @@ func (s *Server) run() {
 		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
-	//b.Handle(cmdVoice, func(c tele.Context) error {
-	//	chat := s.getChat(c.Chat().ID, c.Sender().Username)
-	//	chat.Voice = !chat.Voice
-	//	s.db.Save(&chat)
-	//	status := "disabled"
-	//	if chat.Voice {
-	//		status = "enabled"
-	//	}
-	//
-	//	return c.Send("Voice is "+status, "text", &tele.SendOptions{ReplyTo: c.Message()})
-	//})
+	b.Handle(cmdVoice, func(c tele.Context) error {
+		return s.textToSpeech(c, c.Message().Payload, "fr")
+	})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
 

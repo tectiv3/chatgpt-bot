@@ -4,5 +4,4 @@
     "openai_org_id": "",
     "allowed_telegram_users": [],
     "verbose": false,
-    "opusdec": "/usr/bin/opusdec"
 }

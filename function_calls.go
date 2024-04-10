@@ -58,6 +58,16 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				SetRequiredParameters([]string{"query", "region"}),
 		),
 		openai.NewChatCompletionTool(
+			"text_to_speech",
+			"Convert text to speech.",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("query", "string", "A text to convert to speech.").
+				AddPropertyWithEnums("language", "string",
+					"The language to use for the speech synthesis. Default to `en` if could not be detected.",
+					[]string{"fr", "ru", "en"}).
+				SetRequiredParameters([]string{"query", "language"}),
+		),
+		openai.NewChatCompletionTool(
 			"vector_search",
 			`Useful for searching through added files and websites. Search for keywords in the text not whole questions, avoid relative words like "yesterday" think about what could be in the text. The input to this tool will be run against a vector db. The top results will be returned as json.`,
 			openai.NewToolFunctionParameters().
@@ -195,6 +205,23 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			toolID = toolCall.ID
 			response.Role = openai.ChatMessageRoleAssistant
 			chat.addMessageToHistory(response)
+
+		case "text_to_speech":
+			type parsed struct {
+				Query    string `json:"query"`
+				Language string `json:"language"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
+				return "", err
+			}
+			if s.conf.Verbose {
+				slog.Info("Will call", "function", function.Name, "query", arguments.Query, "language", arguments.Language)
+			}
+			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query))
+
+			return "", s.textToSpeech(c, arguments.Query, arguments.Language)
 
 		case "set_reminder":
 			type parsed struct {
