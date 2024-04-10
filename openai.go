@@ -93,14 +93,14 @@ func (s *Server) getAnswer(
 	history []openai.ChatMessage,
 	vision bool,
 ) (string, error) {
+	model := chat.ModelName
 	options := openai.ChatCompletionOptions{}
-	if !vision {
+	if model == mGPT4 || !vision {
 		options.SetTools(s.getFunctionTools())
 	}
 	s.ai.Verbose = s.conf.Verbose
 	//options.SetMaxTokens(3000)
-	model := chat.ModelName
-	if vision {
+	if vision && model == "gpt-4-turbo-preview" {
 		model = "gpt-4-vision-preview"
 	}
 	if model == mOllama && len(s.conf.OllamaURL) > 0 {

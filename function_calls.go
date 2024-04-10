@@ -102,7 +102,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			continue
 		}
 		if !s.conf.Verbose {
-			slog.Info("Function call", "name", function.Name)
+			slog.Info("Function call", "name", function.Name, "user", c.Sender().Username)
 		}
 
 		switch function.Name {

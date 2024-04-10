@@ -37,7 +37,7 @@ const (
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
-	mGPT4         = "gpt-4-turbo-preview"
+	mGPT4         = "gpt-4-turbo"
 )
 
 var (
@@ -95,7 +95,7 @@ func (s *Server) run() {
 
 	b.Handle(cmdModel, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		menu.Inline(menu.Row(btn3, btn4, btn5))
+		menu.Inline(menu.Row(btn3, btn4)) //, btn5,))
 
 		return c.Send(chat.t("Select model"), menu)
 	})
