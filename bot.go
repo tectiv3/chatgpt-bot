@@ -271,7 +271,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(&btn3, func(c tele.Context) error {
-		Log.Info("Selected", "model", c.Data())
+		Log.WithField("user", c.Sender().Username).Info("Selected model %s", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.ModelName = c.Data()
 		s.db.Save(&chat)
@@ -280,7 +280,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(&btnT0, func(c tele.Context) error {
-		Log.Info("Selected", "temperature", c.Data())
+		Log.WithField("user", c.Sender().Username).Info("Selected temperature %s", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
 		s.db.Save(&chat)
@@ -402,11 +402,11 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 
 	response, err := s.answer(c, message, image)
 	if err != nil {
-		Log.Error(err)
+		Log.WithField("user", c.Sender().Username).Error(err)
 		_ = c.Send(response, replyMenu)
 		return
 	}
-	Log.Info("Response", "length=", len(response), "user=", c.Sender().Username)
+	Log.WithField("user", c.Sender().Username).WithField("length", len(response)).Info("Response")
 
 	if len(response) == 0 || (chat.Stream && image == nil) {
 		return

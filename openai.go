@@ -27,11 +27,8 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 			SetTemperature(chat.Temperature))
 
 	if err != nil {
-		Log.Warn("failed to create chat completion", "error=", err)
+		Log.WithField("user", c.Sender().Username).Error(err)
 		return err.Error(), err
-	}
-	if s.conf.Verbose {
-		Log.Info("[verbose]", "request", request, "choices", response.Choices)
 	}
 	_ = c.Notify(tele.Typing)
 
@@ -44,7 +41,7 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	if len(response.Choices) > 0 {
 		answer, err = response.Choices[0].Message.ContentString()
 		if err != nil {
-			Log.Warn("failed to get content string", "error=", err)
+			Log.WithField("user", c.Sender().Username).Error(err)
 			return err.Error(), err
 		}
 		chat.TotalTokens += response.Usage.TotalTokens
@@ -54,7 +51,7 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	}
 
 	if s.conf.Verbose {
-		Log.Info("answer=", answer)
+		Log.WithField("user", c.Sender().Username).Info(answer)
 	}
 
 	return answer, nil
@@ -65,7 +62,7 @@ func (s *Server) answer(c tele.Context, message string, image *string) (string, 
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat(), c.Sender())
 	history := chat.getConversationContext(&message, image)
-	Log.Info("Context=", len(history))
+	Log.WithField("user", c.Sender().Username).Info("Context=%d", len(history))
 
 	if chat.Stream {
 		chat.mutex.Lock()
@@ -112,11 +109,8 @@ func (s *Server) getAnswer(
 			SetTemperature(chat.Temperature))
 
 	if err != nil {
-		Log.Warn("failed to create chat completion", "error=", err)
+		Log.WithField("user", c.Sender().Username).Error(err)
 		return err.Error(), err
-	}
-	if s.conf.Verbose {
-		Log.Info("[verbose]", "choices", response.Choices)
 	}
 
 	result := response.Choices[0].Message
@@ -128,7 +122,7 @@ func (s *Server) getAnswer(
 	if len(response.Choices) > 0 {
 		answer, err = response.Choices[0].Message.ContentString()
 		if err != nil {
-			Log.Warn("failed to get content string", "error=", err)
+			Log.WithField("user", c.Sender().Username).Error(err)
 			return err.Error(), err
 		}
 		chat.mutex.Lock()
@@ -159,12 +153,12 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	}
 	history = append(history, msg)
 
-	Log.Info("Chat history", "length", len(history))
+	Log.Info("Chat history %d", len(history))
 
 	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
 
 	if err != nil {
-		Log.Warn("failed to create chat completion", "error=", err)
+		Log.Error(err)
 		return nil, err
 	}
 	if response.Choices[0].Message.Content == nil {
@@ -207,7 +201,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 					close(ch)
 				}
 			})); err != nil {
-		Log.Error(err)
+		Log.WithField("user", c.Sender().Username).Error(err)
 		return err.Error(), err
 	}
 
@@ -222,7 +216,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 	tokens := 0
 	for comp := range ch {
 		if comp.err != nil {
-			Log.Error(comp.err)
+			Log.WithField("user", c.Sender().Username).Error(comp.err)
 			return comp.err.Error(), comp.err
 		}
 		if !comp.done {
@@ -243,7 +237,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
 				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
 				if err != nil {
-					Log.Error(err)
+					Log.WithField("user", c.Sender().Username).Error(err)
 					return err.Error(), err
 				}
 
@@ -263,7 +257,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 				ParseMode: tele.ModeMarkdown,
 			}, replyMenu)
 
-			Log.WithField("tokens", tokens).Info("Stream finished")
+			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
 			chat.mutex.Lock()
 			chat.TotalTokens += tokens
 			chat.mutex.Unlock()
@@ -278,7 +272,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 }
 
 func (s *Server) saveHistory(chat *Chat) {
-	Log.Infof("Chat history len: %d", len(chat.History))
+	Log.Info("Chat history len: %d", len(chat.History))
 
 	// iterate over history
 	// drop messages that are older than chat.ConversationAge days
@@ -300,7 +294,7 @@ func (s *Server) saveHistory(chat *Chat) {
 	Log.Infof("chat history len: %d", len(chat.History))
 
 	if len(chat.History) > 100 {
-		Log.Infof("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
+		Log.Info("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
 		response, err := s.summarize(chat.History)
 		if err != nil {
 			Log.Warn(err)
@@ -312,7 +306,7 @@ func (s *Server) saveHistory(chat *Chat) {
 			Log.Info(summary)
 		}
 		maxID := chat.History[len(chat.History)-3].ID
-		Log.Infof("Deleting chat history for chat ID %d up to message ID %d\n", chat.ID, maxID)
+		Log.Info("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 
 		chat.History = []ChatMessage{{
@@ -322,7 +316,7 @@ func (s *Server) saveHistory(chat *Chat) {
 			CreatedAt: time.Now(),
 		}}
 
-		Log.Info("Chat history after summarising", "length=", len(chat.History))
+		Log.Info("Chat history length after summarising: %d", len(chat.History))
 		chat.TotalTokens += response.Usage.TotalTokens
 	}
 

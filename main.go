@@ -9,6 +9,7 @@ import (
 	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
 	"github.com/tectiv3/chatgpt-bot/i18n"
+	"golang.org/x/crypto/ssh/terminal"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -33,8 +34,9 @@ func main() {
 	stdlog.SetFlags(0)
 	stdlog.SetFlags(stdlog.LstdFlags | stdlog.Lshortfile)
 	logrus.Formatter = &log.TextFormatter{
-		FullTimestamp:   true,
-		TimestampFormat: "Jan 2 15:04:05.000",
+		FullTimestamp:    true,
+		DisableTimestamp: !terminal.IsTerminal(int(os.Stdout.Fd())),
+		TimestampFormat:  "Jan 2 15:04:05.000",
 		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
 			filename := path.Base(f.File)
 			return fmt.Sprintf("%s()", f.Function), fmt.Sprintf("%s:%d", filename, f.Line)
