@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/ollama/ollama/api"
+	log "github.com/sirupsen/logrus"
 	"github.com/tmc/langchaingo/llms/ollama"
-	"log/slog"
 	"os"
 )
 
@@ -37,7 +37,7 @@ func GetOllamaModelList() ([]string, error) {
 
 func CheckIfModelExistsOrPull(modelName string) error {
 	if err := CheckIfModelExists(modelName); err != nil {
-		slog.Info("Model does not exist, pulling it", "model", modelName)
+		log.Info("Model does not exist, pulling it", "model", modelName)
 		if err := OllamaPullModel(modelName); err != nil {
 			return err
 		}
@@ -76,7 +76,7 @@ var lastProgress string
 func pullProgressHandler(progress api.ProgressResponse) error {
 	percentage := progressPercentage(progress)
 	if percentage != lastProgress {
-		slog.Info("Pulling model", "progress", percentage)
+		log.Info("Pulling model", "progress", percentage)
 		lastProgress = percentage
 	}
 	return nil

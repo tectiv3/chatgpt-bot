@@ -14,7 +14,6 @@ import (
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/tools"
 	"github.com/tmc/langchaingo/tools/wikipedia"
-	"log/slog"
 )
 
 type Sessions map[string]*memory.ConversationBuffer
@@ -27,7 +26,7 @@ func parsingErrorPrompt() string {
 
 func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJsonStreamElement, userQuery types.ClientQuery) {
 	if s.conf.OllamaEnabled {
-		slog.Info("Ollama enabled, checking if we have all required models pulled")
+		Log.Info("Ollama enabled, checking if we have all required models pulled")
 		neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
 		s.RLock()
 		for _, modelName := range neededModels {
@@ -35,7 +34,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 				continue
 			}
 			if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
-				slog.Error("Model does not exist and could not be pulled", "model", modelName, "error", err)
+				Log.Error("Model does not exist and could not be pulled", "model", modelName, "error=", err)
 				s.conf.OllamaEnabled = false
 				outputChan <- types.HttpJsonStreamElement{
 					Message:  fmt.Sprintf("Model %s does not exist and could not be pulled: %s", modelName, err.Error()),
@@ -53,7 +52,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 
 	s.Lock()
 	if sessions[session] == nil {
-		slog.Info("Creating new session", "session", session)
+		Log.Info("Creating new session", "session", session)
 		sessions[session] = memory.NewConversationBuffer()
 		memory.NewChatMessageHistory()
 		outputChan <- types.HttpJsonStreamElement{
@@ -65,7 +64,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	mem := sessions[session]
 	s.Unlock()
 
-	slog.Info("Starting agent chain", "session", session) //, "userQuery", userQuery, "startTime", startTime)
+	Log.Info("Starting agent chain", "session", session) //, "userQuery", userQuery, "startTime", startTime)
 
 	var llm llms.Model
 	var err error
@@ -76,7 +75,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 		llm, err = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(userQuery.ModelName), openai.WithOrganization(s.conf.OpenAIOrganizationID))
 	}
 	if err != nil {
-		slog.Error("Error creating LLM", "error", err)
+		Log.Error("Error creating LLM", "error=", err)
 		return
 	}
 
@@ -100,7 +99,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 		agentTools,
 		agents.ConversationalReactDescription,
 		agents.WithParserErrorHandler(agents.NewParserErrorHandler(func(s string) string {
-			slog.Error("Parsing Error", "error", s)
+			Log.Error("Parsing Error", "error", s)
 			return parsingErrorPrompt()
 		})),
 
@@ -110,7 +109,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	)
 
 	if err != nil {
-		slog.Error("Error initializing agent", "error", err)
+		Log.Error("Error initializing agent", "error=", err)
 		return
 	}
 
@@ -131,7 +130,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
     Question: %s`, userQuery.Prompt)
 	_, err = chains.Run(ctx, executor, prompt, chains.WithTemperature(temp))
 	if err != nil {
-		slog.Error("Error running agent", "error", err)
+		Log.Error("Error running agent", "error=", err)
 		return
 	}
 

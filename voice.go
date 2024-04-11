@@ -9,8 +9,6 @@ import (
 	"github.com/tectiv3/go-lame"
 	tele "gopkg.in/telebot.v3"
 	"io"
-	"log"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -36,7 +34,7 @@ func convertToWav(r io.Reader) ([]byte, error) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			log.Fatal(err)
+			Log.Fatal(err)
 		}
 		pcm := pcmbuf[:n*1]
 
@@ -95,7 +93,7 @@ func wavToMp3(wav []byte) []byte {
 	reader := bytes.NewReader(wav)
 	wavHdr, err := lame.ReadWavHeader(reader)
 	if err != nil {
-		log.Println("not a wav file, err=" + err.Error())
+		Log.Warn("not a wav file", "error=", err.Error())
 		return nil
 	}
 	output := new(bytes.Buffer)
@@ -121,19 +119,19 @@ func (s *Server) handleVoice(c tele.Context) {
 	if s.conf.TelegramServerURL != "" {
 		f, err := c.Bot().FileByID(audioFile.FileID)
 		if err != nil {
-			log.Println("Error getting file ID:", err)
+			Log.Warn("Error getting file ID", "error=", err)
 			return
 		}
 		// start reader from f.FilePath
 		reader, err = os.Open(f.FilePath)
 		if err != nil {
-			log.Println("Error opening file:", err)
+			Log.Warn("Error opening file", "error=", err)
 			return
 		}
 	} else {
 		reader, err = c.Bot().File(&audioFile)
 		if err != nil {
-			log.Println("Error getting file content:", err)
+			Log.Warn("Error getting file content", "error=", err)
 			return
 		}
 	}
@@ -147,18 +145,18 @@ func (s *Server) handleVoice(c tele.Context) {
 
 	wav, err := convertToWav(reader)
 	if err != nil {
-		log.Println("failed to convert to wav: ", err)
+		Log.Warn("failed to convert to wav", "error=", err)
 		return
 	}
 	mp3 := wavToMp3(wav)
 	if mp3 == nil {
-		log.Println("failed to convert to mp3")
+		Log.Warn("failed to convert to mp3")
 		return
 	}
 	audio := openai.NewFileParamFromBytes(mp3)
 	transcript, err := s.ai.CreateTranscription(audio, "whisper-1", nil)
 	if err != nil {
-		log.Printf("failed to create transcription: %s\n", err)
+		Log.Warn("failed to create transcription", "error=", err)
 		return
 	}
 	if transcript.JSON == nil &&
@@ -166,7 +164,7 @@ func (s *Server) handleVoice(c tele.Context) {
 		transcript.SRT == nil &&
 		transcript.VerboseJSON == nil &&
 		transcript.VTT == nil {
-		log.Println("There was no returned data")
+		Log.Warn("There was no returned data")
 
 		return
 	}
@@ -183,7 +181,7 @@ func (s *Server) handleVoice(c tele.Context) {
 
 	response, err := s.answer(c, *transcript.Text, nil)
 
-	log.Printf("User: %s. Response length: %d\n", c.Sender().Username, len(response))
+	Log.Infof("User: %s. Response length: %d\n", c.Sender().Username, len(response))
 
 	if len(response) == 0 {
 		return
@@ -211,13 +209,13 @@ func (s *Server) sendAudio(c tele.Context, text string) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		slog.Warn("failed to send request", "error", err)
+		Log.Warn("failed to send request", "error=", err)
 	}
 	defer resp.Body.Close()
 
 	out, err := os.CreateTemp("", "chatbot")
 	if err != nil {
-		slog.Warn("failed to create temp file", "error", err)
+		Log.Warn("failed to create temp file", "error=", err)
 		return
 	}
 
@@ -225,11 +223,10 @@ func (s *Server) sendAudio(c tele.Context, text string) {
 	if err := out.Close(); err != nil {
 		return
 	}
-	log.Println(out.Name())
+
 	v := &tele.Voice{File: tele.FromDisk(out.Name())}
 	defer os.Remove(out.Name())
 	_ = c.Send(v)
-
 }
 
 func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
@@ -273,7 +270,7 @@ func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
 		return c.Send("Error waiting for command: " + err.Error())
 	}
 
-	slog.Info("TTS done", "file", out.Name())
+	Log.Info("TTS done", "file", out.Name())
 	v := &tele.Voice{File: tele.FromDisk(out.Name())}
 	defer os.Remove(out.Name())
 

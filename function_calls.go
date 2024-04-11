@@ -10,8 +10,6 @@ import (
 	"github.com/tectiv3/chatgpt-bot/tools"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
 	tele "gopkg.in/telebot.v3"
-	"log"
-	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -112,7 +110,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			continue
 		}
 		if !s.conf.Verbose {
-			slog.Info("Function call", "name", function.Name, "user", c.Sender().Username)
+			Log.Info("Function call", "name", function.Name, "user", c.Sender().Username)
 		}
 
 		switch function.Name {
@@ -128,7 +126,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				slog.Info("Will call", "name", function.Name, "query", arguments.Query, "type", arguments.Type, "region", arguments.Region)
+				Log.Info("Will call", "name", function.Name, "query", arguments.Query, "type", arguments.Type, "region", arguments.Region)
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
@@ -167,12 +165,12 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			)
 
 			if s.conf.Verbose {
-				slog.Info("Will call", "function", function.Name, "query", arguments.Query, "region", arguments.Region)
+				Log.Info("Will call", "function", function.Name, "query", arguments.Query, "region", arguments.Region)
 			}
 			var err error
 			result, err = s.webSearchSearX(arguments.Query, arguments.Region, c.Sender().Username)
 			if err != nil {
-				slog.Warn("Failed to search web", "error", err)
+				Log.Warn("Failed to search web", "error=", err)
 				continue
 			}
 			resultErr = nil
@@ -190,7 +188,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				slog.Info("Will call", "function", function.Name, "query", arguments.Query)
+				Log.Info("Will call", "function", function.Name, "query", arguments.Query)
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
@@ -198,7 +196,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			var err error
 			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
 			if err != nil {
-				slog.Warn("Failed to search vector", "error", err)
+				Log.Warn("Failed to search vector", "error=", err)
 				continue
 			}
 			resultErr = nil
@@ -217,7 +215,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				slog.Info("Will call", "function", function.Name, "query", arguments.Query, "language", arguments.Language)
+				Log.Info("Will call", "function", function.Name, "query", arguments.Query, "language", arguments.Language)
 			}
 			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query))
 
@@ -234,7 +232,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				slog.Info("Will call", "function", function.Name, "reminder", arguments.Reminder, "minutes", arguments.Minutes)
+				Log.Info("Will call", "function", function.Name, "reminder", arguments.Reminder, "minutes", arguments.Minutes)
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Reminder+","+strconv.Itoa(int(arguments.Minutes))),
@@ -256,8 +254,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				log.Printf("Will call %s(\"%s\")", function.Name, arguments.URL)
+				Log.Info("Will call", "function", function.Name, "reminder", arguments.URL)
 			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
+			)
 			go s.getPageSummary(c.Chat().ID, arguments.URL)
 
 			return "Downloading summary. Please wait.", nil
@@ -272,7 +273,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				slog.Info("Will call", "function", function.Name, "asset", arguments.Asset)
+				Log.Info("Will call", "function", function.Name, "asset", arguments.Asset)
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
@@ -306,16 +307,16 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 func (s *Server) getPageSummary(chatID int64, url string) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
 		}
 	}()
 	article, err := readability.FromURL(url, 30*time.Second)
 	if err != nil {
-		log.Fatalf("failed to parse %s, %v\n", url, err)
+		Log.Fatalf("failed to parse %s, %v\n", url, err)
 	}
 
 	if s.conf.Verbose {
-		slog.Info("Page", "title", article.Title, "content", len(article.TextContent))
+		Log.Info("Page", "title", article.Title, "content", len(article.TextContent))
 	}
 
 	msg := openai.NewChatUserMessage(article.TextContent)
@@ -327,7 +328,7 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 
 	if err != nil {
-		slog.Warn("failed to create chat completion", "error", err)
+		Log.Warn("failed to create chat completion", "error=", err)
 		return
 	}
 	chat := s.getChatByID(chatID)
@@ -341,7 +342,7 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	); err != nil {
-		slog.Error("Sending", "error", err)
+		Log.Error("Sending", "error=", err)
 	}
 }
 
@@ -400,7 +401,7 @@ func (s *Server) webSearchDDG(input, region, username string) (string, error) {
 	if len(res) == 0 {
 		return "", fmt.Errorf("no results found")
 	}
-	slog.Info("Search found", "results", len(res))
+	Log.Info("Search found", "results", len(res))
 	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
 	limit := 10
 
@@ -420,12 +421,12 @@ func (s *Server) webSearchDDG(input, region, username string) (string, error) {
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+					Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
 				}
 			}()
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].Link, username)
 			if err != nil {
-				slog.Warn("Error downloading website", "error", err)
+				Log.Warn("Error downloading website", "error=", err)
 				wg.Done()
 				return
 			}
@@ -447,7 +448,7 @@ func (s *Server) webSearchSearX(input, region, username string) (string, error) 
 		return "", err
 	}
 
-	slog.Info("Search found", "results", len(res))
+	Log.Info("Search found", "results", len(res))
 	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
 	limit := 10
 
@@ -467,12 +468,12 @@ func (s *Server) webSearchSearX(input, region, username string) (string, error) 
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+					Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
 				}
 			}()
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].URL, username)
 			if err != nil {
-				slog.Warn("Error downloading website", "error", err)
+				Log.Warn("Error downloading website", "error=", err)
 				wg.Done()
 				return
 			}
@@ -506,7 +507,7 @@ func (s *Server) vectorSearch(input string, username string) (string, error) {
 
 	if len(docs) == 0 {
 		response := "no results found. Try other db search keywords or download more websites."
-		slog.Warn("no results found", "input", input)
+		Log.Warn("no results found", "input", input)
 		results = append(results, DocResult{Text: response})
 	} else if len(results) == 0 {
 		response := "No new results found, all returned results have been used already. Try other db search keywords or download more websites."

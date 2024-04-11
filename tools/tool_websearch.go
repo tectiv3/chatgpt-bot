@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"github.com/tectiv3/chatgpt-bot/chain"
 	"github.com/tectiv3/chatgpt-bot/types"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/tools"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -103,13 +103,13 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("Panic", "stack", string(debug.Stack()), "error", err)
+					log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
 				}
 			}()
 			ctx = context.WithValue(ctx, "ollama", t.Ollama)
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, results[i].URL, t.SessionString)
 			if err != nil {
-				slog.Warn("Error downloading website", "error", err)
+				log.Warn("Error downloading website", "error=", err)
 				wg.Done()
 				return
 			}
@@ -148,31 +148,31 @@ func SearchSearX(input string) ([]SearXResult, error) {
 	inputQuery := url.QueryEscape(input)
 	searXNGDomain := os.Getenv("SEARXNG_DOMAIN")
 	query := fmt.Sprintf("%s/?q=%s&format=json", searXNGDomain, inputQuery)
-	//slog.Info("Searching", "query", query)
+	//log.Info("Searching", "query", query)
 
 	resp, err := http.Get(query)
 
 	if err != nil {
-		slog.Warn("Error making the request", "error", err)
+		log.Warn("Error making the request", "error=", err)
 		return []SearXResult{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode > 300 {
-		slog.Warn("Error with the response", "status", resp.Status)
+		log.Warn("Error with the response", "status", resp.Status)
 		return []SearXResult{}, fmt.Errorf("error with the response: %s", resp.Status)
 	}
 
 	var apiResponse seaXngResult
 	//body, err := io.ReadAll(resp.Body)
-	//slog.Info("Response", "body", string(body))
+	//log.Info("Response", "body", string(body))
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
 		//if err := json.Unmarshal(body, &apiResponse); err != nil {
-		slog.Warn("Error decoding the response", "error", err) //, "body", string(body))
+		log.Warn("Error decoding the response", "error=", err) //, "body", string(body))
 		return []SearXResult{}, err
 	}
-	slog.Info("Search found", "results", len(apiResponse.Results))
+	log.Info("Search found", "results", len(apiResponse.Results))
 
 	if len(apiResponse.Results) == 0 {
 		return []SearXResult{}, fmt.Errorf("no results found")

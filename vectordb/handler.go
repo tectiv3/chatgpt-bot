@@ -3,10 +3,10 @@ package vectordb
 import (
 	"context"
 	"github.com/go-shiori/go-readability"
+	log "github.com/sirupsen/logrus"
 	"github.com/tectiv3/chatgpt-bot/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/vectorstores"
-	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -29,10 +29,10 @@ func newStore(ctx context.Context, sessionString string) (*chroma.Store, error) 
 		useOllama = o
 	}
 	if useOllama {
-		//slog.Info("Using Ollama")
+		//log.Info("Using Ollama")
 		llm, err = ollama.NewOllamaEmbeddingLLM()
 	} else {
-		//slog.Info("Using OpenAI")
+		//log.Info("Using OpenAI")
 		llm, err = openai.New(openai.WithEmbeddingModel(mEmbedding))
 		suffix = "openai"
 	}
@@ -74,10 +74,10 @@ func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionS
 	}
 
 	if _, err := store.AddDocuments(timeoutCtx, docs); err != nil {
-		slog.Warn("Error adding document", "error", err, "docs", docs)
+		log.Warn("Error adding document", "error=", err, "docs", docs)
 		return err
 	}
-	slog.Info("Added documents", "count", len(docs))
+	log.Info("Added documents", "count", len(docs))
 
 	return nil
 }

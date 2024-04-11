@@ -3,10 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	log "github.com/sirupsen/logrus"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/tools"
-	"log/slog"
 )
 
 // SearchVectorDB is a tool that finds the most relevant documents in the vector db.
@@ -67,7 +67,7 @@ func (t SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 
 	if len(docs) == 0 {
 		response := "no results found. Try other db search keywords or download more websites."
-		slog.Warn("no results found", "input", input)
+		log.Warn("no results found", "input", input)
 		results = append(results, DocResult{Text: response})
 	} else if len(results) == 0 {
 		response := "No new results found, all returned results have been used already. Try other db search keywords or download more websites."

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"github.com/tectiv3/chatgpt-bot/tools"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -70,7 +69,7 @@ func (s *Server) run() {
 		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
 	})
 	if err != nil {
-		slog.Error("Fatal", "error", err)
+		Log.Fatal(err)
 		return
 	}
 	//if done, err := b.Logout(); err != nil {
@@ -272,7 +271,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(&btn3, func(c tele.Context) error {
-		slog.Info("Selected", "model", c.Data())
+		Log.Info("Selected", "model", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.ModelName = c.Data()
 		s.db.Save(&chat)
@@ -281,7 +280,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(&btnT0, func(c tele.Context) error {
-		slog.Info("Selected", "temperature", c.Data())
+		Log.Info("Selected", "temperature", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
 		s.db.Save(&chat)
@@ -406,7 +405,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 		_ = c.Send(response, replyMenu)
 		return
 	}
-	slog.Info("Response", "length", len(response), "user", c.Sender().Username)
+	Log.Info("Response", "length", len(response), "user", c.Sender().Username)
 
 	if len(response) == 0 || (chat.Stream && image == nil) {
 		return

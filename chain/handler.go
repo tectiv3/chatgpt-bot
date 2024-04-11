@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
+	log "github.com/sirupsen/logrus"
 	"strings"
 	"unicode/utf8"
 
@@ -85,7 +85,7 @@ func (l CustomHandler) HandleLLMStart(_ context.Context, prompts []string) {
 }
 
 func (l CustomHandler) HandleLLMError(_ context.Context, err error) {
-	slog.Warn("Exiting LLM with error", "error", err)
+	log.WithField("error", err).Warn("Exiting LLM with error")
 	l.OutputChan <- types.HttpJsonStreamElement{
 		Message: err.Error(),
 		Stream:  false,
