@@ -238,6 +238,9 @@ func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
 	case "fr":
 	case "ru":
 		break
+	case "ja":
+		s.sendAudio(c, text)
+		return nil
 	default:
 		return c.Send("Unsupported language")
 	}

@@ -64,7 +64,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				AddPropertyWithDescription("query", "string", "A text to convert to speech.").
 				AddPropertyWithEnums("language", "string",
 					"The language to use for the speech synthesis. Default to `en` if could not be detected.",
-					[]string{"fr", "ru", "en"}).
+					[]string{"fr", "ru", "en", "ja"}).
 				SetRequiredParameters([]string{"query", "language"}),
 		),
 		openai.NewChatCompletionTool(
