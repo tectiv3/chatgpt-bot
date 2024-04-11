@@ -54,7 +54,7 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	}
 
 	if s.conf.Verbose {
-		Log.Info("[verbose]", "answer", answer)
+		Log.Info("answer=", answer)
 	}
 
 	return answer, nil
@@ -65,16 +65,12 @@ func (s *Server) answer(c tele.Context, message string, image *string) (string, 
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat(), c.Sender())
 	history := chat.getConversationContext(&message, image)
-	Log.Info("Context", "length", len(history))
+	Log.Info("Context=", len(history))
 
 	if chat.Stream {
 		chat.mutex.Lock()
 		if chat.MessageID != nil {
-			if _, err := c.Bot().EditReplyMarkup(
-				tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID},
-				removeMenu); err != nil {
-				Log.Warn("Failed to remove last message", "error=", err)
-			}
+			_, _ = c.Bot().EditReplyMarkup(tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID}, removeMenu)
 			chat.MessageID = nil
 		}
 		chat.mutex.Unlock()
@@ -211,6 +207,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 					close(ch)
 				}
 			})); err != nil {
+		Log.WithField("error", err).Warn("failed to create chat completion with stream")
 		return err.Error(), err
 	}
 
