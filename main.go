@@ -55,9 +55,10 @@ func main() {
 		apiKey := conf.OpenAIAPIKey
 		orgID := conf.OpenAIOrganizationID
 		level := logger.Error
-		//if conf.Verbose {
-		//	level = logger.Info
-		//}
+		if conf.Verbose {
+			//	level = logger.Info
+			logrus.SetLevel(log.DebugLevel)
+		}
 		newLogger := logger.New(
 			stdlog.New(os.Stdout, "\r\n", stdlog.LstdFlags), // io writer
 			logger.Config{

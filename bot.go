@@ -402,10 +402,11 @@ func (s *Server) complete(c tele.Context, message string, reply bool, image *str
 
 	response, err := s.answer(c, message, image)
 	if err != nil {
+		Log.Error(err)
 		_ = c.Send(response, replyMenu)
 		return
 	}
-	Log.Info("Response", "length", len(response), "user", c.Sender().Username)
+	Log.Info("Response", "length=", len(response), "user=", c.Sender().Username)
 
 	if len(response) == 0 || (chat.Stream && image == nil) {
 		return

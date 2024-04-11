@@ -194,7 +194,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 		s.ai.SetBaseURL("")
 		s.ai.APIKey = s.conf.OpenAIAPIKey
 	}
-
+	//s.ai.Verbose = s.conf.Verbose
 	if _, err := s.ai.CreateChatCompletion(model, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getFunctionTools()).
@@ -207,7 +207,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 					close(ch)
 				}
 			})); err != nil {
-		Log.WithField("error", err).Warn("failed to create chat completion with stream")
+		Log.Error(err)
 		return err.Error(), err
 	}
 
@@ -222,6 +222,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 	tokens := 0
 	for comp := range ch {
 		if comp.err != nil {
+			Log.Error(comp.err)
 			return comp.err.Error(), comp.err
 		}
 		if !comp.done {
@@ -242,6 +243,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
 				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
 				if err != nil {
+					Log.Error(err)
 					return err.Error(), err
 				}
 
@@ -261,7 +263,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 				ParseMode: tele.ModeMarkdown,
 			}, replyMenu)
 
-			Log.Info("Stream total", "tokens", tokens)
+			Log.WithField("tokens", tokens).Info("Stream finished")
 			chat.mutex.Lock()
 			chat.TotalTokens += tokens
 			chat.mutex.Unlock()
@@ -301,13 +303,13 @@ func (s *Server) saveHistory(chat *Chat) {
 		Log.Infof("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
 		response, err := s.summarize(chat.History)
 		if err != nil {
-			Log.Warn("Failed to summarise chat history", "error=", err)
+			Log.Warn(err)
 			return
 		}
 		summary, _ := response.Choices[0].Message.ContentString()
 
 		if s.conf.Verbose {
-			Log.Info("Summary", summary)
+			Log.Info(summary)
 		}
 		maxID := chat.History[len(chat.History)-3].ID
 		Log.Infof("Deleting chat history for chat ID %d up to message ID %d\n", chat.ID, maxID)
@@ -320,7 +322,7 @@ func (s *Server) saveHistory(chat *Chat) {
 			CreatedAt: time.Now(),
 		}}
 
-		Log.Info("Chat history after summarising", "length", len(chat.History))
+		Log.Info("Chat history after summarising", "length=", len(chat.History))
 		chat.TotalTokens += response.Usage.TotalTokens
 	}
 

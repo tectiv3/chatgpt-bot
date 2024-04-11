@@ -43,27 +43,27 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			"This is web search. Use this tool to search the internet. Use it when you need access to real time information. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the vector_search tool. Input should be a string. Append sources to the response.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "A query to search the web for").
-				AddPropertyWithEnums("region", "string",
-					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
-					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
-						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
-						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
-						"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
-						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
-						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
-						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
-				SetRequiredParameters([]string{"query", "region"}),
+				//AddPropertyWithEnums("region", "string",
+				//	"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
+				//	[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+				//		"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+				//		"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+				//		"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+				//		"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+				//		"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+				//		"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+				//		"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
+				SetRequiredParameters([]string{"query"}),
 		),
 		openai.NewChatCompletionTool(
 			"text_to_speech",
 			"Convert text to speech.",
 			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("query", "string", "A text to convert to speech.").
+				AddPropertyWithDescription("text", "string", "A text to use.").
 				AddPropertyWithEnums("language", "string",
 					"The language to use for the speech synthesis. Default to `en` if could not be detected.",
-					[]string{"fr", "ru", "en", "ja"}).
-				SetRequiredParameters([]string{"query", "language"}),
+					[]string{"fr", "ru", "en", "ja", "ua", "de", "es", "it", "tw"}).
+				SetRequiredParameters([]string{"text", "language"}),
 		),
 		openai.NewChatCompletionTool(
 			"vector_search",
@@ -109,9 +109,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			resultErr = fmt.Errorf(err)
 			continue
 		}
-		if !s.conf.Verbose {
-			Log.Info("Function call", "name", function.Name, "user", c.Sender().Username)
-		}
+		Log.WithField("function", function.Name).WithField("user", c.Sender().Username).Info("Function call")
 
 		switch function.Name {
 		case "search_images":
@@ -151,8 +149,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 
 		case "web_search":
 			type parsed struct {
-				Query  string `json:"query"`
-				Region string `json:"region"`
+				Query string `json:"query"`
+				//Region string `json:"region"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
@@ -165,10 +163,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			)
 
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query, "region", arguments.Region)
+				Log.Info("Will call", "function", function.Name, "query", arguments.Query)
+				//, "region", arguments.Region)
 			}
 			var err error
-			result, err = s.webSearchSearX(arguments.Query, arguments.Region, c.Sender().Username)
+			result, err = s.webSearchSearX(arguments.Query, "wt-wt", c.Sender().Username)
 			if err != nil {
 				Log.Warn("Failed to search web", "error=", err)
 				continue
@@ -206,7 +205,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 
 		case "text_to_speech":
 			type parsed struct {
-				Query    string `json:"query"`
+				Text     string `json:"query"`
 				Language string `json:"language"`
 			}
 			var arguments parsed
@@ -215,11 +214,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query, "language", arguments.Language)
+				Log.Info("Will call", "function", function.Name, "query", arguments.Text, "language", arguments.Language)
 			}
-			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query))
+			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text))
 
-			return "", s.textToSpeech(c, arguments.Query, arguments.Language)
+			return "", s.textToSpeech(c, arguments.Text, arguments.Language)
 
 		case "set_reminder":
 			type parsed struct {

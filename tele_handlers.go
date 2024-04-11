@@ -75,7 +75,7 @@ func (s *Server) onDocument(c tele.Context) {
 func (s *Server) onText(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
@@ -190,7 +190,6 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 
 		return
 	}
-
 }
 
 func (s *Server) onGetUsers(c tele.Context) error {
