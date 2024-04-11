@@ -201,7 +201,7 @@ func (s *Server) sendAudio(c tele.Context, text string) {
 		"input":           text,
 		"voice":           "alloy",
 		"response_format": "opus",
-		"speed":           "1.25",
+		"speed":           "1",
 	}
 	jsonStr, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
@@ -238,11 +238,9 @@ func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
 	case "fr":
 	case "ru":
 		break
-	case "ja":
+	default:
 		s.sendAudio(c, text)
 		return nil
-	default:
-		return c.Send("Unsupported language")
 	}
 	if len(s.conf.PiperDir) == 0 {
 		return c.Send("PiperDir is not set")
