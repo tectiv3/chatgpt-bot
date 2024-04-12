@@ -181,7 +181,7 @@ func (s *Server) handleVoice(c tele.Context) {
 
 	response, err := s.answer(c, *transcript.Text, nil)
 
-	Log.Infof("User: %s. Response length: %d\n", c.Sender().Username, len(response))
+	Log.WithField("user", c.Sender().Username).Info("Response length=", len(response))
 
 	if len(response) == 0 {
 		return
@@ -270,7 +270,7 @@ func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
 		return c.Send("Error waiting for command: " + err.Error())
 	}
 
-	Log.Info("TTS done")
+	Log.WithField("user", c.Sender().Username).Info("TTS done")
 	v := &tele.Voice{File: tele.FromDisk(out.Name())}
 	defer os.Remove(out.Name())
 

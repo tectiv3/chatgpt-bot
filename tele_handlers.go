@@ -95,7 +95,7 @@ func (s *Server) onVoice(c tele.Context) {
 		}
 	}()
 
-	Log.Info("Got a voice, filesize=", c.Message().Voice.FileSize)
+	Log.WithField("user", c.Sender().Username).Info("Got a voice, filesize=", c.Message().Voice.FileSize)
 
 	s.handleVoice(c)
 }
@@ -107,7 +107,7 @@ func (s *Server) onPhoto(c tele.Context) {
 		}
 	}()
 
-	Log.Info("Got a photo, filesize=", c.Message().Photo.FileSize, ", caption=", c.Message().Photo.Caption)
+	Log.WithField("user", c.Sender().Username).Info("Got a photo, filesize=", c.Message().Photo.FileSize, ", caption=", c.Message().Photo.Caption)
 
 	if c.Message().Photo.FileSize == 0 {
 		return

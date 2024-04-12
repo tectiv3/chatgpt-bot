@@ -92,7 +92,8 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			"Get the current rate of various crypto currencies",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
-				SetRequiredParameters([]string{"asset"})),
+				SetRequiredParameters([]string{"asset"}),
+		),
 	}
 }
 
@@ -204,7 +205,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 
 		case "text_to_speech":
 			type parsed struct {
-				Text     string `json:"query"`
+				Text     string `json:"text"`
 				Language string `json:"language"`
 			}
 			var arguments parsed

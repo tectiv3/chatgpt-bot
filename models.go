@@ -57,6 +57,7 @@ type Chat struct {
 	UserID          uint  `json:"user_id" gorm:"nullable:true"`
 	Lang            string
 	History         []ChatMessage
+	User            User `gorm:"foreignKey:UserID;references:ID;fetch:join"`
 	Temperature     float64
 	ModelName       string
 	MasterPrompt    string

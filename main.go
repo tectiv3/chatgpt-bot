@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -38,8 +39,8 @@ func main() {
 		DisableTimestamp: !terminal.IsTerminal(int(os.Stdout.Fd())),
 		TimestampFormat:  "Jan 2 15:04:05.000",
 		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
-			filename := path.Base(f.File)
-			return fmt.Sprintf("%s()", f.Function), fmt.Sprintf("%s:%d", filename, f.Line)
+			return strings.Replace(f.Function, "(*Server).", "", -1),
+				fmt.Sprintf("%s:%d", path.Base(f.File), f.Line)
 		},
 	}
 	logrus.SetFormatter(logrus.Formatter)
@@ -89,7 +90,7 @@ func main() {
 			panic("failed to migrate chat message")
 		}
 
-		Log.WithField("allowed users", len(conf.AllowedTelegramUsers)).Info("Started")
+		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
 			conf: conf,
 			ai:   openai.NewClient(apiKey, orgID),

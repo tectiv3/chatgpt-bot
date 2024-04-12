@@ -77,7 +77,7 @@ func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionS
 		log.WithField("docs", docs).Warn(err)
 		return err
 	}
-	log.Info("Added documents, count=", len(docs))
+	//log.Info("Added documents, count=", len(docs))
 
 	return nil
 }

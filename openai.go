@@ -271,7 +271,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 }
 
 func (s *Server) saveHistory(chat *Chat) {
-	Log.Info("Chat history len: ", len(chat.History))
+	//Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saving chat history")
 
 	// iterate over history
 	// drop messages that are older than chat.ConversationAge days
@@ -290,34 +290,36 @@ func (s *Server) saveHistory(chat *Chat) {
 		}
 	}
 	chat.History = history
-	Log.Infof("chat history len: %d", len(chat.History))
-
-	if len(chat.History) > 100 {
-		Log.Infof("Chat history for chat ID %d is too long. Summarising...", chat.ID)
-		response, err := s.summarize(chat.History)
-		if err != nil {
-			Log.Warn(err)
-			return
-		}
-		summary, _ := response.Choices[0].Message.ContentString()
-
-		if s.conf.Verbose {
-			Log.Info(summary)
-		}
-		maxID := chat.History[len(chat.History)-3].ID
-		Log.Infof("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
-		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
-
-		chat.History = []ChatMessage{{
-			Role:      openai.ChatMessageRoleAssistant,
-			Content:   &summary,
-			ChatID:    chat.ChatID,
-			CreatedAt: time.Now(),
-		}}
-
-		Log.Info("Chat history length after summarising: ", len(chat.History))
-		chat.TotalTokens += response.Usage.TotalTokens
+	//Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saved chat history")
+	if len(chat.History) < 100 {
+		s.db.Save(&chat)
+		return
 	}
+
+	Log.WithField("user", chat.User.Username).Infof("Chat history for chat ID %d is too long. Summarising...", chat.ID)
+	response, err := s.summarize(chat.History)
+	if err != nil {
+		Log.Warn(err)
+		return
+	}
+	summary, _ := response.Choices[0].Message.ContentString()
+
+	if s.conf.Verbose {
+		Log.Info(summary)
+	}
+	maxID := chat.History[len(chat.History)-3].ID
+	Log.WithField("user", chat.User.Username).Infof("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
+	s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
+
+	chat.History = []ChatMessage{{
+		Role:      openai.ChatMessageRoleAssistant,
+		Content:   &summary,
+		ChatID:    chat.ChatID,
+		CreatedAt: time.Now(),
+	}}
+
+	Log.WithField("user", chat.User.Username).Info("Chat history length after summarising: ", len(chat.History))
+	chat.TotalTokens += response.Usage.TotalTokens
 
 	s.db.Save(&chat)
 }
