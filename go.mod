@@ -74,4 +74,4 @@ require (
 	nhooyr.io/websocket v1.8.11 // indirect
 )
 
-replace github.com/meinside/openai-go => github.com/tectiv3/openai-go v0.4.7-0.20240412110008-c8e8c4f8cd70
+replace github.com/meinside/openai-go => github.com/tectiv3/openai-go v0.4.7
