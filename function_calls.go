@@ -124,7 +124,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "name", function.Name, "query", arguments.Query, "type", arguments.Type, "region", arguments.Region)
+				Log.Info("Will call ", function.Name, "(", arguments.Query, ", ", arguments.Type, ", ", arguments.Region, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
@@ -163,8 +163,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			)
 
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query)
-				//, "region", arguments.Region)
+				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
 			}
 			var err error
 			result, err = s.webSearchSearX(arguments.Query, "wt-wt", c.Sender().Username)
@@ -187,7 +186,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query)
+				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
@@ -214,7 +213,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Text, "language", arguments.Language)
+				Log.Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Language, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text))
 
@@ -231,7 +230,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "reminder", arguments.Reminder, "minutes", arguments.Minutes)
+				Log.Info("Will call ", function.Name, "(", arguments.Reminder, ", ", arguments.Minutes, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Reminder+","+strconv.Itoa(int(arguments.Minutes))),
@@ -253,7 +252,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "reminder", arguments.URL)
+				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
@@ -272,7 +271,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				return "", err
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "asset", arguments.Asset)
+				Log.Info("Will call ", function.Name, "(", arguments.Asset, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
@@ -306,7 +305,7 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 func (s *Server) getPageSummary(chatID int64, url string) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 	article, err := readability.FromURL(url, 30*time.Second)
@@ -315,7 +314,7 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 	}
 
 	if s.conf.Verbose {
-		Log.Info("Page", "title", article.Title, "content", len(article.TextContent))
+		Log.Info("Page title=", article.Title, ", content=", len(article.TextContent))
 	}
 
 	msg := openai.NewChatUserMessage(article.TextContent)
@@ -400,7 +399,7 @@ func (s *Server) webSearchDDG(input, region, username string) (string, error) {
 	if len(res) == 0 {
 		return "", fmt.Errorf("no results found")
 	}
-	Log.Info("Search found", "results", len(res))
+	Log.Info("Search results found=", len(res))
 	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
 	limit := 10
 
@@ -420,7 +419,7 @@ func (s *Server) webSearchDDG(input, region, username string) (string, error) {
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 				}
 			}()
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].Link, username)
@@ -447,7 +446,7 @@ func (s *Server) webSearchSearX(input, region, username string) (string, error) 
 		return "", err
 	}
 
-	Log.Info("Search found", "results", len(res))
+	Log.Info("Search results found=", len(res))
 	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
 	limit := 10
 
@@ -467,7 +466,7 @@ func (s *Server) webSearchSearX(input, region, username string) (string, error) 
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 				}
 			}()
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].URL, username)

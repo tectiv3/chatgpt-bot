@@ -270,7 +270,7 @@ func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
 		return c.Send("Error waiting for command: " + err.Error())
 	}
 
-	Log.Info("TTS done", "file", out.Name())
+	Log.Info("TTS done")
 	v := &tele.Voice{File: tele.FromDisk(out.Name())}
 	defer os.Remove(out.Name())
 

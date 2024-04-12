@@ -16,13 +16,14 @@ import (
 func (s *Server) onDocument(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
-	Log.Info("Got a file",
-		"name", c.Message().Document.FileName,
-		"mime", c.Message().Document.MIME,
-		"size", c.Message().Document.FileSize)
+	Log.WithField("user", c.Sender().Username).
+		WithField("name", c.Message().Document.FileName).
+		WithField("mime", c.Message().Document.MIME).
+		WithField("size", c.Message().Document.FileSize).
+		Info("Got a file")
 
 	if c.Message().Document.MIME != "text/plain" {
 		chat := s.getChat(c.Chat(), c.Sender())
@@ -62,7 +63,7 @@ func (s *Server) onDocument(c tele.Context) {
 		_ = c.Send(response)
 		return
 	}
-	Log.Info("Response", "user", c.Sender().Username, "length", len(response))
+	Log.WithField("user", c.Sender().Username).Info("Response length=", len(response))
 
 	if len(response) == 0 {
 		return
@@ -90,11 +91,11 @@ func (s *Server) onText(c tele.Context) {
 func (s *Server) onVoice(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
-	Log.Info("Got a voice", "size", c.Message().Voice.FileSize, "caption", c.Message().Voice.Caption)
+	Log.Info("Got a voice, filesize=", c.Message().Voice.FileSize)
 
 	s.handleVoice(c)
 }
@@ -102,11 +103,11 @@ func (s *Server) onVoice(c tele.Context) {
 func (s *Server) onPhoto(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
-	Log.Info("Got a photo", "size", c.Message().Photo.FileSize, "caption", c.Message().Photo.Caption)
+	Log.Info("Got a photo, filesize=", c.Message().Photo.FileSize, ", caption=", c.Message().Photo.Caption)
 
 	if c.Message().Photo.FileSize == 0 {
 		return
@@ -167,7 +168,7 @@ func (s *Server) onPhoto(c tele.Context) {
 func (s *Server) onTranslate(c tele.Context, prefix string) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
@@ -217,7 +218,7 @@ func (s *Server) onGetUsers(c tele.Context) error {
 func (s *Server) onChain(c tele.Context, chat *Chat) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 	clientQuery := types.ClientQuery{}
@@ -259,7 +260,7 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 					_, _ = c.Bot().Edit(&sentMessage, result)
 				}
 			} else if output.Close {
-				Log.Info("Finished", "session", c.Sender().Username)
+				Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
 				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,

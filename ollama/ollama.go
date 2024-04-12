@@ -37,7 +37,7 @@ func GetOllamaModelList() ([]string, error) {
 
 func CheckIfModelExistsOrPull(modelName string) error {
 	if err := CheckIfModelExists(modelName); err != nil {
-		log.Info("Model does not exist, pulling it", "model", modelName)
+		log.WithField("model", modelName).Info("Model does not exist, pulling it")
 		if err := OllamaPullModel(modelName); err != nil {
 			return err
 		}
@@ -76,7 +76,7 @@ var lastProgress string
 func pullProgressHandler(progress api.ProgressResponse) error {
 	percentage := progressPercentage(progress)
 	if percentage != lastProgress {
-		log.Info("Pulling model", "progress", percentage)
+		log.Info("Pulling model: ", percentage)
 		lastProgress = percentage
 	}
 	return nil

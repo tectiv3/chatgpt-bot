@@ -62,7 +62,7 @@ func (s *Server) answer(c tele.Context, message string, image *string) (string, 
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat(), c.Sender())
 	history := chat.getConversationContext(&message, image)
-	Log.WithField("user", c.Sender().Username).Info("Context=%d", len(history))
+	Log.WithField("user", c.Sender().Username).Info("Context=", len(history))
 
 	if chat.Stream {
 		chat.mutex.Lock()
@@ -152,8 +152,7 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 		}}})
 	}
 	history = append(history, msg)
-
-	Log.Info("Chat history %d", len(history))
+	Log.Info("Chat history len: ", len(history))
 
 	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
 
@@ -272,7 +271,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 }
 
 func (s *Server) saveHistory(chat *Chat) {
-	Log.Info("Chat history len: %d", len(chat.History))
+	Log.Info("Chat history len: ", len(chat.History))
 
 	// iterate over history
 	// drop messages that are older than chat.ConversationAge days
@@ -294,7 +293,7 @@ func (s *Server) saveHistory(chat *Chat) {
 	Log.Infof("chat history len: %d", len(chat.History))
 
 	if len(chat.History) > 100 {
-		Log.Info("Chat history for chat ID %d is too long. Summarising...\n", chat.ID)
+		Log.Infof("Chat history for chat ID %d is too long. Summarising...", chat.ID)
 		response, err := s.summarize(chat.History)
 		if err != nil {
 			Log.Warn(err)
@@ -306,7 +305,7 @@ func (s *Server) saveHistory(chat *Chat) {
 			Log.Info(summary)
 		}
 		maxID := chat.History[len(chat.History)-3].ID
-		Log.Info("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
+		Log.Infof("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
 		s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 
 		chat.History = []ChatMessage{{
@@ -316,7 +315,7 @@ func (s *Server) saveHistory(chat *Chat) {
 			CreatedAt: time.Now(),
 		}}
 
-		Log.Info("Chat history length after summarising: %d", len(chat.History))
+		Log.Info("Chat history length after summarising: ", len(chat.History))
 		chat.TotalTokens += response.Usage.TotalTokens
 	}
 

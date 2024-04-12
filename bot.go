@@ -271,7 +271,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(&btn3, func(c tele.Context) error {
-		Log.WithField("user", c.Sender().Username).Info("Selected model %s", c.Data())
+		Log.WithField("user", c.Sender().Username).Info("Selected model ", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.ModelName = c.Data()
 		s.db.Save(&chat)
@@ -280,7 +280,7 @@ func (s *Server) run() {
 	})
 
 	b.Handle(&btnT0, func(c tele.Context) error {
-		Log.WithField("user", c.Sender().Username).Info("Selected temperature %s", c.Data())
+		Log.WithField("user", c.Sender().Username).Info("Selected temperature ", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
 		s.db.Save(&chat)
