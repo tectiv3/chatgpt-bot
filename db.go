@@ -169,7 +169,10 @@ func (c *Chat) getConversationContext(request *string, image *string) []openai.C
 
 		if image != nil && request != nil && *h.Content == *request {
 			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
-			content = append(content, openai.NewChatMessageContentWithImageURL(*image))
+			content = append(content, openai.ChatMessageContent{
+				Type:     "image_url",
+				ImageURL: map[string]string{"url": *image},
+			})
 			message = openai.ChatMessage{Role: h.Role, Content: content}
 		} else {
 			message = openai.ChatMessage{Role: h.Role, Content: h.Content}
