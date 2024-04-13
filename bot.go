@@ -154,9 +154,11 @@ func (s *Server) run() {
 		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
-	//b.Handle(cmdVoice, func(c tele.Context) error {
-	//	return s.textToSpeech(c, c.Message().Payload, "fr")
-	//})
+	b.Handle(cmdVoice, func(c tele.Context) error {
+		go s.pageToSpeech(c, c.Message().Payload)
+
+		return c.Send("Downloading page", "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
 

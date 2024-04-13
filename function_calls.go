@@ -66,6 +66,13 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				SetRequiredParameters([]string{"text", "language"}),
 		),
 		openai.NewChatCompletionTool(
+			"web_to_speech",
+			"Download web page content and convert it to speech.",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
+				SetRequiredParameters([]string{"url"}),
+		),
+		openai.NewChatCompletionTool(
 			"vector_search",
 			`Useful for searching through added files and websites. Search for keywords in the text not whole questions, avoid relative words like "yesterday" think about what could be in the text. The input to this tool will be run against a vector db. The top results will be returned as json.`,
 			openai.NewToolFunctionParameters().
@@ -131,8 +138,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ", ", arguments.Type, ", ", arguments.Region, ")")
@@ -142,18 +149,21 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			)
 			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
 			if err != nil {
-				return "", err
+				resultErr = err
+				continue
 			}
 			result := tools.SearchImages(param)
 			if result.IsErr() {
-				return "", result.Error()
+				resultErr = result.Error()
+				continue
 			}
 			res := *result.Unwrap()
 			if len(res) == 0 {
-				return "", fmt.Errorf("no results found")
+				resultErr = fmt.Errorf("no results found")
+				continue
 			}
 			img := tele.FromURL(res[0].Image)
-			return "Got it", c.Send(&tele.Photo{
+			return "", c.Send(&tele.Photo{
 				File:    img,
 				Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
 			})
@@ -165,8 +175,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 
 			_, _ = c.Bot().Edit(&sentMessage,
@@ -193,8 +203,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
@@ -220,15 +230,37 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Language, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text))
 
-			return "", s.textToSpeech(c, arguments.Text, arguments.Language)
+			go s.textToSpeech(c, arguments.Text, arguments.Language)
+
+			continue
+
+		case "web_to_speech":
+			type parsed struct {
+				URL string `json:"url"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
+			}
+			if s.conf.Verbose {
+				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
+			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
+			)
+
+			go s.pageToSpeech(c, arguments.URL)
+
+			return "", nil
 
 		case "generate_image":
 			type parsed struct {
@@ -297,8 +329,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
 			go s.getPageSummary(chat, arguments.URL)
-
-			return "Downloading summary. Please wait.", nil
+			continue
 
 		case "get_crypto_rate":
 			type parsed struct {
@@ -320,6 +351,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	}
 
 	if len(result) == 0 {
+		s.saveHistory(chat)
 		return "", resultErr
 	}
 	chat.addToolResultToDialog(toolID, result)
@@ -340,6 +372,26 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 	}()
 
 	return nil
+}
+
+func (s *Server) pageToSpeech(c tele.Context, url string) {
+	defer func() {
+		if err := recover(); err != nil {
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
+		}
+	}()
+
+	article, err := readability.FromURL(url, 30*time.Second)
+	if err != nil {
+		Log.Fatalf("failed to parse %s, %v\n", url, err)
+	}
+
+	if s.conf.Verbose {
+		Log.Info("Page title=", article.Title, ", content=", len(article.TextContent))
+	}
+	_ = c.Notify(tele.Typing)
+
+	s.sendAudio(c, article.TextContent)
 }
 
 func (s *Server) getPageSummary(chat *Chat, url string) {
