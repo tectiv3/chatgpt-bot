@@ -103,7 +103,7 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+					log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 				}
 			}()
 			ctx = context.WithValue(ctx, "ollama", t.Ollama)
@@ -172,7 +172,7 @@ func SearchSearX(input string) ([]SearXResult, error) {
 		log.Warn("Error decoding the response", "error=", err) //, "body", string(body))
 		return []SearXResult{}, err
 	}
-	log.Info("Search found", "results", len(apiResponse.Results))
+	log.Info("Search results found=", len(apiResponse.Results))
 
 	if len(apiResponse.Results) == 0 {
 		return []SearXResult{}, fmt.Errorf("no results found")

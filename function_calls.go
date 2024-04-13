@@ -43,27 +43,34 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			"This is web search. Use this tool to search the internet. Use it when you need access to real time information. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the vector_search tool. Input should be a string. Append sources to the response.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "A query to search the web for").
-				AddPropertyWithEnums("region", "string",
-					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
-					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
-						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
-						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
-						"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
-						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
-						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
-						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
-				SetRequiredParameters([]string{"query", "region"}),
+				//AddPropertyWithEnums("region", "string",
+				//	"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
+				//	[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+				//		"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+				//		"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+				//		"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+				//		"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+				//		"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+				//		"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+				//		"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
+				SetRequiredParameters([]string{"query"}),
 		),
 		openai.NewChatCompletionTool(
 			"text_to_speech",
-			"Convert text to speech.",
+			"Convert provided text to speech.",
 			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("query", "string", "A text to convert to speech.").
+				AddPropertyWithDescription("text", "string", "A text to use.").
 				AddPropertyWithEnums("language", "string",
 					"The language to use for the speech synthesis. Default to `en` if could not be detected.",
-					[]string{"fr", "ru", "en", "ja"}).
-				SetRequiredParameters([]string{"query", "language"}),
+					[]string{"fr", "ru", "en", "ja", "ua", "de", "es", "it", "tw"}).
+				SetRequiredParameters([]string{"text", "language"}),
+		),
+		openai.NewChatCompletionTool(
+			"full_webpage_to_speech",
+			"Download full web page content and convert it to speech. Use only when you need to pass the full content of a web page to the speech synthesiser.",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
+				SetRequiredParameters([]string{"url"}),
 		),
 		openai.NewChatCompletionTool(
 			"vector_search",
@@ -92,7 +99,18 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			"Get the current rate of various crypto currencies",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
-				SetRequiredParameters([]string{"asset"})),
+				SetRequiredParameters([]string{"asset"}),
+		),
+		openai.NewChatCompletionTool(
+			"generate_image",
+			"Generate an image based on the input text",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("text", "string", "The text to generate an image from").
+				AddPropertyWithEnums("model", "string", "The model to use for image generation. Infer from query or use dall-e-3 as a default.", []string{"dall-e-3", "dall-e-2"}).
+				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false. And for dall-e-2 always false.").
+				AddPropertyWithDescription("num_images", "number", "The number of images to generate. Default to 1 and maximum 10. And for dall-e-3 always set it to 1.").
+				SetRequiredParameters([]string{"text", "model", "hd", "num_images"}),
+		),
 	}
 }
 
@@ -102,16 +120,16 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	var resultErr error
 	var toolID string
 	sentMessage := chat.getSentMessage(c)
-	for _, toolCall := range response.ToolCalls {
+	toolCallsCount := len(response.ToolCalls)
+	reply := ""
+	for i, toolCall := range response.ToolCalls {
 		function := toolCall.Function
 		if function.Name == "" {
 			err := fmt.Sprint("there was no returned function call name")
 			resultErr = fmt.Errorf(err)
 			continue
 		}
-		if !s.conf.Verbose {
-			Log.Info("Function call", "name", function.Name, "user", c.Sender().Username)
-		}
+		Log.WithField("tools", toolCallsCount).WithField("tool", i).WithField("function", function.Name).WithField("user", c.Sender().Username).Info("Function call")
 
 		switch function.Name {
 		case "search_images":
@@ -122,53 +140,57 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "name", function.Name, "query", arguments.Query, "type", arguments.Type, "region", arguments.Region)
+				Log.Info("Will call ", function.Name, "(", arguments.Query, ", ", arguments.Type, ", ", arguments.Region, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
 			)
 			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
 			if err != nil {
-				return "", err
+				resultErr = err
+				continue
 			}
 			result := tools.SearchImages(param)
 			if result.IsErr() {
-				return "", result.Error()
+				resultErr = result.Error()
+				continue
 			}
 			res := *result.Unwrap()
 			if len(res) == 0 {
-				return "", fmt.Errorf("no results found")
+				resultErr = fmt.Errorf("no results found")
+				continue
 			}
 			img := tele.FromURL(res[0].Image)
-			return "Got it", c.Send(&tele.Photo{
+			return "", c.Send(&tele.Photo{
 				File:    img,
 				Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
 			})
 
 		case "web_search":
 			type parsed struct {
-				Query  string `json:"query"`
-				Region string `json:"region"`
+				Query string `json:"query"`
+				//Region string `json:"region"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
-
-			_, _ = c.Bot().Edit(&sentMessage,
-				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
-			)
+			if len(reply) > 0 {
+				reply += "\n"
+			}
+			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
+			_, _ = c.Bot().Edit(&sentMessage, reply)
 
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query, "region", arguments.Region)
+				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
 			}
 			var err error
-			result, err = s.webSearchSearX(arguments.Query, arguments.Region, c.Sender().Username)
+			result, err = s.webSearchSearX(arguments.Query, "wt-wt", c.Sender().Username)
 			if err != nil {
 				Log.Warn("Failed to search web", "error=", err)
 				continue
@@ -176,7 +198,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			resultErr = nil
 			toolID = toolCall.ID
 			response.Role = openai.ChatMessageRoleAssistant
-			chat.addMessageToHistory(response)
+			chat.addMessageToDialog(response)
 
 		case "vector_search":
 			type parsed struct {
@@ -184,15 +206,17 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query)
+				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
-				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
-			)
+			if len(reply) > 0 {
+				reply += "\n"
+			}
+			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
+			_, _ = c.Bot().Edit(&sentMessage, reply)
 			var err error
 			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
 			if err != nil {
@@ -202,24 +226,75 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			resultErr = nil
 			toolID = toolCall.ID
 			response.Role = openai.ChatMessageRoleAssistant
-			chat.addMessageToHistory(response)
+			chat.addMessageToDialog(response)
 
 		case "text_to_speech":
 			type parsed struct {
-				Query    string `json:"query"`
+				Text     string `json:"text"`
 				Language string `json:"language"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "query", arguments.Query, "language", arguments.Language)
+				Log.Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Language, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query))
+			if len(reply) > 0 {
+				reply += "\n"
+			}
+			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text)
+			_, _ = c.Bot().Edit(&sentMessage, reply)
 
-			return "", s.textToSpeech(c, arguments.Query, arguments.Language)
+			go s.textToSpeech(c, arguments.Text, arguments.Language)
+
+		case "web_to_speech":
+			type parsed struct {
+				URL string `json:"url"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
+			}
+			if s.conf.Verbose {
+				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
+			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
+			)
+
+			go s.pageToSpeech(c, arguments.URL)
+
+			return "", nil
+
+		case "generate_image":
+			type parsed struct {
+				Text      string `json:"text"`
+				Model     string `json:"model"`
+				HD        bool   `json:"hd"`
+				NumImages int    `json:"num_images"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
+			}
+			if s.conf.Verbose {
+				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Model, ", ", arguments.HD, ", ", arguments.NumImages, ")")
+			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text),
+			)
+
+			if err := s.textToImage(
+				c, arguments.Text, arguments.Model, arguments.HD, arguments.NumImages,
+			); err != nil {
+				Log.WithField("user", c.Sender().Username).Warn(err)
+			} else {
+				continue
+			}
 
 		case "set_reminder":
 			type parsed struct {
@@ -228,18 +303,19 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "reminder", arguments.Reminder, "minutes", arguments.Minutes)
+				Log.Info("Will call ", function.Name, "(", arguments.Reminder, ", ", arguments.Minutes, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Reminder+","+strconv.Itoa(int(arguments.Minutes))),
 			)
 
 			if err := s.setReminder(c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
-				return "", err
+				resultErr = fmt.Errorf("failed to set reminder: %s", err)
+				continue
 			}
 
 			return fmt.Sprintf("Reminder set for %d minutes from now", arguments.Minutes), nil
@@ -250,18 +326,17 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "reminder", arguments.URL)
+				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
-			go s.getPageSummary(c.Chat().ID, arguments.URL)
-
-			return "Downloading summary. Please wait.", nil
+			go s.getPageSummary(chat, arguments.URL)
+			continue
 
 		case "get_crypto_rate":
 			type parsed struct {
@@ -269,11 +344,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
-				Log.Info("Will call", "function", function.Name, "asset", arguments.Asset)
+				Log.Info("Will call ", function.Name, "(", arguments.Asset, ")")
 			}
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
@@ -283,15 +358,17 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	}
 
 	if len(result) == 0 {
+		s.saveHistory(chat)
 		return "", resultErr
 	}
-	chat.addToolResultToHistory(toolID, result)
+	chat.addToolResultToDialog(toolID, result)
 
 	if chat.Stream {
-		return s.getStreamAnswer(chat, c, chat.getConversationContext(nil, nil))
+		_ = s.getStreamAnswer(chat, c, nil)
+		return "", nil
 	}
 
-	return s.getAnswer(chat, c, chat.getConversationContext(nil, nil), false)
+	return s.getAnswer(chat, c, nil)
 }
 
 func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
@@ -304,10 +381,30 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 	return nil
 }
 
-func (s *Server) getPageSummary(chatID int64, url string) {
+func (s *Server) pageToSpeech(c tele.Context, url string) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
+		}
+	}()
+
+	article, err := readability.FromURL(url, 30*time.Second)
+	if err != nil {
+		Log.Fatalf("failed to parse %s, %v\n", url, err)
+	}
+
+	if s.conf.Verbose {
+		Log.Info("Page title=", article.Title, ", content=", len(article.TextContent))
+	}
+	_ = c.Notify(tele.Typing)
+
+	s.sendAudio(c, article.TextContent)
+}
+
+func (s *Server) getPageSummary(chat *Chat, url string) {
+	defer func() {
+		if err := recover(); err != nil {
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 	article, err := readability.FromURL(url, 30*time.Second)
@@ -316,7 +413,7 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 	}
 
 	if s.conf.Verbose {
-		Log.Info("Page", "title", article.Title, "content", len(article.TextContent))
+		Log.Info("Page title=", article.Title, ", content=", len(article.TextContent))
 	}
 
 	msg := openai.NewChatUserMessage(article.TextContent)
@@ -331,16 +428,17 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 		Log.Warn("failed to create chat completion", "error=", err)
 		return
 	}
-	chat := s.getChatByID(chatID)
+
 	chat.TotalTokens += response.Usage.TotalTokens
 	str, _ := response.Choices[0].Message.ContentString()
-	chat.addMessageToHistory(openai.NewChatAssistantMessage(str))
+	chat.addMessageToDialog(openai.NewChatAssistantMessage(str))
 	s.db.Save(&chat)
 
-	if _, err := s.bot.Send(tele.ChatID(chatID),
+	if _, err := s.bot.Send(tele.ChatID(chat.ChatID),
 		str,
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+		replyMenu,
 	); err != nil {
 		Log.Error("Sending", "error=", err)
 	}
@@ -401,7 +499,7 @@ func (s *Server) webSearchDDG(input, region, username string) (string, error) {
 	if len(res) == 0 {
 		return "", fmt.Errorf("no results found")
 	}
-	Log.Info("Search found", "results", len(res))
+	Log.Info("Search results found=", len(res))
 	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
 	limit := 10
 
@@ -421,7 +519,7 @@ func (s *Server) webSearchDDG(input, region, username string) (string, error) {
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 				}
 			}()
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].Link, username)
@@ -448,7 +546,7 @@ func (s *Server) webSearchSearX(input, region, username string) (string, error) 
 		return "", err
 	}
 
-	Log.Info("Search found", "results", len(res))
+	Log.Info("Search results found=", len(res))
 	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
 	limit := 10
 
@@ -468,7 +566,7 @@ func (s *Server) webSearchSearX(input, region, username string) (string, error) 
 		go func(i int) {
 			defer func() {
 				if r := recover(); r != nil {
-					Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 				}
 			}()
 			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].URL, username)

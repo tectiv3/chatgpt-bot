@@ -6,7 +6,6 @@ import (
 	"github.com/tectiv3/chatgpt-bot/types"
 	tele "gopkg.in/telebot.v3"
 	"io"
-	"net/http"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -16,13 +15,14 @@ import (
 func (s *Server) onDocument(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
-	Log.Info("Got a file",
-		"name", c.Message().Document.FileName,
-		"mime", c.Message().Document.MIME,
-		"size", c.Message().Document.FileSize)
+	Log.WithField("user", c.Sender().Username).
+		WithField("name", c.Message().Document.FileName).
+		WithField("mime", c.Message().Document.MIME).
+		WithField("size", c.Message().Document.FileSize).
+		Info("Got a file")
 
 	if c.Message().Document.MIME != "text/plain" {
 		chat := s.getChat(c.Chat(), c.Sender())
@@ -62,7 +62,7 @@ func (s *Server) onDocument(c tele.Context) {
 		_ = c.Send(response)
 		return
 	}
-	Log.Info("Response", "user", c.Sender().Username, "length", len(response))
+	Log.WithField("user", c.Sender().Username).Info("Response length=", len(response))
 
 	if len(response) == 0 {
 		return
@@ -75,7 +75,7 @@ func (s *Server) onDocument(c tele.Context) {
 func (s *Server) onText(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
@@ -84,17 +84,17 @@ func (s *Server) onText(c tele.Context) {
 		message = c.Message().Text
 	}
 
-	s.complete(c, message, true, nil)
+	s.complete(c, message, true)
 }
 
 func (s *Server) onVoice(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
-	Log.Info("Got a voice", "size", c.Message().Voice.FileSize, "caption", c.Message().Voice.Caption)
+	Log.WithField("user", c.Sender().Username).Info("Got a voice, filesize=", c.Message().Voice.FileSize)
 
 	s.handleVoice(c)
 }
@@ -102,72 +102,23 @@ func (s *Server) onVoice(c tele.Context) {
 func (s *Server) onPhoto(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
-	Log.Info("Got a photo", "size", c.Message().Photo.FileSize, "caption", c.Message().Photo.Caption)
+	Log.WithField("user", c.Sender().Username).Info("Got a photo, filesize=", c.Message().Photo.FileSize)
 
 	if c.Message().Photo.FileSize == 0 {
 		return
 	}
-	photo := c.Message().Photo.File
 
-	var reader io.ReadCloser
-	var err error
-
-	if s.conf.TelegramServerURL != "" {
-		f, err := c.Bot().FileByID(photo.FileID)
-		if err != nil {
-			Log.Warn("Error getting file ID", "error=", err)
-			return
-		}
-		// start reader from f.FilePath
-		reader, err = os.Open(f.FilePath)
-		if err != nil {
-			Log.Warn("Error opening file", "error=", err)
-			return
-		}
-	} else {
-		reader, err = c.Bot().File(&photo)
-		if err != nil {
-			Log.Warn("Error getting file content", "error=", err)
-			return
-		}
-	}
-
-	defer reader.Close()
-
-	bytes, err := io.ReadAll(reader)
-	if err != nil {
-		Log.Warn("Error reading file content", "error=", err)
-		return
-	}
-
-	var base64Encoding string
-
-	// Determine the content type of the image file
-	mimeType := http.DetectContentType(bytes)
-
-	// Prepend the appropriate URI scheme header depending
-	// on the MIME type
-	switch mimeType {
-	case "image/jpeg":
-		base64Encoding += "data:image/jpeg;base64,"
-	case "image/png":
-		base64Encoding += "data:image/png;base64,"
-	}
-
-	// Append the base64 encoded output
-	encoded := base64Encoding + toBase64(bytes)
-	// TODO: save the image to the database if running locally
-	s.complete(c, c.Message().Caption, true, &encoded)
+	s.handleImage(c)
 }
 
 func (s *Server) onTranslate(c tele.Context, prefix string) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 
@@ -183,14 +134,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		query = query[len(command):]
 	}
 
-	_, err := s.answer(c, fmt.Sprintf("%s\n%s", prefix, query), nil)
-	if err != nil {
-		Log.Warn("Translate error", "error=", err)
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
-
-		return
-	}
-
+	s.complete(c, fmt.Sprintf("%s\n%s", prefix, query), true)
 }
 
 func (s *Server) onGetUsers(c tele.Context) error {
@@ -218,7 +162,7 @@ func (s *Server) onGetUsers(c tele.Context) error {
 func (s *Server) onChain(c tele.Context, chat *Chat) {
 	defer func() {
 		if err := recover(); err != nil {
-			Log.Error("Panic", "stack", string(debug.Stack()), "error=", err)
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
 	clientQuery := types.ClientQuery{}
@@ -260,7 +204,7 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 					_, _ = c.Bot().Edit(&sentMessage, result)
 				}
 			} else if output.Close {
-				Log.Info("Finished", "session", c.Sender().Username)
+				Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
 				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,

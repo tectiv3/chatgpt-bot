@@ -52,7 +52,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 
 	s.Lock()
 	if sessions[session] == nil {
-		Log.Info("Creating new session", "session", session)
+		Log.Info("Creating new session=", session)
 		sessions[session] = memory.NewConversationBuffer()
 		memory.NewChatMessageHistory()
 		outputChan <- types.HttpJsonStreamElement{
@@ -64,7 +64,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	mem := sessions[session]
 	s.Unlock()
 
-	Log.Info("Starting agent chain", "session", session) //, "userQuery", userQuery, "startTime", startTime)
+	Log.Info("Starting agent chain, session=", session) //, "userQuery", userQuery, "startTime", startTime)
 
 	var llm llms.Model
 	var err error

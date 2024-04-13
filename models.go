@@ -57,6 +57,7 @@ type Chat struct {
 	UserID          uint  `json:"user_id" gorm:"nullable:true"`
 	Lang            string
 	History         []ChatMessage
+	User            User `gorm:"foreignKey:UserID;references:ID;fetch:join"`
 	Temperature     float64
 	ModelName       string
 	MasterPrompt    string
@@ -77,6 +78,7 @@ type ChatMessage struct {
 	Role       openai.ChatMessageRole `json:"role"`
 	ToolCallID *string                `json:"tool_call_id,omitempty"`
 	Content    *string                `json:"content,omitempty"`
+	ImagePath  *string                `json:"image_path,omitempty"`
 
 	// for function call
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'

@@ -4,6 +4,8 @@ import (
 	"github.com/meinside/openai-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	tele "gopkg.in/telebot.v3"
+	"io"
+	"os"
 	"strconv"
 	"time"
 )
@@ -114,7 +116,7 @@ func (c *Chat) getSentMessage(context tele.Context) tele.Message {
 	return *msgPointer
 }
 
-func (c *Chat) addToolResultToHistory(id, content string) {
+func (c *Chat) addToolResultToDialog(id, content string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	msg := openai.NewChatToolMessage(id, content)
@@ -129,7 +131,21 @@ func (c *Chat) addToolResultToHistory(id, content string) {
 		})
 }
 
-func (c *Chat) addMessageToHistory(msg openai.ChatMessage) {
+func (c *Chat) addImageToDialog(text, path string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.History = append(c.History,
+		ChatMessage{
+			Role:      openai.ChatMessageRoleUser,
+			Content:   &text,
+			ImagePath: &path,
+			ChatID:    c.ChatID,
+			CreatedAt: time.Now(),
+		})
+}
+
+func (c *Chat) addMessageToDialog(msg openai.ChatMessage) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	//log.Printf("Adding message to history: %v\n", msg)
@@ -141,7 +157,20 @@ func (c *Chat) addMessageToHistory(msg openai.ChatMessage) {
 			Function: tc.Function,
 		})
 	}
-	content, _ := msg.ContentString()
+	content, err := msg.ContentString()
+	if err != nil {
+		if contentArr, err := msg.ContentArray(); err == nil {
+			for _, c := range contentArr {
+				if c.Type == "text" {
+					content = *c.Text
+					break
+				}
+				//if c.Type == "image_url" {
+				//
+				//}
+			}
+		}
+	}
 	c.History = append(c.History,
 		ChatMessage{
 			Role:      msg.Role,
@@ -152,24 +181,40 @@ func (c *Chat) addMessageToHistory(msg openai.ChatMessage) {
 		})
 }
 
-func (c *Chat) getConversationContext(request *string, image *string) []openai.ChatMessage {
+func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 	system := openai.NewChatSystemMessage(c.MasterPrompt)
 	if request != nil {
-		c.addMessageToHistory(openai.NewChatUserMessage(*request))
+		c.addMessageToDialog(openai.NewChatUserMessage(*request))
 	}
 
 	history := []openai.ChatMessage{system}
 	for _, h := range c.History {
-		if h.CreatedAt.Before(time.Now().
-			AddDate(0, 0, -int(c.ConversationAge))) {
+		if h.CreatedAt.Before(
+			time.Now().AddDate(0, 0, -int(c.ConversationAge)),
+		) {
 			continue
 		}
 
 		var message openai.ChatMessage
 
-		if image != nil && request != nil && *h.Content == *request {
+		if h.ImagePath != nil {
+			reader, err := os.Open(*h.ImagePath)
+			if err != nil {
+				Log.Warn("Error opening image file", "error=", err)
+				continue
+			}
+			defer reader.Close()
+
+			image, err := io.ReadAll(reader)
+			if err != nil {
+				Log.Warn("Error reading file content", "error=", err)
+				continue
+			}
 			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
-			content = append(content, openai.NewChatMessageContentWithImageURL(*image))
+			content = append(content, openai.ChatMessageContent{
+				Type:     "image_url",
+				ImageURL: openai.NewChatMessageContentWithBytes(image),
+			})
 			message = openai.ChatMessage{Role: h.Role, Content: content}
 		} else {
 			message = openai.ChatMessage{Role: h.Role, Content: h.Content}
@@ -189,8 +234,6 @@ func (c *Chat) getConversationContext(request *string, image *string) []openai.C
 		}
 		history = append(history, message)
 	}
-
-	//log.Printf("Conversation context: %v\n", history)
 
 	return history
 }

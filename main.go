@@ -4,15 +4,20 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/joho/godotenv"
 	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
 	"github.com/tectiv3/chatgpt-bot/i18n"
+	"golang.org/x/crypto/ssh/terminal"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	stdlog "log"
 	"os"
+	"path"
+	"runtime"
+	"strings"
 	"time"
 )
 
@@ -20,7 +25,8 @@ var (
 	Log *log.Entry
 	l   *i18n.Localizer
 	// Version string will be set by linker
-	Version = "dev"
+	Version   = "dev"
+	BuildTime = "unknown"
 )
 
 func main() {
@@ -28,7 +34,15 @@ func main() {
 	// redirect Go standard log library calls to logrus writer
 	stdlog.SetFlags(0)
 	stdlog.SetFlags(stdlog.LstdFlags | stdlog.Lshortfile)
-	logrus.Formatter = &log.TextFormatter{FullTimestamp: true, TimestampFormat: "Jan 2 15:04:05.000"}
+	logrus.Formatter = &log.TextFormatter{
+		FullTimestamp:    true,
+		DisableTimestamp: !terminal.IsTerminal(int(os.Stdout.Fd())),
+		TimestampFormat:  "Jan 2 15:04:05.000",
+		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
+			return strings.Replace(f.Function, "(*Server).", "", -1),
+				fmt.Sprintf("%s:%d", path.Base(f.File), f.Line)
+		},
+	}
 	logrus.SetFormatter(logrus.Formatter)
 	logrus.SetReportCaller(true)
 	stdlog.SetOutput(logrus.Writer())
@@ -44,9 +58,10 @@ func main() {
 		apiKey := conf.OpenAIAPIKey
 		orgID := conf.OpenAIOrganizationID
 		level := logger.Error
-		//if conf.Verbose {
-		//	level = logger.Info
-		//}
+		if conf.Verbose {
+			//	level = logger.Info
+			logrus.SetLevel(log.DebugLevel)
+		}
 		newLogger := logger.New(
 			stdlog.New(os.Stdout, "\r\n", stdlog.LstdFlags), // io writer
 			logger.Config{
@@ -75,7 +90,7 @@ func main() {
 			panic("failed to migrate chat message")
 		}
 
-		Log.WithField("count", len(conf.AllowedTelegramUsers)).Info("Allowed users")
+		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
 			conf: conf,
 			ai:   openai.NewClient(apiKey, orgID),
