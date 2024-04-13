@@ -94,6 +94,16 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
 				SetRequiredParameters([]string{"asset"}),
 		),
+		openai.NewChatCompletionTool(
+			"generate_image",
+			"Generate an image based on the input text",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("text", "string", "The text to generate an image from").
+				AddPropertyWithEnums("model", "string", "The model to use for image generation. Infer from query or use dall-e-3 as a default.", []string{"dall-e-3", "dall-e-2"}).
+				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false. And for dall-e-2 always false.").
+				AddPropertyWithDescription("num_images", "number", "The number of images to generate. Default to 1 and maximum 10. And for dall-e-3 always set it to 1.").
+				SetRequiredParameters([]string{"text", "model", "hd", "num_images"}),
+		),
 	}
 }
 
@@ -175,7 +185,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			resultErr = nil
 			toolID = toolCall.ID
 			response.Role = openai.ChatMessageRoleAssistant
-			chat.addMessageToHistory(response)
+			chat.addMessageToDialog(response)
 
 		case "vector_search":
 			type parsed struct {
@@ -201,7 +211,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			resultErr = nil
 			toolID = toolCall.ID
 			response.Role = openai.ChatMessageRoleAssistant
-			chat.addMessageToHistory(response)
+			chat.addMessageToDialog(response)
 
 		case "text_to_speech":
 			type parsed struct {
@@ -220,6 +230,33 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 
 			return "", s.textToSpeech(c, arguments.Text, arguments.Language)
 
+		case "generate_image":
+			type parsed struct {
+				Text      string `json:"text"`
+				Model     string `json:"model"`
+				HD        bool   `json:"hd"`
+				NumImages int    `json:"num_images"`
+			}
+			var arguments parsed
+			if err := toolCall.ArgumentsInto(&arguments); err != nil {
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
+			}
+			if s.conf.Verbose {
+				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Model, ", ", arguments.HD, ", ", arguments.NumImages, ")")
+			}
+			_, _ = c.Bot().Edit(&sentMessage,
+				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text),
+			)
+
+			if err := s.textToImage(
+				c, arguments.Text, arguments.Model, arguments.HD, arguments.NumImages,
+			); err != nil {
+				Log.WithField("user", c.Sender().Username).Warn(err)
+			} else {
+				continue
+			}
+
 		case "set_reminder":
 			type parsed struct {
 				Reminder string `json:"reminder"`
@@ -227,8 +264,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Reminder, ", ", arguments.Minutes, ")")
@@ -238,7 +275,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			)
 
 			if err := s.setReminder(c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
-				return "", err
+				resultErr = fmt.Errorf("failed to set reminder: %s", err)
+				continue
 			}
 
 			return fmt.Sprintf("Reminder set for %d minutes from now", arguments.Minutes), nil
@@ -249,8 +287,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
@@ -258,7 +296,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			_, _ = c.Bot().Edit(&sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
-			go s.getPageSummary(c.Chat().ID, arguments.URL)
+			go s.getPageSummary(chat, arguments.URL)
 
 			return "Downloading summary. Please wait.", nil
 
@@ -268,8 +306,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				err := fmt.Errorf("failed to parse arguments into struct: %s", err)
-				return "", err
+				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
+				continue
 			}
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Asset, ")")
@@ -284,13 +322,14 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	if len(result) == 0 {
 		return "", resultErr
 	}
-	chat.addToolResultToHistory(toolID, result)
+	chat.addToolResultToDialog(toolID, result)
 
 	if chat.Stream {
-		return s.getStreamAnswer(chat, c, chat.getConversationContext(nil, nil))
+		_ = s.getStreamAnswer(chat, c, nil)
+		return "", nil
 	}
 
-	return s.getAnswer(chat, c, chat.getConversationContext(nil, nil), false)
+	return s.getAnswer(chat, c, nil)
 }
 
 func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
@@ -303,7 +342,7 @@ func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error
 	return nil
 }
 
-func (s *Server) getPageSummary(chatID int64, url string) {
+func (s *Server) getPageSummary(chat *Chat, url string) {
 	defer func() {
 		if err := recover(); err != nil {
 			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
@@ -330,13 +369,13 @@ func (s *Server) getPageSummary(chatID int64, url string) {
 		Log.Warn("failed to create chat completion", "error=", err)
 		return
 	}
-	chat := s.getChatByID(chatID)
+
 	chat.TotalTokens += response.Usage.TotalTokens
 	str, _ := response.Choices[0].Message.ContentString()
-	chat.addMessageToHistory(openai.NewChatAssistantMessage(str))
+	chat.addMessageToDialog(openai.NewChatAssistantMessage(str))
 	s.db.Save(&chat)
 
-	if _, err := s.bot.Send(tele.ChatID(chatID),
+	if _, err := s.bot.Send(tele.ChatID(chat.ID),
 		str,
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},

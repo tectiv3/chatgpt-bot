@@ -6,7 +6,6 @@ import (
 	"github.com/tectiv3/chatgpt-bot/types"
 	tele "gopkg.in/telebot.v3"
 	"io"
-	"net/http"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -85,7 +84,7 @@ func (s *Server) onText(c tele.Context) {
 		message = c.Message().Text
 	}
 
-	s.complete(c, message, true, nil)
+	s.complete(c, message, true)
 }
 
 func (s *Server) onVoice(c tele.Context) {
@@ -107,62 +106,13 @@ func (s *Server) onPhoto(c tele.Context) {
 		}
 	}()
 
-	Log.WithField("user", c.Sender().Username).Info("Got a photo, filesize=", c.Message().Photo.FileSize, ", caption=", c.Message().Photo.Caption)
+	Log.WithField("user", c.Sender().Username).Info("Got a photo, filesize=", c.Message().Photo.FileSize)
 
 	if c.Message().Photo.FileSize == 0 {
 		return
 	}
-	photo := c.Message().Photo.File
 
-	var reader io.ReadCloser
-	var err error
-
-	if s.conf.TelegramServerURL != "" {
-		f, err := c.Bot().FileByID(photo.FileID)
-		if err != nil {
-			Log.Warn("Error getting file ID", "error=", err)
-			return
-		}
-		// start reader from f.FilePath
-		reader, err = os.Open(f.FilePath)
-		if err != nil {
-			Log.Warn("Error opening file", "error=", err)
-			return
-		}
-	} else {
-		reader, err = c.Bot().File(&photo)
-		if err != nil {
-			Log.Warn("Error getting file content", "error=", err)
-			return
-		}
-	}
-
-	defer reader.Close()
-
-	bytes, err := io.ReadAll(reader)
-	if err != nil {
-		Log.Warn("Error reading file content", "error=", err)
-		return
-	}
-
-	var base64Encoding string
-
-	// Determine the content type of the image file
-	mimeType := http.DetectContentType(bytes)
-
-	// Prepend the appropriate URI scheme header depending
-	// on the MIME type
-	switch mimeType {
-	case "image/jpeg":
-		base64Encoding += "data:image/jpeg;base64,"
-	case "image/png":
-		base64Encoding += "data:image/png;base64,"
-	}
-
-	// Append the base64 encoded output
-	encoded := base64Encoding + toBase64(bytes)
-	// TODO: save the image to the database if running locally
-	s.complete(c, c.Message().Caption, true, &encoded)
+	s.handleImage(c)
 }
 
 func (s *Server) onTranslate(c tele.Context, prefix string) {
@@ -184,13 +134,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		query = query[len(command):]
 	}
 
-	_, err := s.answer(c, fmt.Sprintf("%s\n%s", prefix, query), nil)
-	if err != nil {
-		Log.Warn("Translate error", "error=", err)
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
-
-		return
-	}
+	s.complete(c, fmt.Sprintf("%s\n%s", prefix, query), true)
 }
 
 func (s *Server) onGetUsers(c tele.Context) error {

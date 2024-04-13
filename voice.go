@@ -179,7 +179,10 @@ func (s *Server) handleVoice(c tele.Context) {
 		return
 	}
 
-	response, err := s.answer(c, *transcript.Text, nil)
+	s.complete(c, *transcript.Text, false)
+	chat := s.getChat(c.Chat(), c.Sender())
+	sentMessage := chat.getSentMessage(c)
+	response := sentMessage.Text
 
 	Log.WithField("user", c.Sender().Username).Info("Response length=", len(response))
 
@@ -188,8 +191,6 @@ func (s *Server) handleVoice(c tele.Context) {
 	}
 
 	s.sendAudio(c, response)
-
-	return
 }
 
 func (s *Server) sendAudio(c tele.Context, text string) {

@@ -5,7 +5,6 @@ import (
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"github.com/tectiv3/chatgpt-bot/tools"
 	"strconv"
-	"strings"
 	"time"
 
 	tele "gopkg.in/telebot.v3"
@@ -37,13 +36,14 @@ const (
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
 	mGPT4         = "gpt-4-turbo"
+	mGTP3         = "gpt-3.5-turbo"
 )
 
 var (
 	menu       = &tele.ReplyMarkup{ResizeKeyboard: true}
 	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
-	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: "gpt-3.5-turbo"}
+	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: mGTP3}
 	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: mGPT4}
 	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: mOllama}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
@@ -154,9 +154,9 @@ func (s *Server) run() {
 		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
-	b.Handle(cmdVoice, func(c tele.Context) error {
-		return s.textToSpeech(c, c.Message().Payload, "fr")
-	})
+	//b.Handle(cmdVoice, func(c tele.Context) error {
+	//	return s.textToSpeech(c, c.Message().Payload, "fr")
+	//})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
 
@@ -263,8 +263,15 @@ func (s *Server) run() {
 
 	})
 
+	b.Handle("/image", func(c tele.Context) error {
+		return s.textToImage(c, c.Message().Payload, "dall-e-3", false, 1)
+	})
+
 	b.Handle("/lang", func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
+		if c.Message().Payload == "" {
+			return c.Send("Language code (e.g. ru) is required", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		}
 		chat.Lang = c.Message().Payload
 		s.db.Save(&chat)
 		return c.Send(fmt.Sprintf("Language set to %s", chat.Lang), "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -314,7 +321,7 @@ func (s *Server) run() {
 
 	b.Handle(tele.OnQuery, func(c tele.Context) error {
 		query := c.Query().Text
-		go s.complete(c, query, false, nil)
+		go s.complete(c, query, false)
 
 		return nil
 	})
@@ -378,61 +385,6 @@ func (s *Server) run() {
 	})
 
 	b.Start()
-}
-
-func (s *Server) complete(c tele.Context, message string, reply bool, image *string) {
-	chat := s.getChat(c.Chat(), c.Sender())
-	if strings.HasPrefix(strings.ToLower(message), "reset") {
-		s.deleteHistory(chat.ID)
-		return
-	}
-
-	text := "..."
-	sentMessage := c.Message()
-	// reply is a flag to indicate if we need to reply to another message, or it is a voice transcription
-	if !reply {
-		text = fmt.Sprintf(chat.t("_Transcript:_\n%s\n\n_Answer:_ \n\n"), message)
-		sentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
-			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdown,
-		})
-		chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
-		c.Set("reply", *sentMessage)
-	}
-
-	response, err := s.answer(c, message, image)
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		_ = c.Send(response, replyMenu)
-		return
-	}
-	Log.WithField("user", c.Sender().Username).WithField("length", len(response)).Info("Response")
-
-	if len(response) == 0 || (chat.Stream && image == nil) {
-		return
-	}
-
-	if len(response) > 4096 {
-		file := tele.FromReader(strings.NewReader(response))
-		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
-		return
-	}
-
-	if !reply {
-		text = text[:len(text)-3] + response
-		if _, err := c.Bot().Edit(sentMessage, text, "text", &tele.SendOptions{
-			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdown,
-		}, replyMenu); err != nil {
-			_, _ = c.Bot().Edit(sentMessage, text, replyMenu)
-		}
-		return
-	}
-
-	_ = c.Send(response, "text", &tele.SendOptions{
-		ReplyTo:   c.Message(),
-		ParseMode: tele.ModeMarkdown,
-	}, replyMenu)
 }
 
 // Restrict returns a middleware that handles a list of provided
