@@ -427,7 +427,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 	chat.addMessageToDialog(openai.NewChatAssistantMessage(str))
 	s.db.Save(&chat)
 
-	if _, err := s.bot.Send(tele.ChatID(chat.ID),
+	if _, err := s.bot.Send(tele.ChatID(chat.ChatID),
 		str,
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
