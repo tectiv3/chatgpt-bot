@@ -57,7 +57,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 		openai.NewChatCompletionTool(
 			"text_to_speech",
-			"Convert text to speech.",
+			"Convert provided text to speech.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("text", "string", "A text to use.").
 				AddPropertyWithEnums("language", "string",
@@ -66,8 +66,8 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				SetRequiredParameters([]string{"text", "language"}),
 		),
 		openai.NewChatCompletionTool(
-			"web_to_speech",
-			"Download web page content and convert it to speech.",
+			"full_webpage_to_speech",
+			"Download full web page content and convert it to speech. Use only when you need to pass the full content of a web page to the speech synthesiser.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
 				SetRequiredParameters([]string{"url"}),
@@ -120,14 +120,16 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 	var resultErr error
 	var toolID string
 	sentMessage := chat.getSentMessage(c)
-	for _, toolCall := range response.ToolCalls {
+	toolCallsCount := len(response.ToolCalls)
+	reply := ""
+	for i, toolCall := range response.ToolCalls {
 		function := toolCall.Function
 		if function.Name == "" {
 			err := fmt.Sprint("there was no returned function call name")
 			resultErr = fmt.Errorf(err)
 			continue
 		}
-		Log.WithField("function", function.Name).WithField("user", c.Sender().Username).Info("Function call")
+		Log.WithField("tools", toolCallsCount).WithField("tool", i).WithField("function", function.Name).WithField("user", c.Sender().Username).Info("Function call")
 
 		switch function.Name {
 		case "search_images":
@@ -178,10 +180,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
 				continue
 			}
-
-			_, _ = c.Bot().Edit(&sentMessage,
-				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
-			)
+			if len(reply) > 0 {
+				reply += "\n"
+			}
+			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
+			_, _ = c.Bot().Edit(&sentMessage, reply)
 
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
@@ -209,9 +212,11 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
-				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
-			)
+			if len(reply) > 0 {
+				reply += "\n"
+			}
+			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
+			_, _ = c.Bot().Edit(&sentMessage, reply)
 			var err error
 			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
 			if err != nil {
@@ -236,11 +241,13 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Language, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage, fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text))
+			if len(reply) > 0 {
+				reply += "\n"
+			}
+			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text)
+			_, _ = c.Bot().Edit(&sentMessage, reply)
 
 			go s.textToSpeech(c, arguments.Text, arguments.Language)
-
-			continue
 
 		case "web_to_speech":
 			type parsed struct {
@@ -431,6 +438,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 		str,
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+		replyMenu,
 	); err != nil {
 		Log.Error("Sending", "error=", err)
 	}
