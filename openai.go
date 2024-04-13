@@ -236,7 +236,6 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, history []openai.Ch
 				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
 				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
 				if err != nil {
-					Log.WithField("user", c.Sender().Username).Error(err)
 					return err.Error(), err
 				}
 

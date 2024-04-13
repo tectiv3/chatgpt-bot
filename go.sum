@@ -573,6 +573,7 @@ github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794 h1:X1dBW7XXk7ta3uH
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794/go.mod h1:L1Df1Q+hQKQpQZnSzNo+qwsmdVMjF7HGpersx/21GP8=
 github.com/tectiv3/openai-go v0.4.7 h1:XXiA3ivDBeeGcQ9Q0PiWUKZInMEJEsbaKFSqOe1Kj+M=
 github.com/tectiv3/openai-go v0.4.7/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
+github.com/tectiv3/openai-go v0.4.8-0.20240413013544-cb9b1058c0f9/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
 github.com/testcontainers/testcontainers-go v0.29.1 h1:z8kxdFlovA2y97RWx98v/TQ+tR+SXZm6p35M+xB92zk=
 github.com/testcontainers/testcontainers-go v0.29.1/go.mod h1:SnKnKQav8UcgtKqjp/AD8bE1MqZm+3TDb/B8crE3XnI=
 github.com/testcontainers/testcontainers-go/modules/chroma v0.29.1 h1:xm2LnnrPcK+rtKhuX8r3SDegN6R9wWibYN7rzSCEkU4=
