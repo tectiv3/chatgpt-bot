@@ -146,7 +146,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ", ", arguments.Type, ", ", arguments.Region, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
 			)
 			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
@@ -184,7 +184,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				reply += "\n"
 			}
 			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
-			_, _ = c.Bot().Edit(&sentMessage, reply)
+			_, _ = c.Bot().Edit(sentMessage, reply)
 
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
@@ -216,7 +216,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				reply += "\n"
 			}
 			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
-			_, _ = c.Bot().Edit(&sentMessage, reply)
+			_, _ = c.Bot().Edit(sentMessage, reply)
 			var err error
 			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
 			if err != nil {
@@ -245,7 +245,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				reply += "\n"
 			}
 			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text)
-			_, _ = c.Bot().Edit(&sentMessage, reply)
+			_, _ = c.Bot().Edit(sentMessage, reply)
 
 			go s.textToSpeech(c, arguments.Text, arguments.Language)
 
@@ -261,7 +261,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
 
@@ -284,7 +284,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Model, ", ", arguments.HD, ", ", arguments.NumImages, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text),
 			)
 
@@ -309,7 +309,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Reminder, ", ", arguments.Minutes, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Reminder+","+strconv.Itoa(int(arguments.Minutes))),
 			)
 
@@ -332,7 +332,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
 			go s.getPageSummary(chat, arguments.URL)
@@ -350,7 +350,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Asset, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
 
 			return s.getCryptoRate(arguments.Asset)

@@ -95,25 +95,25 @@ func (s *Server) loadUsers() {
 	s.users = append(s.users, usernames...)
 }
 
-func (c *Chat) getSentMessage(context tele.Context) tele.Message {
+func (c *Chat) getSentMessage(context tele.Context) *tele.Message {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.MessageID != nil {
 		id, _ := strconv.Atoi(*c.MessageID)
 
-		return tele.Message{ID: id, Chat: &tele.Chat{ID: c.ChatID}}
+		return &tele.Message{ID: id, Chat: &tele.Chat{ID: c.ChatID}}
 	}
 	// if we already have a message ID, use it, otherwise create a new message
 	if context.Get("reply") != nil {
 		sentMessage := context.Get("reply").(tele.Message)
 		c.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
-		return sentMessage
+		return &sentMessage
 	}
 
 	msgPointer, _ := context.Bot().Send(context.Recipient(), "...", "text", &tele.SendOptions{ReplyTo: context.Message()})
 	c.MessageID = &([]string{strconv.Itoa(msgPointer.ID)}[0])
 
-	return *msgPointer
+	return msgPointer
 }
 
 func (c *Chat) addToolResultToDialog(id, content string) {
@@ -211,10 +211,7 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 				continue
 			}
 			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
-			content = append(content, openai.ChatMessageContent{
-				Type:     "image_url",
-				ImageURL: openai.NewChatMessageContentWithBytes(image),
-			})
+			content = append(content, openai.NewChatMessageContentWithBytes(image))
 			message = openai.ChatMessage{Role: h.Role, Content: content}
 		} else {
 			message = openai.ChatMessage{Role: h.Role, Content: h.Content}
@@ -234,6 +231,8 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 		}
 		history = append(history, message)
 	}
+
+	//Log.Infof("Dialog history: %v", history)
 
 	return history
 }

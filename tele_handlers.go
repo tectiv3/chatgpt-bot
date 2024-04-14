@@ -201,17 +201,17 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 				result += output.Message
 				result = strings.TrimSuffix(result, "<|im_end|>") // strip ollama end token
 				if tokens%10 == 0 {
-					_, _ = c.Bot().Edit(&sentMessage, result)
+					_, _ = c.Bot().Edit(sentMessage, result)
 				}
 			} else if output.Close {
 				Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
-				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
+				_, _ = c.Bot().Edit(sentMessage, result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,
 				})
 			} else if output.StepType == types.StepHandleChainEnd {
 				result += "\n"
-				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
+				_, _ = c.Bot().Edit(sentMessage, result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,
 				})

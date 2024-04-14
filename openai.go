@@ -277,7 +277,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			}
 			// every 10 tokens update the message
 			if tokens%10 == 0 {
-				_, _ = c.Bot().Edit(&sentMessage, result)
+				_, _ = c.Bot().Edit(sentMessage, result)
 			}
 		} else {
 			// stream is done, send the final result
@@ -289,7 +289,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 					return err
 				}
 
-				_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
+				_, _ = c.Bot().Edit(sentMessage, reply+result, "text", &tele.SendOptions{
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,
 				}, replyMenu)
@@ -300,7 +300,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			if len(result) == 0 {
 				return nil
 			}
-			_, _ = c.Bot().Edit(&sentMessage, reply+result, "text", &tele.SendOptions{
+			_, _ = c.Bot().Edit(sentMessage, reply+result, "text", &tele.SendOptions{
 				ReplyTo:   c.Message(),
 				ParseMode: tele.ModeMarkdown,
 			}, replyMenu)

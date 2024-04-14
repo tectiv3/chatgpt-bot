@@ -266,7 +266,16 @@ func (s *Server) run() {
 	})
 
 	b.Handle("/image", func(c tele.Context) error {
-		return s.textToImage(c, c.Message().Payload, "dall-e-3", false, 1)
+		chat := s.getChat(c.Chat(), c.Sender())
+		msg := chat.getSentMessage(c)
+		msg, _ = c.Bot().Edit(msg, "Generating...")
+		if err := s.textToImage(c, c.Message().Payload, "dall-e-3", false, 1); err != nil {
+			_, _ = c.Bot().Edit(msg, "Generating...")
+			return c.Send("Error: " + err.Error())
+		}
+		_ = c.Bot().Delete(msg)
+
+		return nil
 	})
 
 	b.Handle("/lang", func(c tele.Context) error {
@@ -308,9 +317,9 @@ func (s *Server) run() {
 
 	b.Handle(cmdReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		s.deleteHistory(chat.ID)
 		chat.MessageID = nil
 		s.db.Save(&chat)
+		s.deleteHistory(chat.ID)
 
 		return nil
 	})
