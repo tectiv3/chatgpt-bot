@@ -278,6 +278,16 @@ func (s *Server) run() {
 		return nil
 	})
 
+	b.Handle("/model", func(c tele.Context) error {
+		model := c.Message().Payload
+		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
+		chat := s.getChat(c.Chat(), c.Sender())
+		chat.ModelName = model
+		s.db.Save(&chat)
+
+		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))
+	})
+
 	b.Handle("/lang", func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		if c.Message().Payload == "" {
