@@ -95,9 +95,22 @@ func (s *Server) run() {
 
 	b.Handle(cmdModel, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		menu.Inline(menu.Row(btn3, btn4)) //, btn5,))
+		model := c.Message().Payload
+		if model == "" {
+			menu.Inline(menu.Row(btn3, btn4)) //, btn5,))
 
-		return c.Send(chat.t("Select model"), menu)
+			return c.Send(chat.t("Select model"), menu)
+		}
+		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
+		chat.ModelName = model
+		if model == mGroq {
+			chat.Stream = false
+		} else {
+			chat.Stream = true
+		}
+		s.db.Save(&chat)
+
+		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))
 	})
 
 	b.Handle(cmdTemp, func(c tele.Context) error {
@@ -277,19 +290,6 @@ func (s *Server) run() {
 		_ = c.Bot().Delete(msg)
 
 		return nil
-	})
-
-	b.Handle("/model", func(c tele.Context) error {
-		model := c.Message().Payload
-		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
-		chat := s.getChat(c.Chat(), c.Sender())
-		chat.ModelName = model
-		if model == mGroq {
-			chat.Stream = false
-		}
-		s.db.Save(&chat)
-
-		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))
 	})
 
 	b.Handle("/lang", func(c tele.Context) error {
