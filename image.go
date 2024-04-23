@@ -72,29 +72,17 @@ func (s *Server) handleImage(c tele.Context) {
 	s.complete(c, "", true)
 }
 
-func (s *Server) textToImage(c tele.Context, text, model string, hd bool, n int) error {
+func (s *Server) textToImage(c tele.Context, text string, hd bool) error {
 	Log.WithField("user", c.Sender().Username).Info("generating image")
-	options := openai.ImageOptions{}.SetResponseFormat(openai.IamgeResponseFormatURL)
-	switch model {
-	case "dall-e-3":
-		if hd {
-			options.SetQuality("hd")
-		}
-		options.SetSize(openai.ImageSize1024x1024_DallE3).SetN(1)
-		break
-	case "dall-e-2":
-		if n < 1 {
-			n = 1
-		}
-		if n > 10 {
-			n = 10
-		}
-		options.SetN(n).SetSize(openai.ImageSize1024x1024_DallE2)
-		break
-	default:
-		return fmt.Errorf("unsupported model")
+	options := openai.ImageOptions{}.SetResponseFormat(openai.IamgeResponseFormatURL).
+		SetSize(openai.ImageSize1024x1024_DallE3).
+		SetN(1).
+		SetModel("dall-e-3")
+	if hd {
+		options.SetQuality("hd")
 	}
-	created, err := s.ai.CreateImage(text, options.SetModel(model))
+
+	created, err := s.ai.CreateImage(text, options)
 	if err != nil {
 		return fmt.Errorf("failed to create image: %s", err)
 	}

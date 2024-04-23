@@ -18,8 +18,8 @@ import (
 	"time"
 )
 
-func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
-	return []openai.ChatCompletionTool{
+func (s *Server) getFunctionTools(isOpenai bool) []openai.ChatCompletionTool {
+	availableTools := []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
 			"search_images",
 			"Search image or GIFs for a given query",
@@ -67,7 +67,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 		openai.NewChatCompletionTool(
 			"full_webpage_to_speech",
-			"Download full web page content and convert it to speech. Use only when you need to pass the full content of a web page to the speech synthesiser.",
+			"Download full web page and convert it to speech. Use ONLY when you need to pass the full content of a web page to the speech synthesiser.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
 				SetRequiredParameters([]string{"url"}),
@@ -101,17 +101,21 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
 				SetRequiredParameters([]string{"asset"}),
 		),
-		openai.NewChatCompletionTool(
-			"generate_image",
-			"Generate an image based on the input text",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("text", "string", "The text to generate an image from").
-				AddPropertyWithEnums("model", "string", "The model to use for image generation. Infer from query or use dall-e-3 as a default.", []string{"dall-e-3", "dall-e-2"}).
-				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false. And for dall-e-2 always false.").
-				AddPropertyWithDescription("num_images", "number", "The number of images to generate. Default to 1 and maximum 10. And for dall-e-3 always set it to 1.").
-				SetRequiredParameters([]string{"text", "model", "hd", "num_images"}),
-		),
 	}
+	if isOpenai {
+		availableTools = append(availableTools,
+			openai.NewChatCompletionTool(
+				"generate_image",
+				"Generate an image based on the input text",
+				openai.NewToolFunctionParameters().
+					AddPropertyWithDescription("text", "string", "The text to generate an image from").
+					AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
+					SetRequiredParameters([]string{"text", "hd"}),
+			),
+		)
+	}
+
+	return availableTools
 }
 
 func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
@@ -271,10 +275,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 
 		case "generate_image":
 			type parsed struct {
-				Text      string `json:"text"`
-				Model     string `json:"model"`
-				HD        bool   `json:"hd"`
-				NumImages int    `json:"num_images"`
+				Text string `json:"text"`
+				HD   bool   `json:"hd"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
@@ -282,15 +284,13 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				continue
 			}
 			if s.conf.Verbose {
-				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Model, ", ", arguments.HD, ", ", arguments.NumImages, ")")
+				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.HD, ")")
 			}
 			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text),
 			)
 
-			if err := s.textToImage(
-				c, arguments.Text, arguments.Model, arguments.HD, arguments.NumImages,
-			); err != nil {
+			if err := s.textToImage(c, arguments.Text, arguments.HD); err != nil {
 				Log.WithField("user", c.Sender().Username).Warn(err)
 			} else {
 				continue

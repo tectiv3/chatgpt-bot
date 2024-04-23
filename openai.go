@@ -156,17 +156,22 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) (string
 	_ = c.Notify(tele.Typing)
 	model := chat.ModelName
 	options := openai.ChatCompletionOptions{}
-	if model == mGPT4 || model == mGTP3 {
-		options.SetTools(s.getFunctionTools())
+	if model == mGPT4 || model == mGTP3 || model == mGroq {
+		options.SetTools(s.getFunctionTools(model == mGPT4 || model == mGTP3))
 	}
 	//s.ai.Verbose = s.conf.Verbose
 	//options.SetMaxTokens(3000)
 	history := chat.getDialog(question)
+	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Answer")
 
 	if model == mOllama && len(s.conf.OllamaURL) > 0 {
 		s.ai.SetBaseURL(s.conf.OllamaURL)
 		s.ai.APIKey = "ollama"
 		model = s.conf.OllamaModel
+	} else if model == mGroq && len(s.conf.GroqAPIKey) > 0 {
+		s.ai.SetBaseURL("https://api.groq.com/openai")
+		s.ai.APIKey = s.conf.GroqAPIKey
+		model = s.conf.GroqModel
 	} else {
 		s.ai.SetBaseURL("")
 		s.ai.APIKey = s.conf.OpenAIAPIKey
@@ -217,6 +222,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	ch := make(chan completion, 1)
 
 	history := chat.getDialog(question)
+	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Stream")
 
 	chat.mutex.Lock()
 	if chat.MessageID != nil {
@@ -232,6 +238,10 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 		s.ai.SetBaseURL(s.conf.OllamaURL)
 		s.ai.APIKey = "ollama"
 		model = s.conf.OllamaModel
+	} else if model == mGroq && len(s.conf.GroqAPIKey) > 0 {
+		s.ai.SetBaseURL("https://api.groq.com/openai")
+		s.ai.APIKey = s.conf.GroqAPIKey
+		model = s.conf.GroqModel
 	} else {
 		s.ai.SetBaseURL("")
 		s.ai.APIKey = s.conf.OpenAIAPIKey
@@ -239,7 +249,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	//s.ai.Verbose = s.conf.Verbose
 	if _, err := s.ai.CreateChatCompletion(model, history,
 		openai.ChatCompletionOptions{}.
-			SetTools(s.getFunctionTools()).
+			SetTools(s.getFunctionTools(model == mGPT4 || model == mGTP3)).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature).

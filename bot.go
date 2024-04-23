@@ -35,6 +35,7 @@ const (
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
+	mGroq         = "groq"
 	mGPT4         = "gpt-4-turbo"
 	mGTP3         = "gpt-3.5-turbo"
 )
@@ -269,7 +270,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		msg := chat.getSentMessage(c)
 		msg, _ = c.Bot().Edit(msg, "Generating...")
-		if err := s.textToImage(c, c.Message().Payload, "dall-e-3", false, 1); err != nil {
+		if err := s.textToImage(c, c.Message().Payload, true); err != nil {
 			_, _ = c.Bot().Edit(msg, "Generating...")
 			return c.Send("Error: " + err.Error())
 		}
@@ -283,6 +284,9 @@ func (s *Server) run() {
 		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.ModelName = model
+		if model == mGroq {
+			chat.Stream = false
+		}
 		s.db.Save(&chat)
 
 		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))

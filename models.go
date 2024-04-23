@@ -25,6 +25,8 @@ type config struct {
 	OllamaURL            string `json:"ollama_url"`
 	OllamaModel          string `json:"ollama_model"`
 	OllamaEnabled        bool   `json:"ollama_enabled"`
+	GroqModel            string `json:"groq_model"`
+	GroqAPIKey           string `json:"groq_api_key"`
 
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
