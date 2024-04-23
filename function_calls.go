@@ -368,7 +368,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 		return "", nil
 	}
 
-	return s.getAnswer(chat, c, nil)
+	err := s.getAnswer(chat, c, nil)
+	return "", err
 }
 
 func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
