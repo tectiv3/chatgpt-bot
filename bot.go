@@ -36,7 +36,7 @@ const (
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
 	mGroq         = "groq"
-	mGPT4         = "gpt-4-turbo"
+	mGPT4         = "gpt-4o"
 	mGTP3         = "gpt-3.5-turbo"
 )
 

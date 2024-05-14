@@ -17,7 +17,7 @@ func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	s.db.FirstOrCreate(&chat, Chat{ChatID: c.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
-		chat.ModelName = "gpt-4-turbo-preview"
+		chat.ModelName = mGPT4
 		chat.Temperature = 0.8
 		chat.Stream = true
 		chat.ConversationAge = 1
