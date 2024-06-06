@@ -346,8 +346,28 @@ func (s *Server) run() {
 
 	b.Handle(tele.OnQuery, func(c tele.Context) error {
 		query := c.Query().Text
-		go s.complete(c, query, false)
+		article := &tele.ArticleResult{Title: "N/A"}
+		result, err := s.anonymousAnswer(c, query)
+		if err != nil {
+			article = &tele.ArticleResult{
+				HideURL: true,
+				Title:   "Error!",
+				Text:    err.Error(),
+			}
+		} else {
+			article = &tele.ArticleResult{
+				HideURL: true,
+				Title:   query,
+				Text:    result,
+			}
+		}
 
+		results := make(tele.Results, 1)
+		results[0] = article
+		// needed to set a unique string ID for each result
+		results[0].SetResultID(fmt.Sprintf("%d", query, time.Now().Unix()))
+
+		c.Answer(&tele.QueryResponse{Results: results, CacheTime: 100})
 		return nil
 	})
 

@@ -59,6 +59,49 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	return answer, nil
 }
 
+func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error) {
+	_ = c.Notify(tele.Typing)
+	msg := openai.NewChatUserMessage(request)
+	system := openai.NewChatSystemMessage(masterPrompt)
+	s.ai.Verbose = s.conf.Verbose
+	history := []openai.ChatMessage{system}
+	history = append(history, msg)
+
+	response, err := s.ai.CreateChatCompletion(
+		mGPT4,
+		history,
+		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(0.8),
+	)
+
+	if err != nil {
+		Log.WithField("user", c.Sender().Username).Error(err)
+		return err.Error(), err
+	}
+	_ = c.Notify(tele.Typing)
+
+	// result := response.Choices[0].Message
+	// if len(result.ToolCalls) > 0 {
+	// 	return s.handleFunctionCall(chat, c, result)
+	// }
+
+	var answer string
+	if len(response.Choices) > 0 {
+		answer, err = response.Choices[0].Message.ContentString()
+		if err != nil {
+			Log.WithField("user", c.Sender().Username).Error(err)
+			return err.Error(), err
+		}
+	} else {
+		answer = "No response from API."
+	}
+
+	if s.conf.Verbose {
+		Log.WithField("user", c.Sender().Username).Info(answer)
+	}
+
+	return answer, nil
+}
+
 // summarize summarizes the chat history
 func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
 	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.")
