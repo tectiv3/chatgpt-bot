@@ -423,7 +423,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 
 	history := []openai.ChatMessage{system, msg}
 
-	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+	response, err := s.ai.CreateChatCompletion(mGTP3, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 
 	if err != nil {
 		Log.Warn("failed to create chat completion", "error=", err)

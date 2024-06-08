@@ -119,7 +119,7 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	history = append(history, msg)
 	Log.Info("Chat history len: ", len(history))
 
-	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
+	response, err := s.ai.CreateChatCompletion(mGTP3, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
 
 	if err != nil {
 		Log.Error(err)

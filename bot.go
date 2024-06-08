@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"github.com/tectiv3/chatgpt-bot/tools"
 	"strconv"
@@ -350,22 +351,21 @@ func (s *Server) run() {
 		result, err := s.anonymousAnswer(c, query)
 		if err != nil {
 			article = &tele.ArticleResult{
-				HideURL: true,
-				Title:   "Error!",
-				Text:    err.Error(),
+				Title: "Error!",
+				Text:  err.Error(),
 			}
 		} else {
 			article = &tele.ArticleResult{
-				HideURL: true,
-				Title:   query,
-				Text:    result,
+				Title: query,
+				Text:  result,
 			}
 		}
 
 		results := make(tele.Results, 1)
 		results[0] = article
 		// needed to set a unique string ID for each result
-		results[0].SetResultID(fmt.Sprintf("%d", query, time.Now().Unix()))
+		id := uuid.New()
+		results[0].SetResultID(id.String())
 
 		c.Answer(&tele.QueryResponse{Results: results, CacheTime: 100})
 		return nil
