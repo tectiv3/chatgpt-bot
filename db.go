@@ -62,8 +62,7 @@ func (s *Server) getUsers() []User {
 }
 
 // getUser returns user from db
-func (s *Server) getUser(username string) User {
-	var user User
+func (s *Server) getUser(username string) (user User) {
 	s.db.First(&user, User{Username: username})
 
 	return user
@@ -73,8 +72,20 @@ func (s *Server) addUser(username string) {
 	s.db.Create(&User{Username: username})
 }
 
-func (s *Server) delUser(userNane string) {
-	s.db.Where("username = ?", userNane).Delete(&User{})
+func (s *Server) delUser(username string) {
+	user := s.getUser(username)
+	if user.ID == 0 {
+		Log.Info("User not found: ", username)
+		return
+	}
+
+	var chat Chat
+	s.db.First(&chat, Chat{UserID: user.ID})
+	if chat.ID != 0 {
+		s.deleteHistory(chat.ID)
+		s.db.Unscoped().Delete(&Chat{}, chat.ID)
+	}
+	s.db.Unscoped().Delete(&User{}, user.ID)
 }
 
 func (s *Server) deleteHistory(chatID uint) {
