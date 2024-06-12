@@ -174,7 +174,7 @@ func (s *Server) onChain(c tele.Context, chat *Chat) {
 	if chat.ModelName == mOllama && s.conf.OllamaEnabled {
 		clientQuery.ModelName = s.conf.OllamaModel
 	} else {
-		clientQuery.ModelName = mGPT4
+		clientQuery.ModelName = s.conf.OpenAILatestModel
 	}
 	clientQuery.MaxIterations = 10
 

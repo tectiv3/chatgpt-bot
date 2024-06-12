@@ -22,6 +22,7 @@ type config struct {
 	// openai api
 	OpenAIAPIKey         string `json:"openai_api_key"`
 	OpenAIOrganizationID string `json:"openai_org_id"`
+	OpenAILatestModel    string `json:"openai_latest_model"`
 	OllamaURL            string `json:"ollama_url"`
 	OllamaModel          string `json:"ollama_model"`
 	OllamaEnabled        bool   `json:"ollama_enabled"`
@@ -31,7 +32,6 @@ type config struct {
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
-	Model                string   `json:"openai_model"`
 	PiperDir             string   `json:"piper_dir"`
 }
 

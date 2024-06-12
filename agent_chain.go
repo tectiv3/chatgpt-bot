@@ -30,7 +30,7 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 		neededModels := []string{ollama.EmbeddingsModel, userQuery.ModelName}
 		s.RLock()
 		for _, modelName := range neededModels {
-			if modelName == mGPT4 {
+			if modelName == s.conf.OpenAILatestModel {
 				continue
 			}
 			if err := ollama.CheckIfModelExistsOrPull(modelName); err != nil {
@@ -69,10 +69,11 @@ func (s *Server) startAgent(ctx context.Context, outputChan chan<- types.HttpJso
 	var llm llms.Model
 	var err error
 
-	if s.conf.OllamaEnabled && userQuery.ModelName != mGPT4 {
-		llm, err = ollama.NewOllama(userQuery.ModelName, s.conf.OllamaURL)
+	model := s.getModel(userQuery.ModelName)
+	if s.conf.OllamaEnabled && userQuery.ModelName == mOllama {
+		llm, err = ollama.NewOllama(model, s.conf.OllamaURL)
 	} else {
-		llm, err = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(userQuery.ModelName), openai.WithOrganization(s.conf.OpenAIOrganizationID))
+		llm, err = openai.New(openai.WithToken(s.conf.OpenAIAPIKey), openai.WithModel(model), openai.WithOrganization(s.conf.OpenAIOrganizationID))
 	}
 	if err != nil {
 		Log.Error("Error creating LLM", "error=", err)

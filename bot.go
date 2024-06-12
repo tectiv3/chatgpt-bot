@@ -37,8 +37,8 @@ const (
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
 	mGroq         = "groq"
-	mGPT4         = "gpt-4o"
 	mGTP3         = "gpt-3.5-turbo"
+	openAILatest  = "openAILatest"
 )
 
 var (
@@ -46,7 +46,7 @@ var (
 	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: mGTP3}
-	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: mGPT4}
+	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: openAILatest}
 	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: mOllama}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
@@ -189,7 +189,7 @@ func (s *Server) run() {
 		status = chat.t(status)
 
 		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d",
-			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
+			s.getModel(chat.ModelName), chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},

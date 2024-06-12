@@ -17,7 +17,7 @@ func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	s.db.FirstOrCreate(&chat, Chat{ChatID: c.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
-		chat.ModelName = mGPT4
+		chat.ModelName = openAILatest
 		chat.Temperature = 0.8
 		chat.Stream = true
 		chat.ConversationAge = 1
@@ -93,6 +93,19 @@ func (s *Server) loadUsers() {
 		}
 	}
 	s.users = append(s.users, usernames...)
+}
+
+func (s *Server) getModel(modelName string) string {
+	model := modelName
+	if model == openAILatest {
+		model = s.conf.OpenAILatestModel
+	} else if model == mOllama && len(s.conf.OllamaURL) > 0 {
+		model = s.conf.OllamaModel
+	} else if model == mGroq && len(s.conf.GroqAPIKey) > 0 {
+		model = s.conf.GroqModel
+	}
+
+	return model
 }
 
 func (c *Chat) getSentMessage(context tele.Context) *tele.Message {
