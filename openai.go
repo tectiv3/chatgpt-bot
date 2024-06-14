@@ -235,20 +235,19 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 		return nil
 	}
 
-	if len(answer) > 4096 {
+	if len(answer) > 4000 {
 		file := tele.FromReader(strings.NewReader(answer))
 		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
 		return nil
 	}
-
-	if _, err := c.Bot().Edit(sentMessage, answer, "text", &tele.SendOptions{
-		ReplyTo:   c.Message(),
-		ParseMode: tele.ModeMarkdown,
-	}, replyMenu); err != nil {
+	if _, err := c.Bot().Edit(sentMessage, answer, "text", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, replyMenu); err != nil {
+		Log.Warn(err)
 		if _, err := c.Bot().Edit(sentMessage, answer, replyMenu); err != nil {
+			Log.Warn(err)
 			_ = c.Send(answer, "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
 	}
+
 	return nil
 }
 

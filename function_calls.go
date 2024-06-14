@@ -427,6 +427,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 
 	if err != nil {
 		Log.Warn("failed to create chat completion", "error=", err)
+		s.bot.Send(tele.ChatID(chat.ChatID), err.Error(), "text", replyMenu)
 		return
 	}
 
