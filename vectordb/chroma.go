@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	"github.com/amikos-tech/chroma-go"
 	chromatypes "github.com/amikos-tech/chroma-go/types"
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/maps"
 )
 
@@ -151,6 +151,7 @@ func (s chromaStore) AddDocuments(ctx context.Context,
 	}
 
 	if _, addErr := s.collection.Add(ctx, nil, metadatas, texts, ids); addErr != nil {
+		log.WithField("metadatas", metadatas).WithField("ids", ids).Warn("Collection add failed:", addErr)
 		return nil, fmt.Errorf("%w: %w", ErrAddDocument, addErr)
 	}
 

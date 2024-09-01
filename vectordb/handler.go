@@ -53,7 +53,7 @@ func ToRetriever(vectorStore VectorStore, numDocuments int, options ...Option) R
 }
 
 func newStore(ctx context.Context, sessionString string) (*chromaStore, error) {
-	store, err := newChroma(os.Getenv("OPENAI_API_KEY"), os.Getenv("CHROMA_DB_URL"), sessionString)
+	store, err := newChroma(os.Getenv("OPENAI_API_KEY"), os.Getenv("CHROMA_DB_URL"), sessionString+"nodeps")
 
 	return &store, err
 }

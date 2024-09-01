@@ -22,6 +22,7 @@ func (e chromaGoEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([
 	for i, emb := range _embeddings {
 		_chrmembeddings[i] = chromatypes.NewEmbeddingFromFloat32(emb)
 	}
+
 	return _chrmembeddings, nil
 }
 
@@ -30,6 +31,7 @@ func (e chromaGoEmbedder) EmbedQuery(ctx context.Context, text string) (*chromat
 	if err != nil {
 		return nil, err
 	}
+
 	return chromatypes.NewEmbeddingFromFloat32(_embedding), nil
 }
 
