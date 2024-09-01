@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/tectiv3/chatgpt-bot/i18n"
-	"github.com/tectiv3/chatgpt-bot/tools"
 	"strconv"
 	"time"
 
@@ -27,17 +26,17 @@ const (
 	cmdToEnglish  = "/en"
 	cmdToRussian  = "/ru"
 	cmdToItalian  = "/it"
+	cmdToSpanish  = "/es"
 	cmdToChinese  = "/cn"
 	cmdDdg        = "/ddg"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
-	cmdChain      = "/chain"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
 	mGroq         = "groq"
-	mGTP3         = "gpt-3.5-turbo"
+	mGTP3         = "gpt-4o-mini"
 	openAILatest  = "openAILatest"
 )
 
@@ -47,7 +46,6 @@ var (
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: mGTP3}
 	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: openAILatest}
-	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: mOllama}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -104,11 +102,7 @@ func (s *Server) run() {
 		}
 		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
 		chat.ModelName = model
-		if model == mGroq {
-			chat.Stream = false
-		} else {
-			chat.Stream = true
-		}
+		chat.Stream = true
 		s.db.Save(&chat)
 
 		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))
@@ -220,64 +214,16 @@ func (s *Server) run() {
 		return nil
 	})
 
+	b.Handle(cmdToSpanish, func(c tele.Context) error {
+		go s.onTranslate(c, "To Spanish: ")
+
+		return nil
+	})
+
 	b.Handle(cmdToChinese, func(c tele.Context) error {
 		go s.onTranslate(c, "To Chinese: ")
 
 		return nil
-	})
-
-	b.Handle(cmdDdg, func(c tele.Context) error {
-		param, err := tools.NewSearchParam(c.Message().Payload, "wt-wt")
-		if err != nil {
-			return c.Send("Error: " + err.Error())
-		}
-		result := tools.Search(param)
-		if result.IsErr() {
-			return c.Send("Error: " + result.Error().Error())
-		}
-		res := *result.Unwrap()
-		if len(res) == 0 {
-			return c.Send("No results found", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		return c.Send(fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), "text", &tele.SendOptions{ReplyTo: c.Message()})
-	})
-
-	b.Handle(cmdChain, func(c tele.Context) error {
-		chat := s.getChat(c.Chat(), c.Sender())
-		if chat.MessageID != nil {
-			return c.Send("Chain is already running", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		chat.MessageID = nil
-		prompt := c.Message().Payload
-		if prompt == "" {
-			return c.Send(chat.t("Prompt is required"), "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		go s.onChain(c, chat)
-
-		return nil
-	})
-
-	b.Handle("/ddi", func(c tele.Context) error {
-		param, _ := tools.NewSearchImageParam(c.Message().Payload, "wt-wt", "photo")
-		result := tools.SearchImages(param)
-
-		if result.IsErr() {
-			return c.Send("Error: " + result.Error().Error())
-		}
-		res := *result.Unwrap()
-		if len(res) == 0 {
-			return c.Send("No results found", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		img := tele.FromURL(res[0].Image)
-		return c.Send(&tele.Photo{
-			File:    img,
-			Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
-		}, "photo", &tele.SendOptions{ReplyTo: c.Message()})
-
 	})
 
 	b.Handle("/image", func(c tele.Context) error {

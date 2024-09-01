@@ -171,19 +171,8 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	options := openai.ChatCompletionOptions{}
 
 	model := s.getModel(chat.ModelName)
-	if chat.ModelName == mOllama && len(s.conf.OllamaURL) > 0 {
-		s.ai.SetBaseURL(s.conf.OllamaURL)
-		s.ai.APIKey = "ollama"
-	} else if chat.ModelName == mGroq && len(s.conf.GroqAPIKey) > 0 {
-		s.ai.SetBaseURL("https://api.groq.com/openai")
-		s.ai.APIKey = s.conf.GroqAPIKey
-	} else {
-		s.ai.SetBaseURL("")
-		s.ai.APIKey = s.conf.OpenAIAPIKey
-	}
-	if model == s.conf.OpenAILatestModel || model == mGTP3 || chat.ModelName == mGroq {
-		options.SetTools(s.getFunctionTools(model == s.conf.OpenAILatestModel || model == mGTP3))
-	}
+	s.ai.APIKey = s.conf.OpenAIAPIKey
+	options.SetTools(s.getFunctionTools())
 
 	//s.ai.Verbose = s.conf.Verbose
 	//options.SetMaxTokens(3000)
@@ -274,20 +263,11 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	sentMessage := chat.getSentMessage(c)
 
 	model := s.getModel(chat.ModelName)
-	if chat.ModelName == mOllama && len(s.conf.OllamaURL) > 0 {
-		s.ai.SetBaseURL(s.conf.OllamaURL)
-		s.ai.APIKey = "ollama"
-	} else if chat.ModelName == mGroq && len(s.conf.GroqAPIKey) > 0 {
-		s.ai.SetBaseURL("https://api.groq.com/openai")
-		s.ai.APIKey = s.conf.GroqAPIKey
-	} else {
-		s.ai.SetBaseURL("")
-		s.ai.APIKey = s.conf.OpenAIAPIKey
-	}
+	s.ai.APIKey = s.conf.OpenAIAPIKey
 	//s.ai.Verbose = s.conf.Verbose
 	if _, err := s.ai.CreateChatCompletion(model, history,
 		openai.ChatCompletionOptions{}.
-			SetTools(s.getFunctionTools(model == s.conf.OpenAILatestModel || model == mGTP3)).
+			SetTools(s.getFunctionTools()).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature).

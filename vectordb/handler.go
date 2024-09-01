@@ -4,63 +4,61 @@ import (
 	"context"
 	"github.com/go-shiori/go-readability"
 	log "github.com/sirupsen/logrus"
-	"github.com/tectiv3/chatgpt-bot/ollama"
-	"github.com/tmc/langchaingo/llms/openai"
-	"github.com/tmc/langchaingo/vectorstores"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/tmc/langchaingo/documentloaders"
-	"github.com/tmc/langchaingo/embeddings"
-	"github.com/tmc/langchaingo/schema"
-	"github.com/tmc/langchaingo/textsplitter"
-	"github.com/tmc/langchaingo/vectorstores/chroma"
 )
 
-const mEmbedding = "text-embedding-3-large"
+// VectorStore is the interface for saving and querying documents in the
+// form of vector embeddings.
+type VectorStore interface {
+	AddDocuments(ctx context.Context, docs []Document, options ...Option) ([]string, error)
+	SimilaritySearch(ctx context.Context, query string, numDocuments int, options ...Option) ([]Document, error) //nolint:lll
+}
 
-func newStore(ctx context.Context, sessionString string) (*chroma.Store, error) {
-	var llm embeddings.EmbedderClient
-	var err error
-	suffix := ""
-	var useOllama bool
-	if o, ok := ctx.Value("ollama").(bool); ok {
-		useOllama = o
-	}
-	if useOllama {
-		//log.Info("Using Ollama")
-		llm, err = ollama.NewOllamaEmbeddingLLM()
-	} else {
-		//log.Info("Using OpenAI")
-		llm, err = openai.New(openai.WithEmbeddingModel(mEmbedding))
-		suffix = "openai"
-	}
+type Document struct {
+	PageContent string
+	Metadata    map[string]any
+	Score       float32
+}
+
+// Retriever is a retriever for vector stores.
+type Retriever struct {
+	CallbacksHandler interface{}
+	v                VectorStore
+	numDocs          int
+	options          []Option
+}
+
+var _ Retriever = Retriever{}
+
+// GetRelevantDocuments returns documents using the vector store.
+func (r Retriever) GetRelevantDocuments(ctx context.Context, query string) ([]Document, error) {
+	docs, err := r.v.SimilaritySearch(ctx, query, r.numDocs, r.options...)
 	if err != nil {
 		return nil, err
 	}
 
-	embedder, err := embeddings.NewEmbedder(llm)
-	if err != nil {
-		return nil, err
-	}
+	return docs, nil
+}
 
-	opts := []chroma.Option{
-		chroma.WithChromaURL(os.Getenv("CHROMA_DB_URL")),
-		chroma.WithEmbedder(embedder),
-		chroma.WithDistanceFunction("cosine"),
-		chroma.WithNameSpace(sessionString + suffix),
+// ToRetriever takes a vector store and returns a retriever using the
+// vector store to retrieve documents.
+func ToRetriever(vectorStore VectorStore, numDocuments int, options ...Option) Retriever {
+	return Retriever{
+		v:       vectorStore,
+		numDocs: numDocuments,
+		options: options,
 	}
-	if !useOllama {
-		opts = append(opts, chroma.WithOpenAIAPIKey(os.Getenv("OPENAI_API_KEY")))
-	}
+}
 
-	store, err := chroma.New(opts...)
+func newStore(ctx context.Context, sessionString string) (*chromaStore, error) {
+	store, err := newChroma(os.Getenv("OPENAI_API_KEY"), os.Getenv("CHROMA_DB_URL"), sessionString)
 
 	return &store, err
 }
 
-func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionString string) error {
+func saveToVectorDb(timeoutCtx context.Context, docs []Document, sessionString string) error {
 	store, err := newStore(timeoutCtx, sessionString)
 	if err != nil {
 		return err
@@ -88,8 +86,8 @@ func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString st
 		return err
 	}
 
-	vectorLoader := documentloaders.NewText(strings.NewReader(article.TextContent))
-	splitter := textsplitter.NewTokenSplitter(textsplitter.WithSeparators([]string{"\n\n", "\n"}))
+	vectorLoader := NewText(strings.NewReader(article.TextContent))
+	splitter := NewTokenSplitter(WithSeparators([]string{"\n\n", "\n"}))
 	splitter.ChunkOverlap = 100
 	splitter.ChunkSize = 300
 	docs, err := vectorLoader.LoadAndSplit(ctx, splitter)
@@ -100,25 +98,19 @@ func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString st
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var useOllama bool
-	if o, ok := ctx.Value("ollama").(bool); ok {
-		useOllama = o
-	}
-	timeoutCtx = context.WithValue(timeoutCtx, "ollama", useOllama)
-
 	return saveToVectorDb(timeoutCtx, docs, sessionString)
 }
 
-func SearchVectorDB(ctx context.Context, input string, sessionString string) ([]schema.Document, error) {
+func SearchVectorDB(ctx context.Context, input string, sessionString string) ([]Document, error) {
 	amountOfResults := 3
 	scoreThreshold := 0.4
 	store, err := newStore(ctx, sessionString)
 	if err != nil {
-		return []schema.Document{}, err
+		return []Document{}, err
 	}
 
-	options := []vectorstores.Option{vectorstores.WithScoreThreshold(float32(scoreThreshold))}
-	retriever := vectorstores.ToRetriever(store, amountOfResults, options...)
+	options := []Option{WithScoreThreshold(float32(scoreThreshold))}
+	retriever := ToRetriever(store, amountOfResults, options...)
 
 	return retriever.GetRelevantDocuments(context.Background(), input)
 }

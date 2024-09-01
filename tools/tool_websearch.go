@@ -5,11 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"github.com/tectiv3/chatgpt-bot/chain"
-	"github.com/tectiv3/chatgpt-bot/types"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
-	"github.com/tmc/langchaingo/callbacks"
-	"github.com/tmc/langchaingo/tools"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,9 +15,8 @@ import (
 )
 
 type WebSearch struct {
-	CallbacksHandler callbacks.Handler
-	SessionString    string
-	Ollama           bool
+	SessionString string
+	Ollama        bool
 }
 
 type seaXngResult struct {
@@ -52,8 +47,6 @@ type SearXResult struct {
 
 var usedLinks = make(map[string][]string)
 
-var _ tools.Tool = WebSearch{}
-
 func (t WebSearch) Description() string {
 	return `Useful for searching the internet. You have to use this tool if you're not 100% certain. Do not append question mark to the query. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the VectorDB tool. Append region info to the query. For example :en-us. Infer this from the language used for the query. Default to empty if not specified or can not be inferred. Possible regions: ` + strings.Join(
 		[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
@@ -72,9 +65,6 @@ func (t WebSearch) Name() string {
 
 func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 	ctx = context.WithValue(ctx, "ollama", t.Ollama)
-	if t.CallbacksHandler != nil {
-		t.CallbacksHandler.HandleToolStart(ctx, input)
-	}
 	results, err := SearchSearX(input)
 
 	wg := sync.WaitGroup{}
@@ -113,30 +103,20 @@ func (t WebSearch) Call(ctx context.Context, input string) (string, error) {
 				wg.Done()
 				return
 			}
-			ch, ok := t.CallbacksHandler.(chain.CustomHandler)
-			if ok {
-				newSource := types.Source{Name: "WebSearch", Link: results[i].URL}
-
-				ch.HandleSourceAdded(ctx, newSource)
-				usedLinks[t.SessionString] = append(usedLinks[t.SessionString], results[i].URL)
-			}
+			usedLinks[t.SessionString] = append(usedLinks[t.SessionString], results[i].URL)
 			wg.Done()
 		}(i)
 	}
 	wg.Wait()
 
 	result, err := SearchVectorDB.Call(
-		SearchVectorDB{CallbacksHandler: nil, SessionString: t.SessionString, Ollama: t.Ollama},
+		SearchVectorDB{SessionString: t.SessionString, Ollama: t.Ollama},
 		context.Background(),
 		input,
 	)
 
 	if err != nil {
 		return fmt.Sprintf("error from vector db search: %s", err.Error()), nil //nolint:nilerr
-	}
-
-	if t.CallbacksHandler != nil {
-		t.CallbacksHandler.HandleToolEnd(ctx, result)
 	}
 
 	return result, nil

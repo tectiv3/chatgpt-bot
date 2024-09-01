@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-func (s *Server) getFunctionTools(isOpenai bool) []openai.ChatCompletionTool {
+func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	availableTools := []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
 			"search_images",
@@ -102,18 +102,17 @@ func (s *Server) getFunctionTools(isOpenai bool) []openai.ChatCompletionTool {
 				SetRequiredParameters([]string{"asset"}),
 		),
 	}
-	if isOpenai {
-		availableTools = append(availableTools,
-			openai.NewChatCompletionTool(
-				"generate_image",
-				"Generate an image based on the input text",
-				openai.NewToolFunctionParameters().
-					AddPropertyWithDescription("text", "string", "The text to generate an image from").
-					AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
-					SetRequiredParameters([]string{"text", "hd"}),
-			),
-		)
-	}
+
+	availableTools = append(availableTools,
+		openai.NewChatCompletionTool(
+			"generate_image",
+			"Generate an image based on the input text",
+			openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("text", "string", "The text to generate an image from").
+				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
+				SetRequiredParameters([]string{"text", "hd"}),
+		),
+	)
 
 	return availableTools
 }

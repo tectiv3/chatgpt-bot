@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"github.com/tectiv3/chatgpt-bot/types"
 	tele "gopkg.in/telebot.v3"
 	"io"
 	"os"
@@ -157,68 +155,4 @@ func (s *Server) onGetUsers(c tele.Context) error {
 	}
 
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
-}
-
-func (s *Server) onChain(c tele.Context, chat *Chat) {
-	defer func() {
-		if err := recover(); err != nil {
-			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
-		}
-	}()
-	clientQuery := types.ClientQuery{}
-
-	prompt := c.Message().Payload
-	clientQuery.Prompt = prompt
-	clientQuery.Session = c.Sender().Username
-	clientQuery.ModelName = chat.ModelName
-	if chat.ModelName == mOllama && s.conf.OllamaEnabled {
-		clientQuery.ModelName = s.conf.OllamaModel
-	} else {
-		clientQuery.ModelName = s.conf.OpenAILatestModel
-	}
-	clientQuery.MaxIterations = 10
-
-	outputChan := make(chan types.HttpJsonStreamElement)
-	defer close(outputChan)
-
-	// Start the agent chain function in a goroutine
-	ctx := context.Background()
-	sentMessage := chat.getSentMessage(c)
-
-	go s.startAgent(ctx, outputChan, clientQuery)
-
-	result := ""
-	tokens := 0
-	for {
-		select {
-		case output, ok := <-outputChan:
-			if !ok {
-				break
-			}
-			//Log.Info("Got output", "output", output)
-			if output.Stream {
-				tokens++
-				result += output.Message
-				result = strings.TrimSuffix(result, "<|im_end|>") // strip ollama end token
-				if tokens%10 == 0 {
-					_, _ = c.Bot().Edit(sentMessage, result)
-				}
-			} else if output.Close {
-				Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
-				_, _ = c.Bot().Edit(sentMessage, result, "text", &tele.SendOptions{
-					ReplyTo:   c.Message(),
-					ParseMode: tele.ModeMarkdown,
-				})
-			} else if output.StepType == types.StepHandleChainEnd {
-				result += "\n"
-				_, _ = c.Bot().Edit(sentMessage, result, "text", &tele.SendOptions{
-					ReplyTo:   c.Message(),
-					ParseMode: tele.ModeMarkdown,
-				})
-			}
-		case <-ctx.Done():
-			Log.Info("Done. Client disconnected")
-			break
-		}
-	}
 }
