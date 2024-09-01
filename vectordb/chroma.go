@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/amikos-tech/chroma-go"
-	"github.com/amikos-tech/chroma-go/openai"
 	chromatypes "github.com/amikos-tech/chroma-go/types"
 	"github.com/google/uuid"
 	"golang.org/x/exp/maps"
@@ -20,6 +19,59 @@ var (
 	ErrRemoveCollection         = errors.New("error resetting collection")
 	ErrUnsupportedOptions       = errors.New("unsupported options")
 )
+
+// Option is a function that configures an Options.
+type Option func(*Options)
+
+// Options is a set of options for similarity search and add documents.
+type Options struct {
+	NameSpace      string
+	ScoreThreshold float32
+	Filters        any
+	Embedder       Embedder
+	Deduplicater   func(context.Context, Document) bool
+}
+
+// WithNameSpace returns an Option for setting the name space.
+func WithNameSpace(nameSpace string) Option {
+	return func(o *Options) {
+		o.NameSpace = nameSpace
+	}
+}
+
+func WithScoreThreshold(scoreThreshold float32) Option {
+	return func(o *Options) {
+		o.ScoreThreshold = scoreThreshold
+	}
+}
+
+// WithFilters searches can be limited based on metadata filters. Searches with  metadata
+// filters retrieve exactly the number of nearest-neighbors results that match the filters. In
+// most cases the search latency will be lower than unfiltered searches
+// See https://docs.pinecone.io/docs/metadata-filtering
+func WithFilters(filters any) Option {
+	return func(o *Options) {
+		o.Filters = filters
+	}
+}
+
+// WithEmbedder returns an Option for setting the embedder that could be used when
+// adding documents or doing similarity search (instead the embedder from the Store context)
+// this is useful when we are using multiple LLMs with single vectorstore.
+func WithEmbedder(embedder Embedder) Option {
+	return func(o *Options) {
+		o.Embedder = embedder
+	}
+}
+
+// WithDeduplicater returns an Option for setting the deduplicater that could be used
+// when adding documents. This is useful to prevent wasting time on creating an embedding
+// when one already exists.
+func WithDeduplicater(fn func(ctx context.Context, doc Document) bool) Option {
+	return func(o *Options) {
+		o.Deduplicater = fn
+	}
+}
 
 // chromaStore is a wrapper around the chromaGo API and client.
 type chromaStore struct {
@@ -36,7 +88,7 @@ type chromaStore struct {
 	includes     []chromatypes.QueryEnum
 }
 
-// New creates an active client connection to the (specified, or default) collection in the Chroma server
+// New creates an active client connection to the collection in the Chroma server
 // and returns the `chromaStore` object needed by the other accessors.
 func newChroma(key, url, namespace string) (chromaStore, error) {
 	s := chromaStore{}
@@ -49,11 +101,13 @@ func newChroma(key, url, namespace string) (chromaStore, error) {
 	}
 	s.client = chromaClient
 
-	var embeddingFunction chromatypes.EmbeddingFunction
-	embeddingFunction, err = openai.NewOpenAIEmbeddingFunction(key)
-	if err != nil {
-		return s, err
-	}
+	// var embeddingFunction chromatypes.EmbeddingFunction
+	// embeddingFunction, err = openai.NewOpenAIEmbeddingFunction(key)
+	// if err != nil {
+	// 	return s, err
+	// }
+	embedder := NewEmbedder(NewOpenAIClient(key))
+	embeddingFunction := chromaGoEmbedder{Embedder: embedder}
 
 	col, errCc := s.client.CreateCollection(context.Background(), namespace, map[string]any{}, true,
 		embeddingFunction, "cosine")
@@ -62,6 +116,7 @@ func newChroma(key, url, namespace string) (chromaStore, error) {
 	}
 
 	s.collection = col
+
 	return s, nil
 }
 
@@ -95,10 +150,10 @@ func (s chromaStore) AddDocuments(ctx context.Context,
 		}
 	}
 
-	col := s.collection
-	if _, addErr := col.Add(ctx, nil, metadatas, texts, ids); addErr != nil {
+	if _, addErr := s.collection.Add(ctx, nil, metadatas, texts, ids); addErr != nil {
 		return nil, fmt.Errorf("%w: %w", ErrAddDocument, addErr)
 	}
+
 	return ids, nil
 }
 

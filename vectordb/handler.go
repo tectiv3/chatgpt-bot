@@ -72,7 +72,7 @@ func saveToVectorDb(timeoutCtx context.Context, docs []Document, sessionString s
 	}
 
 	if _, err := store.AddDocuments(timeoutCtx, docs); err != nil {
-		log.WithField("docs", docs).Warn(err)
+		log.Warn(err)
 		return err
 	}
 	//log.Info("Added documents, count=", len(docs))
