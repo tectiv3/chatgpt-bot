@@ -51,6 +51,15 @@ type User struct {
 	ApiKey     *string `gorm:"nullable:true"`
 	OrgID      *string `gorm:"nullable:true"`
 	Threads    []Chat
+	Roles      []Role
+	State      *State `json:"state,omitempty" gorm:"type:text"`
+}
+
+type Role struct {
+	gorm.Model
+	UserID uint `json:"user_id"`
+	Name   string
+	Prompt string
 }
 
 type Chat struct {
@@ -121,6 +130,41 @@ func (tc *ToolCalls) Scan(value interface{}) error {
 	return json.Unmarshal(b, &tc)
 }
 
+type Step struct {
+	Namespace string
+	Field     string
+	Prompt    string
+	Input     *string
+	Next      *Step
+}
+
+type State []Step
+
+// Value implements the driver.Valuer interface, allowing
+// for converting the State to a JSON string for database storage.
+func (s State) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
+
+// Scan implements the sql.Scanner interface, allowing for
+// converting a JSON string from the database back into the State slice.
+func (s *State) Scan(value interface{}) error {
+	if value == nil {
+		*s = nil
+		return nil
+	}
+
+	b, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("type assertion to []byte failed")
+	}
+
+	return json.Unmarshal(b, &s)
+}
+
 type GPTResponse interface {
 	Type() string       // direct, array, image, audio, async
 	Value() interface{} // string, []string
@@ -184,4 +228,12 @@ type CoinCap struct {
 
 func toBase64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+func findEmptyStep(step *Step) *Step {
+	if step.Input != nil {
+		return findEmptyStep(step.Next)
+	}
+
+	return step
 }

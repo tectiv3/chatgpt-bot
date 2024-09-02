@@ -106,6 +106,13 @@ func (s *Server) loadUsers() {
 	s.users = append(s.users, usernames...)
 }
 
+func (s *Server) findRole(userID uint, name string) *Role {
+	var r Role
+	s.db.First(&r, Role{UserID: userID, Name: name})
+
+	return &r
+}
+
 func (s *Server) getModel(modelName string) string {
 	model := modelName
 	if model == openAILatest {

@@ -31,7 +31,7 @@ const (
 	cmdToItalian  = "/it"
 	cmdToSpanish  = "/es"
 	cmdToChinese  = "/cn"
-	cmdDdg        = "/ddg"
+	cmdRoles      = "/roles"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
@@ -55,8 +55,11 @@ var (
 	btnT6      = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
 	btnT8      = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
 	btnT10     = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
-	btnReset   = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
-	btnEmpty   = tele.Btn{Text: "", Data: "no_data"}
+	btnNew     = tele.Btn{Text: "New Role", Unique: "btnRole", Data: "new"}
+	btnCancel  = tele.Btn{Text: "Cancel", Unique: "btnRole", Data: "cancel"}
+
+	btnReset = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
+	btnEmpty = tele.Btn{Text: "", Data: "no_data"}
 )
 
 func init() {
@@ -125,6 +128,75 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 
 		return c.Send(fmt.Sprintf(chat.t("Set temperature from less random (0.0) to more random (1.0).\nCurrent: %0.2f (default: 0.8)"), chat.Temperature), menu)
+	})
+
+	b.Handle(cmdRoles, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		roles := chat.User.Roles
+		rows := []tele.Row{}
+		// iterate over roles, add menu button with role name 3 buttons in a row
+		row := []tele.Btn{}
+		for _, role := range roles {
+			if len(row) == 3 {
+				rows = append(rows, menu.Row(row...))
+				row = []tele.Btn{}
+			}
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: role.Name})
+		}
+		if len(row) == 3 {
+			rows = append(rows, menu.Row(row...))
+			row = []tele.Btn{}
+		}
+		row = append(row, btnNew)
+		rows = append(rows, menu.Row(row...))
+		menu.Inline(rows...)
+
+		return c.Send(chat.t("Select role"), menu)
+	})
+
+	b.Handle(&btnNew, func(c tele.Context) error {
+		Log.WithField("user", c.Sender().Username).Info("Selected role ", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		user := chat.User
+		if c.Data() == "cancel" {
+			user.State = nil
+			s.db.Save(&user)
+
+			return c.Edit(chat.t("Canceled"))
+		}
+
+		if c.Data() != "new" {
+			role := s.findRole(user.ID, c.Data())
+			if role == nil {
+				return c.Send(chat.t("Role not found"))
+
+			}
+			chat.MasterPrompt = role.Prompt
+			s.db.Save(&chat)
+
+			_ = c.Edit(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": c.Data()}))
+
+			return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		}
+
+		user.State = []State{
+			Step{
+				Namespace: "Role",
+				Field:     "name",
+				Prompt:    "Enter role name",
+				Next: &Step{
+					Namespace: "Role",
+					Prompt:    "Enter prompt",
+					Field:     "Prompt",
+				},
+			},
+		}
+		s.db.Save(&user)
+
+		menu.Inline(menu.Row(btnCancel))
+
+		return c.Send(chat.t("Enter role name"), menu)
 	})
 
 	b.Handle(cmdAge, func(c tele.Context) error {
@@ -298,6 +370,27 @@ func (s *Server) run() {
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		user := chat.User
+		if user.State != nil {
+			state := user.State
+			step := findEmptyStep(&state.FirstStep)
+			step.Input = &c.Message().Text
+			s.db.Save(&user)
+
+			next := findEmptyStep(step)
+			if next.Field == step.Field {
+				// we are done
+				Log.WithField("state", state).Info("Done!")
+			} else {
+				menu.Inline(menu.Row(btnCancel))
+
+				return c.Send(chat.t(next.Prompt), menu)
+			}
+
+			return nil
+		}
+
 		go s.onText(c)
 		if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
 			Log.Warn(e)

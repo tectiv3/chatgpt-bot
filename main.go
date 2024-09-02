@@ -89,6 +89,9 @@ func main() {
 		if err := db.AutoMigrate(&ChatMessage{}); err != nil {
 			panic("failed to migrate chat message")
 		}
+		if err := db.AutoMigrate(&Role{}); err != nil {
+			panic("failed to migrate role")
+		}
 
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
