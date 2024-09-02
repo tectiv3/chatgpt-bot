@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tele "gopkg.in/telebot.v3"
+	"gopkg.in/telebot.v3/react"
 )
 
 const (
@@ -22,6 +23,8 @@ const (
 	cmdStop       = "/stop"
 	cmdVoice      = "/voice"
 	cmdInfo       = "/info"
+	cmdLang       = "/lang"
+	cmdImage      = "/image"
 	cmdToJapanese = "/ja"
 	cmdToEnglish  = "/en"
 	cmdToRussian  = "/ru"
@@ -64,9 +67,18 @@ func init() {
 // run will launch bot with given parameters
 func (s *Server) run() {
 	b, err := tele.NewBot(tele.Settings{
-		Token:  s.conf.TelegramBotToken,
-		URL:    s.conf.TelegramServerURL,
-		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
+		Token: s.conf.TelegramBotToken,
+		URL:   s.conf.TelegramServerURL,
+		Poller: &tele.LongPoller{
+			Timeout: 1 * time.Second,
+			AllowedUpdates: []string{
+				"message",
+				"edited_message",
+				"inline_query",
+				"callback_query",
+				"message_reaction",
+				"message_reaction_count",
+			}},
 	})
 	if err != nil {
 		Log.Fatal(err)
@@ -226,7 +238,7 @@ func (s *Server) run() {
 		return nil
 	})
 
-	b.Handle("/image", func(c tele.Context) error {
+	b.Handle(cmdImage, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		msg := chat.getSentMessage(c)
 		msg, _ = c.Bot().Edit(msg, "Generating...")
@@ -239,7 +251,7 @@ func (s *Server) run() {
 		return nil
 	})
 
-	b.Handle("/lang", func(c tele.Context) error {
+	b.Handle(cmdLang, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		if c.Message().Payload == "" {
 			return c.Send("Language code (e.g. ru) is required", "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -287,6 +299,10 @@ func (s *Server) run() {
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
 		go s.onText(c)
+		if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
+			Log.Warn(e)
+			return e
+		}
 
 		return nil
 	})
@@ -320,6 +336,8 @@ func (s *Server) run() {
 	b.Handle(tele.OnDocument, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		go s.onDocument(c)
+
+		b.React(c.Recipient(), c.Message(), react.React(react.Eyes))
 
 		return c.Send(chat.t("Processing document. Please wait..."))
 	})

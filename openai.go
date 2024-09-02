@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
+	"gopkg.in/telebot.v3/react"
 	"strconv"
 	"strings"
 	"time"
@@ -227,6 +228,10 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	if len(answer) > 4000 {
 		file := tele.FromReader(strings.NewReader(answer))
 		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
+		if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+			Log.Warn(err)
+			return err
+		}
 		return nil
 	}
 	if _, err := c.Bot().Edit(sentMessage, answer, "text", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, replyMenu); err != nil {
@@ -235,6 +240,11 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 			Log.Warn(err)
 			_ = c.Send(answer, "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
+	}
+
+	if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+		Log.Warn(err)
+		return err
 	}
 
 	return nil
@@ -321,6 +331,11 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 					ReplyTo:   c.Message(),
 					ParseMode: tele.ModeMarkdown,
 				}, replyMenu)
+
+				if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+					Log.Warn(err)
+					return err
+				}
 
 				return nil
 			}
