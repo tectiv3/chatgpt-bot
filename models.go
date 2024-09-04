@@ -131,18 +131,20 @@ func (tc *ToolCalls) Scan(value interface{}) error {
 }
 
 type Step struct {
-	Namespace string
-	Field     string
-	Prompt    string
-	Input     *string
-	Next      *Step
+	Field  string
+	Prompt string
+	Input  *string
+	Next   *Step
 }
 
-type State []Step
+type State struct {
+	Name      string
+	FirstStep Step
+}
 
 // Value implements the driver.Valuer interface, allowing
 // for converting the State to a JSON string for database storage.
-func (s State) Value() (driver.Value, error) {
+func (s *State) Value() (driver.Value, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -153,7 +155,7 @@ func (s State) Value() (driver.Value, error) {
 // converting a JSON string from the database back into the State slice.
 func (s *State) Scan(value interface{}) error {
 	if value == nil {
-		*s = nil
+		s = nil
 		return nil
 	}
 
@@ -232,6 +234,10 @@ func toBase64(b []byte) string {
 
 func findEmptyStep(step *Step) *Step {
 	if step.Input != nil {
+		if step.Next == nil {
+			return nil
+		}
+
 		return findEmptyStep(step.Next)
 	}
 

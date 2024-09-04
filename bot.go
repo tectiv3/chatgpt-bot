@@ -111,7 +111,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		model := c.Message().Payload
 		if model == "" {
-			menu.Inline(menu.Row(btn3, btn4)) //, btn5,))
+			menu.Inline(menu.Row(btn3, btn4))
 
 			return c.Send(chat.t("Select model"), menu)
 		}
@@ -180,18 +180,18 @@ func (s *Server) run() {
 			return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
 
-		user.State = []State{
-			Step{
-				Namespace: "Role",
-				Field:     "name",
-				Prompt:    "Enter role name",
+		state := State{
+			Name: "Role",
+			FirstStep: Step{
+				Field:  "name",
+				Prompt: "Enter role name",
 				Next: &Step{
-					Namespace: "Role",
-					Prompt:    "Enter prompt",
-					Field:     "Prompt",
+					Prompt: "Enter prompt",
+					Field:  "Prompt",
 				},
 			},
 		}
+		user.State = &state
 		s.db.Save(&user)
 
 		menu.Inline(menu.Row(btnCancel))
@@ -372,6 +372,7 @@ func (s *Server) run() {
 	b.Handle(tele.OnText, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		user := chat.User
+
 		if user.State != nil {
 			state := user.State
 			step := findEmptyStep(&state.FirstStep)
@@ -379,9 +380,22 @@ func (s *Server) run() {
 			s.db.Save(&user)
 
 			next := findEmptyStep(step)
-			if next.Field == step.Field {
-				// we are done
-				Log.WithField("state", state).Info("Done!")
+			if next == nil {
+				Log.Info("State: Done!")
+				switch state.Name {
+				case "Role":
+					role := Role{
+						UserID: user.ID,
+						Name:   *state.FirstStep.Input,
+						Prompt: *state.FirstStep.Next.Input,
+					}
+
+					chat.mutex.Lock()
+					defer chat.mutex.Unlock()
+					user.Roles = append(user.Roles, role)
+					s.db.Save(&user)
+
+				}
 			} else {
 				menu.Inline(menu.Row(btnCancel))
 

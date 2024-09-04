@@ -349,6 +349,9 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			}, replyMenu)
 
 			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
+			if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+				Log.Warn(err)
+			}
 			chat.mutex.Lock()
 			chat.TotalTokens += tokens
 			chat.mutex.Unlock()

@@ -14,7 +14,7 @@ import (
 func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	var chat Chat
 
-	s.db.FirstOrCreate(&chat, Chat{ChatID: c.ID})
+	s.db.Preload("User").Preload("User.Roles").FirstOrCreate(&chat, Chat{ChatID: c.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = openAILatest
