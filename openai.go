@@ -19,7 +19,13 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat(), c.Sender())
 	msg := openai.NewChatUserMessage(request)
-	system := openai.NewChatSystemMessage(chat.MasterPrompt)
+
+	prompt := chat.MasterPrompt
+	if chat.RoleID != nil {
+		prompt = chat.Role.Prompt
+	}
+	system := openai.NewChatSystemMessage(prompt)
+
 	s.ai.Verbose = s.conf.Verbose
 	history := []openai.ChatMessage{system}
 	history = append(history, msg)
@@ -179,12 +185,9 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	//options.SetMaxTokens(3000)
 	history := chat.getDialog(question)
 	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Answer")
-	chat.mutex.Lock()
-	if chat.MessageID != nil {
-		_, _ = c.Bot().EditReplyMarkup(tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID}, removeMenu)
-		chat.MessageID = nil
-	}
-	chat.mutex.Unlock()
+
+	chat.removeMenu(c)
+
 	sentMessage := chat.getSentMessage(c)
 
 	response, err := s.ai.CreateChatCompletion(model, history,
@@ -263,12 +266,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	history := chat.getDialog(question)
 	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Stream")
 
-	chat.mutex.Lock()
-	if chat.MessageID != nil {
-		_, _ = c.Bot().EditReplyMarkup(tele.StoredMessage{MessageID: *chat.MessageID, ChatID: chat.ChatID}, removeMenu)
-		chat.MessageID = nil
-	}
-	chat.mutex.Unlock()
+	chat.removeMenu(c)
 
 	sentMessage := chat.getSentMessage(c)
 

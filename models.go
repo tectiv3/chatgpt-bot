@@ -64,20 +64,22 @@ type Role struct {
 
 type Chat struct {
 	gorm.Model
-	ChatID          int64 `sql:"chat_id" json:"chat_id"`
-	UserID          uint  `json:"user_id" gorm:"nullable:true"`
+	mutex           sync.Mutex `gorm:"-"`
+	ChatID          int64      `sql:"chat_id" json:"chat_id"`
+	UserID          uint       `json:"user_id" gorm:"nullable:false"`
+	RoleID          *uint      `json:"role_id" gorm:"nullable:true"`
+	MessageID       *string    `json:"last_message_id" gorm:"nullable:true"`
 	Lang            string
 	History         []ChatMessage
 	User            User `gorm:"foreignKey:UserID;references:ID;fetch:join"`
+	Role            Role `gorm:"foreignKey:RoleID;references:ID;fetch:join"`
 	Temperature     float64
 	ModelName       string
 	MasterPrompt    string
 	Stream          bool
 	Voice           bool
 	ConversationAge int64
-	TotalTokens     int        `json:"total_tokens"`
-	mutex           sync.Mutex `gorm:"-"`
-	MessageID       *string    `json:"last_message_id"`
+	TotalTokens     int `json:"total_tokens"`
 }
 
 type ChatMessage struct {
@@ -128,43 +130,6 @@ func (tc *ToolCalls) Scan(value interface{}) error {
 	}
 
 	return json.Unmarshal(b, &tc)
-}
-
-type Step struct {
-	Field  string
-	Prompt string
-	Input  *string
-	Next   *Step
-}
-
-type State struct {
-	Name      string
-	FirstStep Step
-}
-
-// Value implements the driver.Valuer interface, allowing
-// for converting the State to a JSON string for database storage.
-func (s *State) Value() (driver.Value, error) {
-	if s == nil {
-		return nil, nil
-	}
-	return json.Marshal(s)
-}
-
-// Scan implements the sql.Scanner interface, allowing for
-// converting a JSON string from the database back into the State slice.
-func (s *State) Scan(value interface{}) error {
-	if value == nil {
-		s = nil
-		return nil
-	}
-
-	b, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("type assertion to []byte failed")
-	}
-
-	return json.Unmarshal(b, &s)
 }
 
 type GPTResponse interface {
@@ -230,16 +195,4 @@ type CoinCap struct {
 
 func toBase64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
-}
-
-func findEmptyStep(step *Step) *Step {
-	if step.Input != nil {
-		if step.Next == nil {
-			return nil
-		}
-
-		return findEmptyStep(step.Next)
-	}
-
-	return step
 }

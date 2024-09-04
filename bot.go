@@ -55,7 +55,9 @@ var (
 	btnT6      = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
 	btnT8      = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
 	btnT10     = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
-	btnNew     = tele.Btn{Text: "New Role", Unique: "btnRole", Data: "new"}
+	btnCreate  = tele.Btn{Text: "New Role", Unique: "btnRole", Data: "create"}
+	btnUpdate  = tele.Btn{Text: "Update", Unique: "btnUpdate", Data: "update"}
+	btnDelete  = tele.Btn{Text: "Delete", Unique: "btnDelete", Data: "delete"}
 	btnCancel  = tele.Btn{Text: "Cancel", Unique: "btnRole", Data: "cancel"}
 
 	btnReset = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
@@ -147,52 +149,50 @@ func (s *Server) run() {
 			rows = append(rows, menu.Row(row...))
 			row = []tele.Btn{}
 		}
-		row = append(row, btnNew)
+		row = append(row, btnCreate, btnUpdate, btnDelete)
 		rows = append(rows, menu.Row(row...))
 		menu.Inline(rows...)
 
 		return c.Send(chat.t("Select role"), menu)
 	})
 
-	b.Handle(&btnNew, func(c tele.Context) error {
+	b.Handle(&btnCreate, func(c tele.Context) error {
 		Log.WithField("user", c.Sender().Username).Info("Selected role ", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 
 		user := chat.User
 		if c.Data() == "cancel" {
-			user.State = nil
-			s.db.Save(&user)
+			s.db.Model(&user).Update("State", nil)
 
-			return c.Edit(chat.t("Canceled"))
+			return c.Edit(chat.t("Canceled"), removeMenu)
 		}
 
-		if c.Data() != "new" {
-			role := s.findRole(user.ID, c.Data())
+		if c.Data() != "create" {
+			roleID, _ := strconv.Atoi(c.Data())
+			role := s.getRole(uint(roleID))
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
 
 			}
-			chat.MasterPrompt = role.Prompt
-			s.db.Save(&chat)
+			s.db.Model(&chat).Update("RoleID", role.ID)
 
-			_ = c.Edit(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": c.Data()}))
+			_ = c.Edit(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": role.Name}))
 
 			return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 		}
 
 		state := State{
-			Name: "Role",
+			Name: "RoleCreate",
 			FirstStep: Step{
-				Field:  "name",
+				Field:  "Name",
 				Prompt: "Enter role name",
 				Next: &Step{
-					Prompt: "Enter prompt",
+					Prompt: "Enter system prompt",
 					Field:  "Prompt",
 				},
 			},
 		}
-		user.State = &state
-		s.db.Save(&user)
+		s.db.Model(&user).Update("State", state)
 
 		menu.Inline(menu.Row(btnCancel))
 
@@ -266,8 +266,15 @@ func (s *Server) run() {
 		}
 		status = chat.t(status)
 
-		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d",
-			s.getModel(chat.ModelName), chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
+		prompt := chat.MasterPrompt
+		role := chat.t("default")
+		if chat.RoleID != nil {
+			prompt = chat.Role.Prompt
+			role = chat.Role.Name
+		}
+
+		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
+			s.getModel(chat.ModelName), chat.Temperature, prompt, status, chat.ConversationAge, role,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
@@ -371,44 +378,18 @@ func (s *Server) run() {
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		user := chat.User
 
-		if user.State != nil {
-			state := user.State
-			step := findEmptyStep(&state.FirstStep)
-			step.Input = &c.Message().Text
-			s.db.Save(&user)
-
-			next := findEmptyStep(step)
-			if next == nil {
-				Log.Info("State: Done!")
-				switch state.Name {
-				case "Role":
-					role := Role{
-						UserID: user.ID,
-						Name:   *state.FirstStep.Input,
-						Prompt: *state.FirstStep.Next.Input,
-					}
-
-					chat.mutex.Lock()
-					defer chat.mutex.Unlock()
-					user.Roles = append(user.Roles, role)
-					s.db.Save(&user)
-
-				}
-			} else {
-				menu.Inline(menu.Row(btnCancel))
-
-				return c.Send(chat.t(next.Prompt), menu)
+		// not handling  user input through stepper/state machine
+		if chat.User.State == nil {
+			if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
+				Log.Warn(e)
 			}
 
-			return nil
-		}
-
-		go s.onText(c)
-		if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
-			Log.Warn(e)
-			return e
+			go s.onText(c)
+		} else {
+			chat.removeMenu(c)
+			// in the middle of stepper input
+			go s.onState(c)
 		}
 
 		return nil

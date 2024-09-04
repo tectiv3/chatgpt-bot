@@ -156,3 +156,50 @@ func (s *Server) onGetUsers(c tele.Context) error {
 
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
+
+func (s *Server) onState(c tele.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
+		}
+	}()
+	chat := s.getChat(c.Chat(), c.Sender())
+	user := chat.User
+
+	state := user.State
+	step := findEmptyStep(&state.FirstStep)
+	step.Input = &c.Message().Text
+	s.db.Model(&user).Update("State", state)
+
+	next := findEmptyStep(step)
+	if next != nil {
+		menu.Inline(menu.Row(btnCancel))
+		c.Send(chat.t(next.Prompt), menu)
+
+		return
+	}
+
+	Log.WithField("State", state.Name).Info("State: Done!")
+	switch state.Name {
+	case "RoleCreate":
+		role := Role{
+			UserID: user.ID,
+			Name:   *state.FirstStep.Input,
+			Prompt: *state.FirstStep.Next.Input,
+		}
+
+		chat.mutex.Lock()
+		defer chat.mutex.Unlock()
+		user.Roles = append(user.Roles, role)
+		s.db.Save(&user)
+	case "RoleUpdate":
+		role := s.getRole(*state.ID)
+		if role == nil {
+			Log.Warn("Role not found")
+			return
+		}
+		role.Name = *state.FirstStep.Input
+		role.Name = *state.FirstStep.Next.Input
+		s.db.Save(role)
+	}
+}
