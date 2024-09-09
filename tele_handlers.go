@@ -164,6 +164,7 @@ func (s *Server) onState(c tele.Context) {
 			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
+
 	chat := s.getChat(c.Chat(), c.Sender())
 	user := chat.User
 	state := user.State
@@ -174,14 +175,17 @@ func (s *Server) onState(c tele.Context) {
 
 	chat.removeMenu(c)
 
-	id := &([]string{strconv.Itoa(c.Message().ID)}[0])
-	s.db.Model(&chat).Update("MessageID", id)
-	chat.MessageID = id
-
 	next := findEmptyStep(step)
 	if next != nil {
 		menu.Inline(menu.Row(btnCancel))
-		c.Send(chat.t(next.Prompt), menu)
+		sentMessage, err := c.Bot().Send(c.Recipient(), chat.t(next.Prompt), menu)
+		if err != nil {
+			Log.WithField("err", err).Error("Error sending message")
+			return
+		}
+		id := &([]string{strconv.Itoa(sentMessage.ID)}[0])
+		chat.MessageID = id
+		s.db.Model(&chat).Update("MessageID", id)
 
 		return
 	}
@@ -200,7 +204,9 @@ func (s *Server) onState(c tele.Context) {
 		user.Roles = append(user.Roles, role)
 		s.db.Save(&user)
 		chat.removeMenu(c)
-		c.Send(chat.t("Role created"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		if err := c.Send(chat.t("Role created")); err != nil {
+			Log.WithField("err", err).Error("Error sending message")
+		}
 	case "RoleUpdate":
 		role := s.getRole(*state.ID)
 		if role == nil {
@@ -210,5 +216,7 @@ func (s *Server) onState(c tele.Context) {
 		role.Name = *state.FirstStep.Input
 		role.Name = *state.FirstStep.Next.Input
 		s.db.Save(role)
+	default:
+		Log.Warn("Unknown state: ", state.Name)
 	}
 }

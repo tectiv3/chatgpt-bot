@@ -188,8 +188,8 @@ func (s *Server) run() {
 		}
 
 		if c.Data() != "create" {
-			roleID, _ := strconv.Atoi(c.Data())
-			role := s.getRole(uint(roleID))
+			roleID := as_uint(c.Data())
+			role := s.getRole(roleID)
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
 
@@ -215,6 +215,9 @@ func (s *Server) run() {
 		s.db.Model(&user).Update("State", state)
 
 		menu.Inline(menu.Row(btnCancel))
+
+		id := &([]string{strconv.Itoa(c.Message().ID)}[0])
+		s.db.Model(&chat).Update("MessageID", id)
 
 		return c.Edit(chat.t("Enter role name"), menu)
 	})
@@ -276,12 +279,14 @@ func (s *Server) run() {
 			roleID := as_uint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
-				return c.Send(chat.t("Role Not Found"))
+				return c.Send(chat.t("Role not found"))
 			}
-			s.db.Model(&chat).Update("RoleID", nil)
+			if chat.RoleID != nil && *chat.RoleID == roleID {
+				s.db.Model(&chat).Update("RoleID", nil)
+			}
 			s.db.Unscoped().Delete(&Role{}, roleID)
 
-			return c.Edit(chat.t("Role Deleted"))
+			return c.Edit(chat.t("Role deleted"))
 		}
 
 		roles := chat.User.Roles
@@ -298,7 +303,7 @@ func (s *Server) run() {
 		rows = append(rows, menu.Row(row...))
 		menu.Inline(rows...)
 
-		return c.Send(chat.t("Select Role"), menu)
+		return c.Edit(chat.t("Select Role"), menu)
 	})
 
 	b.Handle(cmdAge, func(c tele.Context) error {

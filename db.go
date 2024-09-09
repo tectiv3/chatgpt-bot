@@ -118,8 +118,9 @@ func (s *Server) getModel(modelName string) string {
 	return model
 }
 
-func (s *Server) getRole(id uint) (r *Role) {
-	s.db.First(r, id)
+func (s *Server) getRole(id uint) *Role {
+	var r Role
+	s.db.First(&r, id)
 
-	return r
+	return &r
 }
