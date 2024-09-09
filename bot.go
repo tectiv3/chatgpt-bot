@@ -379,8 +379,9 @@ func (s *Server) run() {
 			role = chat.Role.Name
 		}
 
-		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
-			s.getModel(chat.ModelName), chat.Temperature, prompt, status, chat.ConversationAge, role,
+		return c.Send(fmt.Sprintf("Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
+			Version, s.getModel(chat.ModelName), chat.Temperature,
+			prompt, status, chat.ConversationAge, role,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
