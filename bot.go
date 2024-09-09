@@ -137,7 +137,11 @@ func (s *Server) run() {
 		roles := chat.User.Roles
 		rows := []tele.Row{}
 		// iterate over roles, add menu button with role name 3 buttons in a row
-		row := []tele.Btn{}
+		row := []tele.Btn{
+			tele.Btn{Text: chat.t("default"),
+				Unique: "btnRole",
+				Data:   "___default___"},
+		}
 		for _, role := range roles {
 			if len(row) == 3 {
 				rows = append(rows, menu.Row(row...))
@@ -157,25 +161,6 @@ func (s *Server) run() {
 		return c.Send(chat.t("Select role"), menu)
 	})
 
-	// b.Handle(cmdRoles, func(c tele.Context) error {
-	// 	chat := s.getChat(c.Chat(), c.Sender())
-	// 	roles := chat.User.Roles
-	// 	rows := []tele.Row{}
-	// 	row := []tele.Btn{}
-	// 	for _, role := range roles {
-	// 		if len(row) == 3 {
-	// 			rows = append(rows, menu.Row(row...))
-	// 			row = []tele.Btn{}
-	// 		}
-	// 		row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))})
-	// 	}
-	//
-	// 	rows = append(rows, menu.Row(row...), menu.Row(btnCreate, btnUpdate, btnDelete))
-	// 	menu.Inline(rows...)
-	//
-	// 	return c.Send(chat.t("Select role"), menu)
-	// })
-
 	b.Handle(&btnCreate, func(c tele.Context) error {
 		Log.WithField("user", c.Sender().Username).Info("Selected role ", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
@@ -185,6 +170,14 @@ func (s *Server) run() {
 			s.db.Model(&user).Update("State", nil)
 
 			return c.Edit(chat.t("Canceled"), removeMenu)
+		}
+
+		if c.Data() == "___default___" {
+			chat.MasterPrompt = masterPrompt
+			chat.RoleID = nil
+			s.db.Save(&chat)
+
+			return c.Edit(chat.t("Default prompt set"))
 		}
 
 		if c.Data() != "create" {
@@ -341,6 +334,7 @@ func (s *Server) run() {
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.MasterPrompt = masterPrompt
+		chat.RoleID = nil
 		s.db.Save(&chat)
 
 		return c.Send(chat.t("Default prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
