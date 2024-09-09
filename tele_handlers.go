@@ -184,12 +184,12 @@ func (s *Server) onState(c tele.Context) {
 			return
 		}
 		id := &([]string{strconv.Itoa(sentMessage.ID)}[0])
-		chat.MessageID = id
-		s.db.Model(&chat).Update("MessageID", id)
+		s.setChatLastMessageID(id, chat.ChatID)
 
 		return
 	}
 
+	s.setChatLastMessageID(nil, chat.ChatID)
 	Log.WithField("State", state.Name).Info("State: Done!")
 	switch state.Name {
 	case "RoleCreate":
@@ -203,7 +203,7 @@ func (s *Server) onState(c tele.Context) {
 		defer chat.mutex.Unlock()
 		user.Roles = append(user.Roles, role)
 		s.db.Save(&user)
-		chat.removeMenu(c)
+
 		if err := c.Send(chat.t("Role created")); err != nil {
 			Log.WithField("err", err).Error("Error sending message")
 		}
@@ -214,8 +214,12 @@ func (s *Server) onState(c tele.Context) {
 			return
 		}
 		role.Name = *state.FirstStep.Input
-		role.Name = *state.FirstStep.Next.Input
+		role.Prompt = *state.FirstStep.Next.Input
 		s.db.Save(role)
+
+		if err := c.Send(chat.t("Role updated")); err != nil {
+			Log.WithField("err", err).Error("Error sending message")
+		}
 	default:
 		Log.Warn("Unknown state: ", state.Name)
 	}

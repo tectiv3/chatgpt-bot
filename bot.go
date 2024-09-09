@@ -145,13 +145,13 @@ func (s *Server) run() {
 			}
 			row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))})
 		}
-		if len(row) == 3 {
+		if len(row) != 0 {
 			rows = append(rows, menu.Row(row...))
 			row = []tele.Btn{}
 		}
 		row = append(row, btnCreate, btnUpdate, btnDelete)
 		rows = append(rows, menu.Row(row...))
-		Log.Info(rows)
+		// Log.Info(rows)
 		menu.Inline(rows...)
 
 		return c.Send(chat.t("Select role"), menu)
@@ -194,11 +194,11 @@ func (s *Server) run() {
 				return c.Send(chat.t("Role not found"))
 
 			}
-			s.db.Model(&chat).Update("RoleID", role.ID)
+			// s.db.Model(&chat).Update("RoleID", role.ID) // gorm is weird
+			s.setChatRole(&role.ID, chat.ChatID)
+			s.setChatLastMessageID(nil, chat.ChatID)
 
-			_ = c.Edit(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": role.Name}))
-
-			return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			return c.Edit(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": role.Name}))
 		}
 
 		state := State{
@@ -217,7 +217,7 @@ func (s *Server) run() {
 		menu.Inline(menu.Row(btnCancel))
 
 		id := &([]string{strconv.Itoa(c.Message().ID)}[0])
-		s.db.Model(&chat).Update("MessageID", id)
+		s.setChatLastMessageID(id, chat.ChatID)
 
 		return c.Edit(chat.t("Enter role name"), menu)
 	})
@@ -231,7 +231,7 @@ func (s *Server) run() {
 			roleID := as_uint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
-				return c.Send(chat.t("Role not found"))
+				return c.Edit(chat.t("Role not found"))
 			}
 
 			state := State{
@@ -251,7 +251,7 @@ func (s *Server) run() {
 
 			menu.Inline(menu.Row(btnCancel))
 
-			return c.Send(chat.t(state.FirstStep.Prompt), menu)
+			return c.Edit(chat.t(state.FirstStep.Prompt), menu)
 		}
 
 		roles := chat.User.Roles
@@ -265,7 +265,7 @@ func (s *Server) run() {
 			}
 			row = append(row, tele.Btn{Text: role.Name, Unique: "btnUpdate", Data: strconv.Itoa(int(role.ID))})
 		}
-		rows = append(rows, menu.Row(row...))
+		rows = append(rows, menu.Row(row...), menu.Row(btnCancel))
 		menu.Inline(rows...)
 
 		return c.Edit(chat.t("Select Role"), menu)
@@ -281,8 +281,13 @@ func (s *Server) run() {
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
 			}
-			if chat.RoleID != nil && *chat.RoleID == roleID {
-				s.db.Model(&chat).Update("RoleID", nil)
+			// Log.WithField("roleID", roleID).WithField("chat", *chat.RoleID).Info("Role deleted")
+			if chat.RoleID != nil {
+				Log.WithField("roleID", roleID).WithField("chat", *chat.RoleID).Info("Role deleted")
+				if *chat.RoleID == roleID {
+					// s.db.Model(&chat).Update("RoleID", nil) // stupid gorm insert chat, roles, users and duplicates roleID
+					s.setChatRole(nil, chat.ChatID)
+				}
 			}
 			s.db.Unscoped().Delete(&Role{}, roleID)
 
@@ -300,7 +305,7 @@ func (s *Server) run() {
 			}
 			row = append(row, tele.Btn{Text: role.Name, Unique: "btnDelete", Data: strconv.Itoa(int(role.ID))})
 		}
-		rows = append(rows, menu.Row(row...))
+		rows = append(rows, menu.Row(row...), menu.Row(btnCancel))
 		menu.Inline(rows...)
 
 		return c.Edit(chat.t("Select Role"), menu)
