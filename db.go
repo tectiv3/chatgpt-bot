@@ -48,7 +48,7 @@ func (s *Server) getChatByID(chatID int64) *Chat {
 // getUsers returns all users from db
 func (s *Server) getUsers() []User {
 	var users []User
-	s.db.Model(&User{}).Preload("Threads").Find(&users)
+	s.db.Model(&User{}).Preload("Threads").Preload("Threads.Role").Find(&users)
 
 	return users
 }
@@ -131,4 +131,9 @@ func (s *Server) setChatRole(id *uint, ChatID int64) {
 
 func (s *Server) setChatLastMessageID(id *string, ChatID int64) {
 	s.db.Model(&Chat{}).Where("chat_id", ChatID).Update("message_id", id)
+}
+
+// set user.State to null
+func (s *Server) resetUserState(user User) {
+	s.db.Model(&User{}).Where("id", user.ID).Update("State", nil)
 }
