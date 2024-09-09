@@ -132,3 +132,8 @@ func (s *Server) setChatRole(id *uint, ChatID int64) {
 func (s *Server) setChatLastMessageID(id *string, ChatID int64) {
 	s.db.Model(&Chat{}).Where("chat_id", ChatID).Update("message_id", id)
 }
+
+// set user.State to null
+func (s *Server) resetUserState(user User) {
+	s.db.Model(&User{}).Where("id", user.ID).Update("State", nil)
+}

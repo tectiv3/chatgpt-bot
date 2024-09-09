@@ -182,6 +182,11 @@ func (s *Server) onState(c tele.Context) {
 	state := user.State
 	step := findEmptyStep(&state.FirstStep)
 
+	if step == nil {
+		s.resetUserState(user)
+		return
+	}
+
 	step.Input = &c.Message().Text
 	s.db.Model(&user).Update("State", state)
 
@@ -235,4 +240,5 @@ func (s *Server) onState(c tele.Context) {
 	default:
 		Log.Warn("Unknown state: ", state.Name)
 	}
+	s.resetUserState(user)
 }
