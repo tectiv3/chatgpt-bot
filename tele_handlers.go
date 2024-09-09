@@ -1,13 +1,12 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"github.com/tectiv3/chatgpt-bot/types"
 	tele "gopkg.in/telebot.v3"
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -159,66 +158,69 @@ func (s *Server) onGetUsers(c tele.Context) error {
 	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
-func (s *Server) onChain(c tele.Context, chat *Chat) {
+func (s *Server) onState(c tele.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
-	clientQuery := types.ClientQuery{}
 
-	prompt := c.Message().Payload
-	clientQuery.Prompt = prompt
-	clientQuery.Session = c.Sender().Username
-	clientQuery.ModelName = chat.ModelName
-	if chat.ModelName == mOllama && s.conf.OllamaEnabled {
-		clientQuery.ModelName = s.conf.OllamaModel
-	} else {
-		clientQuery.ModelName = mGPT4
-	}
-	clientQuery.MaxIterations = 10
+	chat := s.getChat(c.Chat(), c.Sender())
+	user := chat.User
+	state := user.State
+	step := findEmptyStep(&state.FirstStep)
 
-	outputChan := make(chan types.HttpJsonStreamElement)
-	defer close(outputChan)
+	step.Input = &c.Message().Text
+	s.db.Model(&user).Update("State", state)
 
-	// Start the agent chain function in a goroutine
-	ctx := context.Background()
-	sentMessage := chat.getSentMessage(c)
+	chat.removeMenu(c)
 
-	go s.startAgent(ctx, outputChan, clientQuery)
-
-	result := ""
-	tokens := 0
-	for {
-		select {
-		case output, ok := <-outputChan:
-			if !ok {
-				break
-			}
-			//Log.Info("Got output", "output", output)
-			if output.Stream {
-				tokens++
-				result += output.Message
-				result = strings.TrimSuffix(result, "<|im_end|>") // strip ollama end token
-				if tokens%10 == 0 {
-					_, _ = c.Bot().Edit(&sentMessage, result)
-				}
-			} else if output.Close {
-				Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
-				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
-					ReplyTo:   c.Message(),
-					ParseMode: tele.ModeMarkdown,
-				})
-			} else if output.StepType == types.StepHandleChainEnd {
-				result += "\n"
-				_, _ = c.Bot().Edit(&sentMessage, result, "text", &tele.SendOptions{
-					ReplyTo:   c.Message(),
-					ParseMode: tele.ModeMarkdown,
-				})
-			}
-		case <-ctx.Done():
-			Log.Info("Done. Client disconnected")
-			break
+	next := findEmptyStep(step)
+	if next != nil {
+		menu.Inline(menu.Row(btnCancel))
+		sentMessage, err := c.Bot().Send(c.Recipient(), chat.t(next.Prompt), menu)
+		if err != nil {
+			Log.WithField("err", err).Error("Error sending message")
+			return
 		}
+		id := &([]string{strconv.Itoa(sentMessage.ID)}[0])
+		s.setChatLastMessageID(id, chat.ChatID)
+
+		return
+	}
+
+	s.setChatLastMessageID(nil, chat.ChatID)
+	Log.WithField("State", state.Name).Info("State: Done!")
+	switch state.Name {
+	case "RoleCreate":
+		role := Role{
+			UserID: user.ID,
+			Name:   *state.FirstStep.Input,
+			Prompt: *state.FirstStep.Next.Input,
+		}
+
+		chat.mutex.Lock()
+		defer chat.mutex.Unlock()
+		user.Roles = append(user.Roles, role)
+		s.db.Save(&user)
+
+		if err := c.Send(chat.t("Role created")); err != nil {
+			Log.WithField("err", err).Error("Error sending message")
+		}
+	case "RoleUpdate":
+		role := s.getRole(*state.ID)
+		if role == nil {
+			Log.Warn("Role not found")
+			return
+		}
+		role.Name = *state.FirstStep.Input
+		role.Prompt = *state.FirstStep.Next.Input
+		s.db.Save(role)
+
+		if err := c.Send(chat.t("Role updated")); err != nil {
+			Log.WithField("err", err).Error("Error sending message")
+		}
+	default:
+		Log.Warn("Unknown state: ", state.Name)
 	}
 }

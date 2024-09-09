@@ -8,15 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/tmc/langchaingo/callbacks"
-	"github.com/tmc/langchaingo/tools"
 )
 
 // GetCryptoRate is a tool that can do get crypto rate.
 type GetCryptoRate struct {
-	CallbacksHandler callbacks.Handler
-	sessionString    string
+	sessionString string
 }
 
 type CoinCap struct {
@@ -27,8 +23,6 @@ type CoinCap struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
-var _ tools.Tool = GetCryptoRate{}
-
 func (t GetCryptoRate) Description() string {
 	return `Usefull for getting the current rate of various crypto currencies.`
 }
@@ -38,17 +32,9 @@ func (t GetCryptoRate) Name() string {
 }
 
 func (t GetCryptoRate) Call(ctx context.Context, input string) (string, error) {
-	if t.CallbacksHandler != nil {
-		t.CallbacksHandler.HandleToolStart(ctx, input)
-	}
-
 	result, err := getCryptoRate(input)
 	if err != nil {
 		return fmt.Sprintf("error from tool: %s", err.Error()), nil //nolint:nilerr
-	}
-
-	if t.CallbacksHandler != nil {
-		t.CallbacksHandler.HandleToolEnd(ctx, result)
 	}
 
 	return result, nil

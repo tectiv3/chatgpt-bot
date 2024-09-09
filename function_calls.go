@@ -19,7 +19,7 @@ import (
 )
 
 func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
-	return []openai.ChatCompletionTool{
+	availableTools := []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
 			"search_images",
 			"Search image or GIFs for a given query",
@@ -67,7 +67,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 		openai.NewChatCompletionTool(
 			"full_webpage_to_speech",
-			"Download full web page content and convert it to speech. Use only when you need to pass the full content of a web page to the speech synthesiser.",
+			"Download full web page and convert it to speech. Use ONLY when you need to pass the full content of a web page to the speech synthesiser.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
 				SetRequiredParameters([]string{"url"}),
@@ -101,17 +101,20 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				AddPropertyWithDescription("asset", "string", "Asset of the crypto").
 				SetRequiredParameters([]string{"asset"}),
 		),
+	}
+
+	availableTools = append(availableTools,
 		openai.NewChatCompletionTool(
 			"generate_image",
 			"Generate an image based on the input text",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("text", "string", "The text to generate an image from").
-				AddPropertyWithEnums("model", "string", "The model to use for image generation. Infer from query or use dall-e-3 as a default.", []string{"dall-e-3", "dall-e-2"}).
-				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false. And for dall-e-2 always false.").
-				AddPropertyWithDescription("num_images", "number", "The number of images to generate. Default to 1 and maximum 10. And for dall-e-3 always set it to 1.").
-				SetRequiredParameters([]string{"text", "model", "hd", "num_images"}),
+				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
+				SetRequiredParameters([]string{"text", "hd"}),
 		),
-	}
+	)
+
+	return availableTools
 }
 
 func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
@@ -146,7 +149,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ", ", arguments.Type, ", ", arguments.Region, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
 			)
 			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
@@ -184,7 +187,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				reply += "\n"
 			}
 			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
-			_, _ = c.Bot().Edit(&sentMessage, reply)
+			_, _ = c.Bot().Edit(sentMessage, reply)
 
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
@@ -216,7 +219,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				reply += "\n"
 			}
 			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
-			_, _ = c.Bot().Edit(&sentMessage, reply)
+			_, _ = c.Bot().Edit(sentMessage, reply)
 			var err error
 			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
 			if err != nil {
@@ -245,7 +248,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				reply += "\n"
 			}
 			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text)
-			_, _ = c.Bot().Edit(&sentMessage, reply)
+			_, _ = c.Bot().Edit(sentMessage, reply)
 
 			go s.textToSpeech(c, arguments.Text, arguments.Language)
 
@@ -261,7 +264,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
 
@@ -271,10 +274,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 
 		case "generate_image":
 			type parsed struct {
-				Text      string `json:"text"`
-				Model     string `json:"model"`
-				HD        bool   `json:"hd"`
-				NumImages int    `json:"num_images"`
+				Text string `json:"text"`
+				HD   bool   `json:"hd"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
@@ -282,15 +283,13 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 				continue
 			}
 			if s.conf.Verbose {
-				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.Model, ", ", arguments.HD, ", ", arguments.NumImages, ")")
+				Log.WithField("user", c.Sender().Username).Info("Will call ", function.Name, "(", arguments.Text, ", ", arguments.HD, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Text),
 			)
 
-			if err := s.textToImage(
-				c, arguments.Text, arguments.Model, arguments.HD, arguments.NumImages,
-			); err != nil {
+			if err := s.textToImage(c, arguments.Text, arguments.HD); err != nil {
 				Log.WithField("user", c.Sender().Username).Warn(err)
 			} else {
 				continue
@@ -309,7 +308,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Reminder, ", ", arguments.Minutes, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Reminder+","+strconv.Itoa(int(arguments.Minutes))),
 			)
 
@@ -332,7 +331,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.URL, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
 			go s.getPageSummary(chat, arguments.URL)
@@ -350,7 +349,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			if s.conf.Verbose {
 				Log.Info("Will call ", function.Name, "(", arguments.Asset, ")")
 			}
-			_, _ = c.Bot().Edit(&sentMessage,
+			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
 
 			return s.getCryptoRate(arguments.Asset)
@@ -368,7 +367,8 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 		return "", nil
 	}
 
-	return s.getAnswer(chat, c, nil)
+	err := s.getAnswer(chat, c, nil)
+	return "", err
 }
 
 func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
@@ -422,10 +422,11 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 
 	history := []openai.ChatMessage{system, msg}
 
-	response, err := s.ai.CreateChatCompletion("gpt-3.5-turbo-16k", history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+	response, err := s.ai.CreateChatCompletion(mGTP3, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 
 	if err != nil {
 		Log.Warn("failed to create chat completion", "error=", err)
+		s.bot.Send(tele.ChatID(chat.ChatID), err.Error(), "text", replyMenu)
 		return
 	}
 

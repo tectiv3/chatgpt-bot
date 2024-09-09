@@ -22,14 +22,16 @@ type config struct {
 	// openai api
 	OpenAIAPIKey         string `json:"openai_api_key"`
 	OpenAIOrganizationID string `json:"openai_org_id"`
+	OpenAILatestModel    string `json:"openai_latest_model"`
 	OllamaURL            string `json:"ollama_url"`
 	OllamaModel          string `json:"ollama_model"`
 	OllamaEnabled        bool   `json:"ollama_enabled"`
+	GroqModel            string `json:"groq_model"`
+	GroqAPIKey           string `json:"groq_api_key"`
 
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
-	Model                string   `json:"openai_model"`
 	PiperDir             string   `json:"piper_dir"`
 }
 
@@ -49,24 +51,35 @@ type User struct {
 	ApiKey     *string `gorm:"nullable:true"`
 	OrgID      *string `gorm:"nullable:true"`
 	Threads    []Chat
+	Roles      []Role
+	State      *State `json:"state,omitempty" gorm:"type:text"`
+}
+
+type Role struct {
+	gorm.Model
+	UserID uint `json:"user_id"`
+	Name   string
+	Prompt string
 }
 
 type Chat struct {
 	gorm.Model
-	ChatID          int64 `sql:"chat_id" json:"chat_id"`
-	UserID          uint  `json:"user_id" gorm:"nullable:true"`
+	mutex           sync.Mutex `gorm:"-"`
+	ChatID          int64      `sql:"chat_id" json:"chat_id"`
+	UserID          uint       `json:"user_id" gorm:"nullable:false"`
+	RoleID          *uint      `json:"role_id" gorm:"nullable:true"`
+	MessageID       *string    `json:"last_message_id" gorm:"nullable:true"`
 	Lang            string
 	History         []ChatMessage
 	User            User `gorm:"foreignKey:UserID;references:ID;fetch:join"`
+	Role            Role `gorm:"foreignKey:RoleID;references:ID;fetch:join"`
 	Temperature     float64
 	ModelName       string
 	MasterPrompt    string
 	Stream          bool
 	Voice           bool
 	ConversationAge int64
-	TotalTokens     int        `json:"total_tokens"`
-	mutex           sync.Mutex `gorm:"-"`
-	MessageID       *string    `json:"last_message_id"`
+	TotalTokens     int `json:"total_tokens"`
 }
 
 type ChatMessage struct {

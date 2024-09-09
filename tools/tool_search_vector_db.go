@@ -5,18 +5,13 @@ import (
 	"encoding/json"
 	log "github.com/sirupsen/logrus"
 	"github.com/tectiv3/chatgpt-bot/vectordb"
-	"github.com/tmc/langchaingo/callbacks"
-	"github.com/tmc/langchaingo/tools"
 )
 
 // SearchVectorDB is a tool that finds the most relevant documents in the vector db.
 type SearchVectorDB struct {
-	CallbacksHandler callbacks.Handler
-	SessionString    string
-	Ollama           bool
+	SessionString string
+	Ollama        bool
 }
-
-var _ tools.Tool = SearchVectorDB{}
 
 type DocResult struct {
 	Text   string
@@ -36,9 +31,6 @@ func (t SearchVectorDB) Name() string {
 }
 
 func (t SearchVectorDB) Call(ctx context.Context, input string) (string, error) {
-	if t.CallbacksHandler != nil {
-		t.CallbacksHandler.HandleToolStart(ctx, input)
-	}
 	ctx = context.WithValue(ctx, "ollama", t.Ollama)
 	docs, err := vectordb.SearchVectorDB(ctx, input, t.SessionString)
 
@@ -57,10 +49,6 @@ func (t SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 				continue
 			}
 		}
-		//ch, ok := c.CallbacksHandler.(chain.CustomHandler)
-		//if ok {
-		//	ch.HandleVectorFound(ctx, fmt.Sprintf("%s with a score of %f", newResult.Source, r.Score))
-		//}
 		results = append(results, newResult)
 		usedResults[t.SessionString] = append(usedResults[t.SessionString], newResult.Text)
 	}
@@ -72,10 +60,6 @@ func (t SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 	} else if len(results) == 0 {
 		response := "No new results found, all returned results have been used already. Try other db search keywords or download more websites."
 		results = append(results, DocResult{Text: response})
-	}
-
-	if t.CallbacksHandler != nil {
-		t.CallbacksHandler.HandleToolEnd(ctx, input)
 	}
 
 	resultJson, err := json.Marshal(results)

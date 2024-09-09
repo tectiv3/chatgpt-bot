@@ -68,7 +68,7 @@ func main() {
 				SlowThreshold:             time.Second, // Slow SQL threshold
 				LogLevel:                  level,       // Log level
 				IgnoreRecordNotFoundError: true,        // Ignore ErrRecordNotFound error for logger
-				ParameterizedQueries:      true,        // Don't include params in the SQL log
+				ParameterizedQueries:      false,       // Don't include params in the SQL log
 				Colorful:                  true,        // Disable color
 			},
 		)
@@ -88,6 +88,9 @@ func main() {
 		}
 		if err := db.AutoMigrate(&ChatMessage{}); err != nil {
 			panic("failed to migrate chat message")
+		}
+		if err := db.AutoMigrate(&Role{}); err != nil {
+			panic("failed to migrate role")
 		}
 
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")

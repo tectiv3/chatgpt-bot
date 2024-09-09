@@ -1,23 +1,15 @@
 package main
 
-import (
-	"github.com/meinside/openai-go"
-	"github.com/tectiv3/chatgpt-bot/i18n"
-	tele "gopkg.in/telebot.v3"
-	"io"
-	"os"
-	"strconv"
-	"time"
-)
+import tele "gopkg.in/telebot.v3"
 
 // getChat returns chat from db or creates a new one
 func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	var chat Chat
 
-	s.db.FirstOrCreate(&chat, Chat{ChatID: c.ID})
+	s.db.Preload("User").Preload("User.Roles").Preload("Role").Preload("History").FirstOrCreate(&chat, Chat{ChatID: c.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
-		chat.ModelName = "gpt-4-turbo-preview"
+		chat.ModelName = openAILatest
 		chat.Temperature = 0.8
 		chat.Stream = true
 		chat.ConversationAge = 1
@@ -39,7 +31,7 @@ func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 		s.db.Save(&chat)
 	}
 
-	s.db.Find(&chat.History, "chat_id = ?", chat.ID)
+	// s.db.Find(&chat.History, "chat_id = ?", chat.ID)
 	//log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
 
 	return &chat
@@ -62,8 +54,7 @@ func (s *Server) getUsers() []User {
 }
 
 // getUser returns user from db
-func (s *Server) getUser(username string) User {
-	var user User
+func (s *Server) getUser(username string) (user User) {
 	s.db.First(&user, User{Username: username})
 
 	return user
@@ -73,8 +64,20 @@ func (s *Server) addUser(username string) {
 	s.db.Create(&User{Username: username})
 }
 
-func (s *Server) delUser(userNane string) {
-	s.db.Where("username = ?", userNane).Delete(&User{})
+func (s *Server) delUser(username string) {
+	user := s.getUser(username)
+	if user.ID == 0 {
+		Log.Info("User not found: ", username)
+		return
+	}
+
+	var chat Chat
+	s.db.First(&chat, Chat{UserID: user.ID})
+	if chat.ID != 0 {
+		s.deleteHistory(chat.ID)
+		s.db.Unscoped().Delete(&Chat{}, chat.ID)
+	}
+	s.db.Unscoped().Delete(&User{}, user.ID)
 }
 
 func (s *Server) deleteHistory(chatID uint) {
@@ -95,149 +98,37 @@ func (s *Server) loadUsers() {
 	s.users = append(s.users, usernames...)
 }
 
-func (c *Chat) getSentMessage(context tele.Context) tele.Message {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	if c.MessageID != nil {
-		id, _ := strconv.Atoi(*c.MessageID)
+func (s *Server) findRole(userID uint, name string) *Role {
+	var r Role
+	s.db.First(&r, Role{UserID: userID, Name: name})
 
-		return tele.Message{ID: id, Chat: &tele.Chat{ID: c.ChatID}}
-	}
-	// if we already have a message ID, use it, otherwise create a new message
-	if context.Get("reply") != nil {
-		sentMessage := context.Get("reply").(tele.Message)
-		c.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
-		return sentMessage
-	}
-
-	msgPointer, _ := context.Bot().Send(context.Recipient(), "...", "text", &tele.SendOptions{ReplyTo: context.Message()})
-	c.MessageID = &([]string{strconv.Itoa(msgPointer.ID)}[0])
-
-	return *msgPointer
+	return &r
 }
 
-func (c *Chat) addToolResultToDialog(id, content string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	msg := openai.NewChatToolMessage(id, content)
-	//log.Printf("Adding tool message to history: %v\n", msg)
-	c.History = append(c.History,
-		ChatMessage{
-			Role:       msg.Role,
-			Content:    &content,
-			ChatID:     c.ChatID,
-			ToolCallID: &id,
-			CreatedAt:  time.Now(),
-		})
-}
-
-func (c *Chat) addImageToDialog(text, path string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	c.History = append(c.History,
-		ChatMessage{
-			Role:      openai.ChatMessageRoleUser,
-			Content:   &text,
-			ImagePath: &path,
-			ChatID:    c.ChatID,
-			CreatedAt: time.Now(),
-		})
-}
-
-func (c *Chat) addMessageToDialog(msg openai.ChatMessage) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	//log.Printf("Adding message to history: %v\n", msg)
-	toolCalls := make([]ToolCall, 0)
-	for _, tc := range msg.ToolCalls {
-		toolCalls = append(toolCalls, ToolCall{
-			ID:       tc.ID,
-			Type:     tc.Type,
-			Function: tc.Function,
-		})
-	}
-	content, err := msg.ContentString()
-	if err != nil {
-		if contentArr, err := msg.ContentArray(); err == nil {
-			for _, c := range contentArr {
-				if c.Type == "text" {
-					content = *c.Text
-					break
-				}
-				//if c.Type == "image_url" {
-				//
-				//}
-			}
-		}
-	}
-	c.History = append(c.History,
-		ChatMessage{
-			Role:      msg.Role,
-			Content:   &content,
-			ToolCalls: toolCalls,
-			ChatID:    c.ChatID,
-			CreatedAt: time.Now(),
-		})
-}
-
-func (c *Chat) getDialog(request *string) []openai.ChatMessage {
-	system := openai.NewChatSystemMessage(c.MasterPrompt)
-	if request != nil {
-		c.addMessageToDialog(openai.NewChatUserMessage(*request))
+func (s *Server) getModel(modelName string) string {
+	model := modelName
+	if model == openAILatest {
+		model = s.conf.OpenAILatestModel
+	} else if model == mOllama && len(s.conf.OllamaURL) > 0 {
+		model = s.conf.OllamaModel
+	} else if model == mGroq && len(s.conf.GroqAPIKey) > 0 {
+		model = s.conf.GroqModel
 	}
 
-	history := []openai.ChatMessage{system}
-	for _, h := range c.History {
-		if h.CreatedAt.Before(
-			time.Now().AddDate(0, 0, -int(c.ConversationAge)),
-		) {
-			continue
-		}
-
-		var message openai.ChatMessage
-
-		if h.ImagePath != nil {
-			reader, err := os.Open(*h.ImagePath)
-			if err != nil {
-				Log.Warn("Error opening image file", "error=", err)
-				continue
-			}
-			defer reader.Close()
-
-			image, err := io.ReadAll(reader)
-			if err != nil {
-				Log.Warn("Error reading file content", "error=", err)
-				continue
-			}
-			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
-			content = append(content, openai.ChatMessageContent{
-				Type:     "image_url",
-				ImageURL: openai.NewChatMessageContentWithBytes(image),
-			})
-			message = openai.ChatMessage{Role: h.Role, Content: content}
-		} else {
-			message = openai.ChatMessage{Role: h.Role, Content: h.Content}
-		}
-		if h.Role == openai.ChatMessageRoleAssistant && h.ToolCalls != nil {
-			message.ToolCalls = make([]openai.ToolCall, 0)
-			for _, tc := range h.ToolCalls {
-				message.ToolCalls = append(message.ToolCalls, openai.ToolCall{
-					ID:       tc.ID,
-					Type:     tc.Type,
-					Function: tc.Function,
-				})
-			}
-		}
-		if h.ToolCallID != nil {
-			message.ToolCallID = h.ToolCallID
-		}
-		history = append(history, message)
-	}
-
-	return history
+	return model
 }
 
-func (c *Chat) t(key string, replacements ...*i18n.Replacements) string {
-	return l.GetWithLocale(c.Lang, key, replacements...)
+func (s *Server) getRole(id uint) *Role {
+	var r Role
+	s.db.First(&r, id)
+
+	return &r
+}
+
+func (s *Server) setChatRole(id *uint, ChatID int64) {
+	s.db.Model(&Chat{}).Where("chat_id", ChatID).Update("role_id", id)
+}
+
+func (s *Server) setChatLastMessageID(id *string, ChatID int64) {
+	s.db.Model(&Chat{}).Where("chat_id", ChatID).Update("message_id", id)
 }

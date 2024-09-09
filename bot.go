@@ -2,12 +2,13 @@ package main
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/tectiv3/chatgpt-bot/i18n"
-	"github.com/tectiv3/chatgpt-bot/tools"
 	"strconv"
 	"time"
 
 	tele "gopkg.in/telebot.v3"
+	"gopkg.in/telebot.v3/react"
 )
 
 const (
@@ -22,21 +23,24 @@ const (
 	cmdStop       = "/stop"
 	cmdVoice      = "/voice"
 	cmdInfo       = "/info"
+	cmdLang       = "/lang"
+	cmdImage      = "/image"
 	cmdToJapanese = "/ja"
 	cmdToEnglish  = "/en"
 	cmdToRussian  = "/ru"
 	cmdToItalian  = "/it"
+	cmdToSpanish  = "/es"
 	cmdToChinese  = "/cn"
-	cmdDdg        = "/ddg"
+	cmdRoles      = "/roles"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
-	cmdChain      = "/chain"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	mOllama       = "ollama"
-	mGPT4         = "gpt-4-turbo"
-	mGTP3         = "gpt-3.5-turbo"
+	mGroq         = "groq"
+	mGTP3         = "gpt-4o-mini"
+	openAILatest  = "openAILatest"
 )
 
 var (
@@ -44,16 +48,20 @@ var (
 	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: mGTP3}
-	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: mGPT4}
-	btn5       = tele.Btn{Text: "Ollama", Unique: "btnModel", Data: mOllama}
+	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: openAILatest}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
 	btnT6      = tele.Btn{Text: "0.6", Unique: "btntemp", Data: "0.6"}
 	btnT8      = tele.Btn{Text: "0.8", Unique: "btntemp", Data: "0.8"}
 	btnT10     = tele.Btn{Text: "1.0", Unique: "btntemp", Data: "1.0"}
-	btnReset   = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
-	btnEmpty   = tele.Btn{Text: "", Data: "no_data"}
+	btnCreate  = tele.Btn{Text: "New Role", Unique: "btnRole", Data: "create"}
+	btnUpdate  = tele.Btn{Text: "Update", Unique: "btnUpdate", Data: "update"}
+	btnDelete  = tele.Btn{Text: "Delete", Unique: "btnDelete", Data: "delete"}
+	btnCancel  = tele.Btn{Text: "Cancel", Unique: "btnRole", Data: "cancel"}
+
+	btnReset = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
+	btnEmpty = tele.Btn{Text: "", Data: "no_data"}
 )
 
 func init() {
@@ -64,9 +72,18 @@ func init() {
 // run will launch bot with given parameters
 func (s *Server) run() {
 	b, err := tele.NewBot(tele.Settings{
-		Token:  s.conf.TelegramBotToken,
-		URL:    s.conf.TelegramServerURL,
-		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
+		Token: s.conf.TelegramBotToken,
+		URL:   s.conf.TelegramServerURL,
+		Poller: &tele.LongPoller{
+			Timeout: 1 * time.Second,
+			AllowedUpdates: []string{
+				"message",
+				"edited_message",
+				"inline_query",
+				"callback_query",
+				"message_reaction",
+				"message_reaction_count",
+			}},
 	})
 	if err != nil {
 		Log.Fatal(err)
@@ -94,9 +111,18 @@ func (s *Server) run() {
 
 	b.Handle(cmdModel, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		menu.Inline(menu.Row(btn3, btn4)) //, btn5,))
+		model := c.Message().Payload
+		if model == "" {
+			menu.Inline(menu.Row(btn3, btn4))
 
-		return c.Send(chat.t("Select model"), menu)
+			return c.Send(chat.t("Select model"), menu)
+		}
+		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
+		chat.ModelName = model
+		chat.Stream = true
+		s.db.Save(&chat)
+
+		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))
 	})
 
 	b.Handle(cmdTemp, func(c tele.Context) error {
@@ -104,6 +130,178 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 
 		return c.Send(fmt.Sprintf(chat.t("Set temperature from less random (0.0) to more random (1.0).\nCurrent: %0.2f (default: 0.8)"), chat.Temperature), menu)
+	})
+
+	b.Handle(cmdRoles, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		roles := chat.User.Roles
+		rows := []tele.Row{}
+		// iterate over roles, add menu button with role name 3 buttons in a row
+		row := []tele.Btn{
+			tele.Btn{Text: chat.t("default"),
+				Unique: "btnRole",
+				Data:   "___default___"},
+		}
+		for _, role := range roles {
+			if len(row) == 3 {
+				rows = append(rows, menu.Row(row...))
+				row = []tele.Btn{}
+			}
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))})
+		}
+		if len(row) != 0 {
+			rows = append(rows, menu.Row(row...))
+			row = []tele.Btn{}
+		}
+		row = append(row, btnCreate, btnUpdate, btnDelete)
+		rows = append(rows, menu.Row(row...))
+		// Log.Info(rows)
+		menu.Inline(rows...)
+
+		return c.Send(chat.t("Select role"), menu)
+	})
+
+	b.Handle(&btnCreate, func(c tele.Context) error {
+		Log.WithField("user", c.Sender().Username).Info("Selected role ", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		user := chat.User
+		if c.Data() == "cancel" {
+			s.db.Model(&user).Update("State", nil)
+
+			return c.Edit(chat.t("Canceled"), removeMenu)
+		}
+
+		if c.Data() == "___default___" {
+			chat.MasterPrompt = masterPrompt
+			chat.RoleID = nil
+			s.db.Save(&chat)
+
+			return c.Edit(chat.t("Default prompt set"))
+		}
+
+		if c.Data() != "create" {
+			roleID := as_uint(c.Data())
+			role := s.getRole(roleID)
+			if role == nil {
+				return c.Send(chat.t("Role not found"))
+
+			}
+			// s.db.Model(&chat).Update("RoleID", role.ID) // gorm is weird
+			s.setChatRole(&role.ID, chat.ChatID)
+			s.setChatLastMessageID(nil, chat.ChatID)
+
+			return c.Edit(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": role.Name}))
+		}
+
+		state := State{
+			Name: "RoleCreate",
+			FirstStep: Step{
+				Field:  "Name",
+				Prompt: "Enter role name",
+				Next: &Step{
+					Prompt: "Enter system prompt",
+					Field:  "Prompt",
+				},
+			},
+		}
+		s.db.Model(&user).Update("State", state)
+
+		menu.Inline(menu.Row(btnCancel))
+
+		id := &([]string{strconv.Itoa(c.Message().ID)}[0])
+		s.setChatLastMessageID(id, chat.ChatID)
+
+		return c.Edit(chat.t("Enter role name"), menu)
+	})
+
+	b.Handle(&btnUpdate, func(c tele.Context) error {
+		Log.WithField("user", c.Sender().Username).Info("Selected option ", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
+		user := chat.User
+
+		if c.Data() != "update" {
+			roleID := as_uint(c.Data())
+			role := s.getRole(roleID)
+			if role == nil {
+				return c.Edit(chat.t("Role not found"))
+			}
+
+			state := State{
+				Name: "RoleUpdate",
+				ID:   &roleID,
+				FirstStep: Step{
+					Field:  "Name",
+					Prompt: "Enter role name",
+					Next: &Step{
+						Prompt: "Enter system prompt",
+						Field:  "Prompt",
+					},
+				},
+			}
+			user.State = &state
+			s.db.Save(&user)
+
+			menu.Inline(menu.Row(btnCancel))
+
+			return c.Edit(chat.t(state.FirstStep.Prompt), menu)
+		}
+
+		roles := chat.User.Roles
+		rows := []tele.Row{}
+		// iterate over roles, add menu button with role name 3 buttons in a row
+		row := []tele.Btn{}
+		for _, role := range roles {
+			if len(row) == 3 {
+				rows = append(rows, menu.Row(row...))
+				row = []tele.Btn{}
+			}
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnUpdate", Data: strconv.Itoa(int(role.ID))})
+		}
+		rows = append(rows, menu.Row(row...), menu.Row(btnCancel))
+		menu.Inline(rows...)
+
+		return c.Edit(chat.t("Select Role"), menu)
+	})
+
+	b.Handle(&btnDelete, func(c tele.Context) error {
+		Log.WithField("user", c.Sender().Username).Info("Selected option ", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		if c.Data() != "delete" {
+			roleID := as_uint(c.Data())
+			role := s.getRole(roleID)
+			if role == nil {
+				return c.Send(chat.t("Role not found"))
+			}
+			// Log.WithField("roleID", roleID).WithField("chat", *chat.RoleID).Info("Role deleted")
+			if chat.RoleID != nil {
+				Log.WithField("roleID", roleID).WithField("chat", *chat.RoleID).Info("Role deleted")
+				if *chat.RoleID == roleID {
+					// s.db.Model(&chat).Update("RoleID", nil) // stupid gorm insert chat, roles, users and duplicates roleID
+					s.setChatRole(nil, chat.ChatID)
+				}
+			}
+			s.db.Unscoped().Delete(&Role{}, roleID)
+
+			return c.Edit(chat.t("Role deleted"))
+		}
+
+		roles := chat.User.Roles
+		rows := []tele.Row{}
+		// iterate over roles, add menu button with role name, 3 buttons in a row
+		row := []tele.Btn{}
+		for _, role := range roles {
+			if len(row) == 3 {
+				rows = append(rows, menu.Row(row...))
+				row = []tele.Btn{}
+			}
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnDelete", Data: strconv.Itoa(int(role.ID))})
+		}
+		rows = append(rows, menu.Row(row...), menu.Row(btnCancel))
+		menu.Inline(rows...)
+
+		return c.Edit(chat.t("Select Role"), menu)
 	})
 
 	b.Handle(cmdAge, func(c tele.Context) error {
@@ -136,6 +334,7 @@ func (s *Server) run() {
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.MasterPrompt = masterPrompt
+		chat.RoleID = nil
 		s.db.Save(&chat)
 
 		return c.Send(chat.t("Default prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -173,8 +372,15 @@ func (s *Server) run() {
 		}
 		status = chat.t(status)
 
-		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d",
-			chat.ModelName, chat.Temperature, chat.MasterPrompt, status, chat.ConversationAge,
+		prompt := chat.MasterPrompt
+		role := chat.t("default")
+		if chat.RoleID != nil {
+			prompt = chat.Role.Prompt
+			role = chat.Role.Name
+		}
+
+		return c.Send(fmt.Sprintf("Model: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
+			s.getModel(chat.ModelName), chat.Temperature, prompt, status, chat.ConversationAge, role,
 		),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
@@ -205,71 +411,32 @@ func (s *Server) run() {
 		return nil
 	})
 
+	b.Handle(cmdToSpanish, func(c tele.Context) error {
+		go s.onTranslate(c, "To Spanish: ")
+
+		return nil
+	})
+
 	b.Handle(cmdToChinese, func(c tele.Context) error {
 		go s.onTranslate(c, "To Chinese: ")
 
 		return nil
 	})
 
-	b.Handle(cmdDdg, func(c tele.Context) error {
-		param, err := tools.NewSearchParam(c.Message().Payload, "wt-wt")
-		if err != nil {
+	b.Handle(cmdImage, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		msg := chat.getSentMessage(c)
+		msg, _ = c.Bot().Edit(msg, "Generating...")
+		if err := s.textToImage(c, c.Message().Payload, true); err != nil {
+			_, _ = c.Bot().Edit(msg, "Generating...")
 			return c.Send("Error: " + err.Error())
 		}
-		result := tools.Search(param)
-		if result.IsErr() {
-			return c.Send("Error: " + result.Error().Error())
-		}
-		res := *result.Unwrap()
-		if len(res) == 0 {
-			return c.Send("No results found", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		return c.Send(fmt.Sprintf("%s\n%s\n%s", res[0].Title, res[0].Snippet, res[0].Link), "text", &tele.SendOptions{ReplyTo: c.Message()})
-	})
-
-	b.Handle(cmdChain, func(c tele.Context) error {
-		chat := s.getChat(c.Chat(), c.Sender())
-		if chat.MessageID != nil {
-			return c.Send("Chain is already running", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		chat.MessageID = nil
-		prompt := c.Message().Payload
-		if prompt == "" {
-			return c.Send(chat.t("Prompt is required"), "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		go s.onChain(c, chat)
+		_ = c.Bot().Delete(msg)
 
 		return nil
 	})
 
-	b.Handle("/ddi", func(c tele.Context) error {
-		param, _ := tools.NewSearchImageParam(c.Message().Payload, "wt-wt", "photo")
-		result := tools.SearchImages(param)
-
-		if result.IsErr() {
-			return c.Send("Error: " + result.Error().Error())
-		}
-		res := *result.Unwrap()
-		if len(res) == 0 {
-			return c.Send("No results found", "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-
-		img := tele.FromURL(res[0].Image)
-		return c.Send(&tele.Photo{
-			File:    img,
-			Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
-		}, "photo", &tele.SendOptions{ReplyTo: c.Message()})
-
-	})
-
-	b.Handle("/image", func(c tele.Context) error {
-		return s.textToImage(c, c.Message().Payload, "dall-e-3", false, 1)
-	})
-
-	b.Handle("/lang", func(c tele.Context) error {
+	b.Handle(cmdLang, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		if c.Message().Payload == "" {
 			return c.Send("Language code (e.g. ru) is required", "text", &tele.SendOptions{ReplyTo: c.Message()})
@@ -308,29 +475,63 @@ func (s *Server) run() {
 
 	b.Handle(cmdReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		s.deleteHistory(chat.ID)
 		chat.MessageID = nil
 		s.db.Save(&chat)
+		s.deleteHistory(chat.ID)
 
 		return nil
 	})
 
 	b.Handle(tele.OnText, func(c tele.Context) error {
-		go s.onText(c)
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		// not handling  user input through stepper/state machine
+		if chat.User.State == nil {
+			if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
+				Log.Warn(e)
+			}
+
+			go s.onText(c)
+		} else {
+			chat.removeMenu(c)
+			// in the middle of stepper input
+			go s.onState(c)
+		}
 
 		return nil
 	})
 
 	b.Handle(tele.OnQuery, func(c tele.Context) error {
 		query := c.Query().Text
-		go s.complete(c, query, false)
+		article := &tele.ArticleResult{Title: "N/A"}
+		result, err := s.anonymousAnswer(c, query)
+		if err != nil {
+			article = &tele.ArticleResult{
+				Title: "Error!",
+				Text:  err.Error(),
+			}
+		} else {
+			article = &tele.ArticleResult{
+				Title: query,
+				Text:  result,
+			}
+		}
 
+		results := make(tele.Results, 1)
+		results[0] = article
+		// needed to set a unique string ID for each result
+		id := uuid.New()
+		results[0].SetResultID(id.String())
+
+		c.Answer(&tele.QueryResponse{Results: results, CacheTime: 100})
 		return nil
 	})
 
 	b.Handle(tele.OnDocument, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		go s.onDocument(c)
+
+		b.React(c.Recipient(), c.Message(), react.React(react.Eyes))
 
 		return c.Send(chat.t("Processing document. Please wait..."))
 	})

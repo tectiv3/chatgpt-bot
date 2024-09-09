@@ -18,7 +18,7 @@ and set your values:
     "openai_api_key": "key-ABCDEFGHIJK1234567890",
     "openai_org_id": "org-1234567890abcdefghijk",
     "allowed_telegram_users": ["user1", "user2"],
-    "openai_model": "gpt-3.5-turbo",
+    "openai_model": "gpt-4o-mini",
     "verbose": false
 }
 ```
