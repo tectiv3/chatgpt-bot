@@ -23,11 +23,10 @@ type State struct {
 
 // Value implements the driver.Valuer interface, allowing
 // for converting the State to a JSON string for database storage.
-func (s *State) Value() (driver.Value, error) {
-	if s == nil {
+func (s State) Value() (driver.Value, error) {
+	if s.ID == nil && s.Name == "" && s.FirstStep == (Step{}) {
 		return nil, nil
 	}
-
 	return json.Marshal(s)
 }
 

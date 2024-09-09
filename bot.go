@@ -143,7 +143,7 @@ func (s *Server) run() {
 				rows = append(rows, menu.Row(row...))
 				row = []tele.Btn{}
 			}
-			row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: role.Name})
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))})
 		}
 		if len(row) == 3 {
 			rows = append(rows, menu.Row(row...))
@@ -151,10 +151,30 @@ func (s *Server) run() {
 		}
 		row = append(row, btnCreate, btnUpdate, btnDelete)
 		rows = append(rows, menu.Row(row...))
+		Log.Info(rows)
 		menu.Inline(rows...)
 
 		return c.Send(chat.t("Select role"), menu)
 	})
+
+	// b.Handle(cmdRoles, func(c tele.Context) error {
+	// 	chat := s.getChat(c.Chat(), c.Sender())
+	// 	roles := chat.User.Roles
+	// 	rows := []tele.Row{}
+	// 	row := []tele.Btn{}
+	// 	for _, role := range roles {
+	// 		if len(row) == 3 {
+	// 			rows = append(rows, menu.Row(row...))
+	// 			row = []tele.Btn{}
+	// 		}
+	// 		row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))})
+	// 	}
+	//
+	// 	rows = append(rows, menu.Row(row...), menu.Row(btnCreate, btnUpdate, btnDelete))
+	// 	menu.Inline(rows...)
+	//
+	// 	return c.Send(chat.t("Select role"), menu)
+	// })
 
 	b.Handle(&btnCreate, func(c tele.Context) error {
 		Log.WithField("user", c.Sender().Username).Info("Selected role ", c.Data())
@@ -196,7 +216,89 @@ func (s *Server) run() {
 
 		menu.Inline(menu.Row(btnCancel))
 
-		return c.Send(chat.t("Enter role name"), menu)
+		return c.Edit(chat.t("Enter role name"), menu)
+	})
+
+	b.Handle(&btnUpdate, func(c tele.Context) error {
+		Log.WithField("user", c.Sender().Username).Info("Selected option ", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
+		user := chat.User
+
+		if c.Data() != "update" {
+			roleID := as_uint(c.Data())
+			role := s.getRole(roleID)
+			if role == nil {
+				return c.Send(chat.t("Role not found"))
+			}
+
+			state := State{
+				Name: "RoleUpdate",
+				ID:   &roleID,
+				FirstStep: Step{
+					Field:  "Name",
+					Prompt: "Enter role name",
+					Next: &Step{
+						Prompt: "Enter system prompt",
+						Field:  "Prompt",
+					},
+				},
+			}
+			user.State = &state
+			s.db.Save(&user)
+
+			menu.Inline(menu.Row(btnCancel))
+
+			return c.Send(chat.t(state.FirstStep.Prompt), menu)
+		}
+
+		roles := chat.User.Roles
+		rows := []tele.Row{}
+		// iterate over roles, add menu button with role name 3 buttons in a row
+		row := []tele.Btn{}
+		for _, role := range roles {
+			if len(row) == 3 {
+				rows = append(rows, menu.Row(row...))
+				row = []tele.Btn{}
+			}
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnUpdate", Data: strconv.Itoa(int(role.ID))})
+		}
+		rows = append(rows, menu.Row(row...))
+		menu.Inline(rows...)
+
+		return c.Edit(chat.t("Select Role"), menu)
+	})
+
+	b.Handle(&btnDelete, func(c tele.Context) error {
+		Log.WithField("user", c.Sender().Username).Info("Selected option ", c.Data())
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		if c.Data() != "delete" {
+			roleID := as_uint(c.Data())
+			role := s.getRole(roleID)
+			if role == nil {
+				return c.Send(chat.t("Role Not Found"))
+			}
+			s.db.Model(&chat).Update("RoleID", nil)
+			s.db.Unscoped().Delete(&Role{}, roleID)
+
+			return c.Edit(chat.t("Role Deleted"))
+		}
+
+		roles := chat.User.Roles
+		rows := []tele.Row{}
+		// iterate over roles, add menu button with role name, 3 buttons in a row
+		row := []tele.Btn{}
+		for _, role := range roles {
+			if len(row) == 3 {
+				rows = append(rows, menu.Row(row...))
+				row = []tele.Btn{}
+			}
+			row = append(row, tele.Btn{Text: role.Name, Unique: "btnDelete", Data: strconv.Itoa(int(role.ID))})
+		}
+		rows = append(rows, menu.Row(row...))
+		menu.Inline(rows...)
+
+		return c.Send(chat.t("Select Role"), menu)
 	})
 
 	b.Handle(cmdAge, func(c tele.Context) error {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -165,11 +166,17 @@ func (s *Server) onState(c tele.Context) {
 	}()
 	chat := s.getChat(c.Chat(), c.Sender())
 	user := chat.User
-
 	state := user.State
 	step := findEmptyStep(&state.FirstStep)
+
 	step.Input = &c.Message().Text
 	s.db.Model(&user).Update("State", state)
+
+	chat.removeMenu(c)
+
+	id := &([]string{strconv.Itoa(c.Message().ID)}[0])
+	s.db.Model(&chat).Update("MessageID", id)
+	chat.MessageID = id
 
 	next := findEmptyStep(step)
 	if next != nil {
@@ -192,6 +199,8 @@ func (s *Server) onState(c tele.Context) {
 		defer chat.mutex.Unlock()
 		user.Roles = append(user.Roles, role)
 		s.db.Save(&user)
+		chat.removeMenu(c)
+		c.Send(chat.t("Role created"), "text", &tele.SendOptions{ReplyTo: c.Message()})
 	case "RoleUpdate":
 		role := s.getRole(*state.ID)
 		if role == nil {
