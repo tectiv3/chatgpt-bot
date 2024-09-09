@@ -48,7 +48,7 @@ func (s *Server) getChatByID(chatID int64) *Chat {
 // getUsers returns all users from db
 func (s *Server) getUsers() []User {
 	var users []User
-	s.db.Model(&User{}).Preload("Threads").Find(&users)
+	s.db.Model(&User{}).Preload("Threads").Preload("Threads.Role").Find(&users)
 
 	return users
 }

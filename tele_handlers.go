@@ -136,7 +136,13 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 	s.complete(c, fmt.Sprintf("%s\n%s", prefix, query), true)
 }
 
-func (s *Server) onGetUsers(c tele.Context) error {
+func (s *Server) onGetUsers(c tele.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
+		}
+	}()
+
 	users := s.getUsers()
 	text := "Users:\n"
 	for _, user := range users {
@@ -145,17 +151,23 @@ func (s *Server) onGetUsers(c tele.Context) error {
 		var updatedAt time.Time
 		var totalTokens int
 		var model string
+		role := "default"
+
 		if len(threads) > 0 {
-			s.db.Model(&ChatMessage{}).Where("chat_id = ?", threads[0].ID).Count(&historyLen)
-			updatedAt = threads[0].UpdatedAt
-			totalTokens = threads[0].TotalTokens
-			model = threads[0].ModelName
+			chat := threads[0]
+			s.db.Model(&ChatMessage{}).Where("chat_id = ?", chat.ID).Count(&historyLen)
+			updatedAt = chat.UpdatedAt
+			totalTokens = chat.TotalTokens
+			model = chat.ModelName
+			if chat.RoleID != nil {
+				role = chat.Role.Name
+			}
 		}
 
-		text += fmt.Sprintf("*%s*, history: *%d*, last used: *%s*, usage: *%d*, model: *%s*\n", user.Username, historyLen, updatedAt.Format("2006/01/02 15:04"), totalTokens, model)
+		text += fmt.Sprintf("*%s*, last used: *%s*, history: *%d*, usage: *%d*, model: *%s*, role: *%s*\n", user.Username, updatedAt.Format("2006/01/02 15:04"), historyLen, totalTokens, model, role)
 	}
 
-	return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
+	_ = c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
 func (s *Server) onState(c tele.Context) {

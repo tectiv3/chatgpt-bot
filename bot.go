@@ -553,7 +553,9 @@ func (s *Server) run() {
 		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
 			return nil
 		}
-		return s.onGetUsers(c)
+		go s.onGetUsers(c)
+
+		return nil
 	})
 
 	b.Handle(cmdAddUser, func(c tele.Context) error {
@@ -569,7 +571,9 @@ func (s *Server) run() {
 		s.addUser(name)
 		s.loadUsers()
 
-		return s.onGetUsers(c)
+		go s.onGetUsers(c)
+
+		return nil
 	})
 
 	b.Handle(cmdDelUser, func(c tele.Context) error {
@@ -585,7 +589,9 @@ func (s *Server) run() {
 		s.delUser(name)
 		s.loadUsers()
 
-		return s.onGetUsers(c)
+		go s.onGetUsers(c)
+
+		return nil
 	})
 
 	b.Start()
