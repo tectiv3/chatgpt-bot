@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
-	"gopkg.in/telebot.v3/react"
+
 	"strconv"
 	"strings"
 	"time"
@@ -231,10 +231,10 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	if len(answer) > 4000 {
 		file := tele.FromReader(strings.NewReader(answer))
 		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
-		if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-			Log.Warn(err)
-			return err
-		}
+		// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+		// 	Log.Warn(err)
+		// 	return err
+		// }
 		return nil
 	}
 	if _, err := c.Bot().Edit(sentMessage, answer, "text", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, replyMenu); err != nil {
@@ -245,10 +245,10 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 		}
 	}
 
-	if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-		Log.Warn(err)
-		return err
-	}
+	// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+	// 	Log.Warn(err)
+	// 	return err
+	// }
 
 	return nil
 }
@@ -330,10 +330,10 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 					ParseMode: tele.ModeMarkdown,
 				}, replyMenu)
 
-				if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-					Log.Warn(err)
-					return err
-				}
+				// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+				// 	Log.Warn(err)
+				// 	return err
+				// }
 
 				return nil
 			}
@@ -347,9 +347,9 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			}, replyMenu)
 
 			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
-			if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-				Log.Warn(err)
-			}
+			// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
+			// 	Log.Warn(err)
+			// }
 			chat.mutex.Lock()
 			chat.TotalTokens += tokens
 			chat.mutex.Unlock()

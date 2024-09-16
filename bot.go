@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tele "gopkg.in/telebot.v3"
-	"gopkg.in/telebot.v3/react"
 )
 
 const (
@@ -81,8 +80,8 @@ func (s *Server) run() {
 				"edited_message",
 				"inline_query",
 				"callback_query",
-				"message_reaction",
-				"message_reaction_count",
+				// "message_reaction",
+				// "message_reaction_count",
 			}},
 	})
 	if err != nil {
@@ -488,9 +487,9 @@ func (s *Server) run() {
 
 		// not handling  user input through stepper/state machine
 		if chat.User.State == nil {
-			if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
-				Log.Warn(e)
-			}
+			// if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
+			// 	Log.Warn(e)
+			// }
 
 			go s.onText(c)
 		} else {
@@ -532,7 +531,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		go s.onDocument(c)
 
-		b.React(c.Recipient(), c.Message(), react.React(react.Eyes))
+		// b.React(c.Recipient(), c.Message(), react.React(react.Eyes))
 
 		return c.Send(chat.t("Processing document. Please wait..."))
 	})
