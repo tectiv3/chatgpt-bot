@@ -59,7 +59,7 @@ var (
 	btnDelete  = tele.Btn{Text: "Delete", Unique: "btnDelete", Data: "delete"}
 	btnCancel  = tele.Btn{Text: "Cancel", Unique: "btnRole", Data: "cancel"}
 
-	btnReset = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
+	btnReset = tele.Btn{Text: "New Conversation", Unique: "btnreset", Data: "r"}
 	btnEmpty = tele.Btn{Text: "", Data: "no_data"}
 )
 
