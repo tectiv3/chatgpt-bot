@@ -194,8 +194,6 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 
 	chat.removeMenu(c)
 
-	sentMessage := chat.getSentMessage(c)
-
 	response, err := s.ai.CreateChatCompletion(model, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
@@ -248,13 +246,7 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 
 		return nil
 	}
-	if _, err := c.Bot().Edit(sentMessage, answer, "text", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, replyMenu); err != nil {
-		Log.Warn(err)
-		if _, err := c.Bot().Edit(sentMessage, answer, replyMenu); err != nil {
-			Log.Warn(err)
-			_ = c.Send(answer, "text", &tele.SendOptions{ReplyTo: c.Message()})
-		}
-	}
+	s.updateReply(chat, answer, c)
 
 	// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
 	// 	Log.Warn(err)
@@ -336,11 +328,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 					return err
 				}
 
-				_, _ = c.Bot().Edit(sentMessage, reply+result, "text", &tele.SendOptions{
-					ReplyTo:   c.Message(),
-					ParseMode: tele.ModeMarkdown,
-				}, replyMenu)
-
+				s.updateReply(chat, reply+result, c)
 				// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
 				// 	Log.Warn(err)
 				// 	return err
@@ -352,10 +340,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			if len(result) == 0 {
 				return nil
 			}
-			_, _ = c.Bot().Edit(sentMessage, reply+result, "text", &tele.SendOptions{
-				ReplyTo:   c.Message(),
-				ParseMode: tele.ModeMarkdown,
-			}, replyMenu)
+			s.updateReply(chat, reply+result, c)
 
 			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
 			// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
@@ -407,7 +392,7 @@ func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 	}
 	if _, err := c.Bot().Edit(
 		sentMessage,
-		answer,
+		ConvertMarkdownToTelegramMarkdownV2(answer),
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
 		menu,
@@ -418,8 +403,6 @@ func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 			_ = c.Send(err.Error())
 		}
 	}
-
-	return nil
 }
 
 func (s *Server) saveHistory(chat *Chat) {

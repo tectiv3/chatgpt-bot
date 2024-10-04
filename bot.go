@@ -33,6 +33,7 @@ const (
 	cmdToChinese  = "/cn"
 	cmdRoles      = "/roles"
 	cmdRole       = "/role"
+	cmdQA         = "/qa"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
@@ -212,8 +213,8 @@ func (s *Server) run() {
 
 		if c.Data() == "___default___" {
 			chat.MasterPrompt = masterPrompt
-			chat.RoleID = nil
 			s.db.Save(&chat)
+			s.setChatRole(nil, chat.ChatID)
 
 			return c.Edit(chat.t("Default prompt set"))
 		}
@@ -330,6 +331,7 @@ func (s *Server) run() {
 		roles := chat.User.Roles
 		rows := []tele.Row{}
 		// iterate over roles, add menu button with role name, 3 buttons in a row
+		// TODO: refactor to use native menu.Split(3, btns)
 		row := []tele.Btn{}
 		for _, role := range roles {
 			if len(row) == 3 {
@@ -400,6 +402,19 @@ func (s *Server) run() {
 			status = "enabled"
 		}
 		text := chat.t("Stream is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
+
+		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
+	b.Handle(cmdQA, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		chat.QA = !chat.QA
+		s.db.Save(&chat)
+		status := "disabled"
+		if chat.QA {
+			status = "enabled"
+		}
+		text := chat.t("Questions List is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
 
 		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})

@@ -4,18 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-shiori/go-readability"
-	"github.com/meinside/openai-go"
-	"github.com/tectiv3/chatgpt-bot/i18n"
-	"github.com/tectiv3/chatgpt-bot/tools"
-	"github.com/tectiv3/chatgpt-bot/vectordb"
-	tele "gopkg.in/telebot.v3"
 	"net/http"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-shiori/go-readability"
+	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
+	"github.com/tectiv3/chatgpt-bot/tools"
+	"github.com/tectiv3/chatgpt-bot/vectordb"
+	tele "gopkg.in/telebot.v3"
 )
 
 func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
@@ -28,14 +29,16 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 				AddPropertyWithEnums("type", "string", "The type of image to search for. Default to `photo` if not specified", []string{"photo", "gif"}).
 				AddPropertyWithEnums("region", "string",
 					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
-					[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+					[]string{
+						"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
 						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
 						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
 						"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
 						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
 						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
 						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
+						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt",
+					}).
 				SetRequiredParameters([]string{"query", "type", "region"}),
 		),
 		openai.NewChatCompletionTool(
@@ -43,7 +46,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 			"This is web search. Use this tool to search the internet. Use it when you need access to real time information. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the vector_search tool. Input should be a string. Append sources to the response.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("query", "string", "A query to search the web for").
-				//AddPropertyWithEnums("region", "string",
+				// AddPropertyWithEnums("region", "string",
 				//	"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
 				//	[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
 				//		"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
@@ -176,7 +179,7 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 		case "web_search":
 			type parsed struct {
 				Query string `json:"query"`
-				//Region string `json:"region"`
+				// Region string `json:"region"`
 			}
 			var arguments parsed
 			if err := toolCall.ArgumentsInto(&arguments); err != nil {
@@ -423,7 +426,6 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 	history := []openai.ChatMessage{system, msg}
 
 	response, err := s.ai.CreateChatCompletion(mGTP3, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
-
 	if err != nil {
 		Log.Warn("failed to create chat completion", "error=", err)
 		s.bot.Send(tele.ChatID(chat.ChatID), err.Error(), "text", replyMenu)

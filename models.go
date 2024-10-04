@@ -5,12 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/meinside/openai-go"
-	tele "gopkg.in/telebot.v3"
-	"gorm.io/gorm"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/meinside/openai-go"
+	tele "gopkg.in/telebot.v3"
+	"gorm.io/gorm"
 )
 
 // config struct for loading a configuration file
@@ -77,6 +78,7 @@ type Chat struct {
 	ModelName       string
 	MasterPrompt    string
 	Stream          bool
+	QA              bool
 	Voice           bool
 	ConversationAge int64
 	TotalTokens     int `json:"total_tokens"`
@@ -113,6 +115,7 @@ func (tc ToolCalls) Value() (driver.Value, error) {
 	if tc == nil {
 		return nil, nil
 	}
+
 	return json.Marshal(tc)
 }
 

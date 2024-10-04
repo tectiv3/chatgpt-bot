@@ -1,13 +1,14 @@
 package main
 
 import (
-	"github.com/meinside/openai-go"
-	"github.com/tectiv3/chatgpt-bot/i18n"
-	tele "gopkg.in/telebot.v3"
 	"io"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
+	tele "gopkg.in/telebot.v3"
 )
 
 func (c *Chat) getSentMessage(context tele.Context) *tele.Message {
@@ -35,7 +36,7 @@ func (c *Chat) addToolResultToDialog(id, content string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	msg := openai.NewChatToolMessage(id, content)
-	//log.Printf("Adding tool message to history: %v\n", msg)
+	// log.Printf("Adding tool message to history: %v\n", msg)
 	c.History = append(c.History,
 		ChatMessage{
 			Role:       msg.Role,
@@ -63,7 +64,7 @@ func (c *Chat) addImageToDialog(text, path string) {
 func (c *Chat) addMessageToDialog(msg openai.ChatMessage) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	//log.Printf("Adding message to history: %v\n", msg)
+	// log.Printf("Adding message to history: %v\n", msg)
 	toolCalls := make([]ToolCall, 0)
 	for _, tc := range msg.ToolCalls {
 		toolCalls = append(toolCalls, ToolCall{
@@ -152,7 +153,7 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 		history = append(history, message)
 	}
 
-	//Log.Infof("Dialog history: %v", history)
+	// Log.Infof("Dialog history: %v", history)
 
 	return history
 }
@@ -168,5 +169,4 @@ func (c *Chat) removeMenu(context tele.Context) {
 		c.MessageID = nil
 	}
 	c.mutex.Unlock()
-
 }
