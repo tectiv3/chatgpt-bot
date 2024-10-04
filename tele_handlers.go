@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	tele "gopkg.in/telebot.v3"
 	"io"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
+
+	tele "gopkg.in/telebot.v3"
 )
 
 func (s *Server) onDocument(c tele.Context) {
@@ -25,7 +26,11 @@ func (s *Server) onDocument(c tele.Context) {
 
 	if c.Message().Document.MIME != "text/plain" {
 		chat := s.getChat(c.Chat(), c.Sender())
-		_ = c.Send(chat.t("Please provide a text file"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		_ = c.Send(
+			chat.t("Please provide a text file"),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
 		return
 	}
 	var reader io.ReadCloser
@@ -93,7 +98,8 @@ func (s *Server) onVoice(c tele.Context) {
 		}
 	}()
 
-	Log.WithField("user", c.Sender().Username).Info("Got a voice, filesize=", c.Message().Voice.FileSize)
+	Log.WithField("user", c.Sender().Username).
+		Info("Got a voice, filesize=", c.Message().Voice.FileSize)
 
 	s.handleVoice(c)
 }
@@ -105,7 +111,8 @@ func (s *Server) onPhoto(c tele.Context) {
 		}
 	}()
 
-	Log.WithField("user", c.Sender().Username).Info("Got a photo, filesize=", c.Message().Photo.FileSize)
+	Log.WithField("user", c.Sender().Username).
+		Info("Got a photo, filesize=", c.Message().Photo.FileSize)
 
 	if c.Message().Photo.FileSize == 0 {
 		return
@@ -123,7 +130,11 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 
 	query := c.Message().Text
 	if len(query) < 1 {
-		_ = c.Send("Please provide a longer prompt", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		_ = c.Send(
+			"Please provide a longer prompt",
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
 
 		return
 	}
@@ -154,17 +165,24 @@ func (s *Server) onGetUsers(c tele.Context) {
 		role := "default"
 
 		if len(threads) > 0 {
-			chat := threads[0]
-			s.db.Model(&ChatMessage{}).Where("chat_id = ?", chat.ID).Count(&historyLen)
-			updatedAt = chat.UpdatedAt
-			totalTokens = chat.TotalTokens
-			model = chat.ModelName
-			if chat.RoleID != nil {
-				role = chat.Role.Name
+			s.db.Model(&ChatMessage{}).Where("chat_id = ?", threads[0].ID).Count(&historyLen)
+			updatedAt = threads[0].UpdatedAt
+			totalTokens = threads[0].TotalTokens
+			model = threads[0].ModelName
+			if threads[0].RoleID != nil {
+				role = threads[0].Role.Name
 			}
 		}
 
-		text += fmt.Sprintf("*%s*, last used: *%s*, history: *%d*, usage: *%d*, model: *%s*, role: *%s*\n", user.Username, updatedAt.Format("2006/01/02 15:04"), historyLen, totalTokens, model, role)
+		text += fmt.Sprintf(
+			"*%s*, last used: *%s*, history: *%d*, usage: *%d*, model: *%s*, role: *%s*\n",
+			user.Username,
+			updatedAt.Format("2006/01/02 15:04"),
+			historyLen,
+			totalTokens,
+			model,
+			role,
+		)
 	}
 
 	_ = c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})

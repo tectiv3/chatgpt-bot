@@ -5,6 +5,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	stdlog "log"
+	"os"
+	"path"
+	"runtime"
+	"strings"
+	"time"
+
 	"github.com/joho/godotenv"
 	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
@@ -13,12 +20,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	stdlog "log"
-	"os"
-	"path"
-	"runtime"
-	"strings"
-	"time"
 )
 
 var (
@@ -74,7 +75,6 @@ func main() {
 		)
 
 		db, err := gorm.Open(sqlite.Open("bot.db"), &gorm.Config{Logger: newLogger})
-
 		if err != nil {
 			panic("failed to connect database")
 		}

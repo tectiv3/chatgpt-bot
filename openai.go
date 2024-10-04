@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/meinside/openai-go"
-	tele "gopkg.in/telebot.v3"
-
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/meinside/openai-go"
+	tele "gopkg.in/telebot.v3"
 )
 
 // generate a user-agent value
@@ -34,7 +34,6 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 		openai.ChatCompletionOptions{}.
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature))
-
 	if err != nil {
 		Log.WithField("user", c.Sender().Username).Error(err)
 		return err.Error(), err
@@ -79,7 +78,6 @@ func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error)
 		history,
 		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(0.8),
 	)
-
 	if err != nil {
 		Log.WithField("user", c.Sender().Username).Error(err)
 		return err.Error(), err
@@ -111,7 +109,9 @@ func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error)
 
 // summarize summarizes the chat history
 func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
-	msg := openai.NewChatUserMessage("Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.")
+	msg := openai.NewChatUserMessage(
+		"Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.",
+	)
 	system := openai.NewChatSystemMessage("Be as brief as possible")
 
 	history := []openai.ChatMessage{system}
@@ -119,15 +119,21 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 		if h.Role == openai.ChatMessageRoleTool {
 			continue
 		}
-		history = append(history, openai.ChatMessage{Role: h.Role, Content: []openai.ChatMessageContent{{
-			Type: "text", Text: h.Content,
-		}}})
+		history = append(
+			history,
+			openai.ChatMessage{Role: h.Role, Content: []openai.ChatMessageContent{{
+				Type: "text", Text: h.Content,
+			}}},
+		)
 	}
 	history = append(history, msg)
 	Log.Info("Chat history len: ", len(history))
 
-	response, err := s.ai.CreateChatCompletion(mGTP3, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
-
+	response, err := s.ai.CreateChatCompletion(
+		mGTP3,
+		history,
+		openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5),
+	)
 	if err != nil {
 		Log.Error(err)
 		return nil, err
@@ -181,8 +187,8 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	s.ai.APIKey = s.conf.OpenAIAPIKey
 	options.SetTools(s.getFunctionTools())
 
-	//s.ai.Verbose = s.conf.Verbose
-	//options.SetMaxTokens(3000)
+	// s.ai.Verbose = s.conf.Verbose
+	// options.SetMaxTokens(3000)
 	history := chat.getDialog(question)
 	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Answer")
 
@@ -194,7 +200,6 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 		options.
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature))
-
 	if err != nil {
 		Log.WithField("user", c.Sender().Username).Error(err)
 		return err
@@ -222,7 +227,9 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 		s.saveHistory(chat)
 	}
 
-	Log.WithField("user", c.Sender().Username).WithField("length", len(answer)).Info("got an answer")
+	Log.WithField("user", c.Sender().Username).
+		WithField("length", len(answer)).
+		Info("got an answer")
 
 	if len(answer) == 0 {
 		return nil
@@ -230,11 +237,15 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 
 	if len(answer) > 4000 {
 		file := tele.FromReader(strings.NewReader(answer))
-		_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"}, replyMenu)
+		_ = c.Send(
+			&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"},
+			replyMenu,
+		)
 		// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
 		// 	Log.Warn(err)
 		// 	return err
 		// }
+
 		return nil
 	}
 	if _, err := c.Bot().Edit(sentMessage, answer, "text", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, replyMenu); err != nil {
@@ -272,7 +283,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 
 	model := s.getModel(chat.ModelName)
 	s.ai.APIKey = s.conf.OpenAIAPIKey
-	//s.ai.Verbose = s.conf.Verbose
+	// s.ai.Verbose = s.conf.Verbose
 	if _, err := s.ai.CreateChatCompletion(model, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getFunctionTools()).
@@ -364,7 +375,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 }
 
 func (s *Server) saveHistory(chat *Chat) {
-	//Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saving chat history")
+	// Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saving chat history")
 
 	// iterate over history
 	// drop messages that are older than chat.ConversationAge days
@@ -383,13 +394,14 @@ func (s *Server) saveHistory(chat *Chat) {
 		}
 	}
 	chat.History = history
-	//Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saved chat history")
+	// Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saved chat history")
 	if len(chat.History) < 100 {
 		s.db.Save(&chat)
 		return
 	}
 
-	Log.WithField("user", chat.User.Username).Infof("Chat history for chat ID %d is too long. Summarising...", chat.ID)
+	Log.WithField("user", chat.User.Username).
+		Infof("Chat history for chat ID %d is too long. Summarising...", chat.ID)
 	response, err := s.summarize(chat.History)
 	if err != nil {
 		Log.Warn(err)
@@ -401,7 +413,8 @@ func (s *Server) saveHistory(chat *Chat) {
 		Log.Info(summary)
 	}
 	maxID := chat.History[len(chat.History)-3].ID
-	Log.WithField("user", chat.User.Username).Infof("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
+	Log.WithField("user", chat.User.Username).
+		Infof("Deleting chat history for chat ID %d up to message ID %d", chat.ID, maxID)
 	s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 
 	chat.History = []ChatMessage{{
@@ -411,7 +424,8 @@ func (s *Server) saveHistory(chat *Chat) {
 		CreatedAt: time.Now(),
 	}}
 
-	Log.WithField("user", chat.User.Username).Info("Chat history length after summarising: ", len(chat.History))
+	Log.WithField("user", chat.User.Username).
+		Info("Chat history length after summarising: ", len(chat.History))
 	chat.TotalTokens += response.Usage.TotalTokens
 
 	s.db.Save(&chat)
