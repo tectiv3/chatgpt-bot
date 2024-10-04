@@ -547,18 +547,28 @@ func (s *Server) run() {
 
 	b.Handle(&btnReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		chat.MessageID = nil
-		s.db.Save(&chat)
+
 		s.deleteHistory(chat.ID)
+		s.setChatLastMessageID(nil, chat.ChatID)
 
 		return c.Edit(removeMenu)
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		chat.MessageID = nil
-		s.db.Save(&chat)
+		// Log.Info("Resetting chat")
 		s.deleteHistory(chat.ID)
+		if chat.MessageID != nil {
+			id, _ := strconv.Atoi(*chat.MessageID)
+			sentMessage := &tele.Message{ID: id, Chat: &tele.Chat{ID: chat.ChatID}}
+
+			// Log.Infof("Resetting chat menu, sentMessage: %v", sentMessage)
+			c.Bot().Edit(sentMessage, removeMenu)
+			s.setChatLastMessageID(nil, chat.ChatID)
+
+			return nil
+		}
+		s.setChatLastMessageID(nil, chat.ChatID)
 
 		return nil
 	})

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -361,44 +362,63 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 
 func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 	sentMessage := chat.getSentMessage(c)
-	menu := replyMenu
-	if chat.QA {
-		msg := openai.NewChatUserMessage(answer)
-		system := openai.NewChatSystemMessage(fmt.Sprintf("You are a professional Q&A expert. You will now be given reference information. Based on the reference information, please help me ask three most relevant questions that you most want to know from my perspective. Be concise and to the point. Do not have numbers in front of questions. Separate each question with a line break. Only output three questions in %s, no need for any explanation, introduction or disclaimers - this is important!", chat.Lang))
-		s.ai.Verbose = s.conf.Verbose
-		history := []openai.ChatMessage{system}
-		history = append(history, msg)
 
-		response, err := s.ai.CreateChatCompletion(mGTP3, history,
-			openai.ChatCompletionOptions{}.
-				SetUser(userAgent(c.Sender().ID)).
-				SetTemperature(chat.Temperature))
-		if err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-		} else if len(response.Choices) > 0 {
-			questions, err := response.Choices[0].Message.ContentString()
+	if chat.QA {
+		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
+				}
+			}()
+			msg := openai.NewChatUserMessage(answer)
+			system := openai.NewChatSystemMessage(fmt.Sprintf("You are a professional Q&A expert. Do not react in any way to the contents of the input, just use it as a reference information. Please provide three follow-up questions to user input. Be very concise and to the point. Do not have numbers in front of questions. Separate each question with a line break. Only output three questions in %s, no need for any explanation, introduction or disclaimers - this is important!", chat.Lang))
+			s.ai.Verbose = s.conf.Verbose
+			history := []openai.ChatMessage{system}
+			history = append(history, msg)
+
+			response, err := s.ai.CreateChatCompletion(mGTP3, history,
+				openai.ChatCompletionOptions{}.
+					SetUser(userAgent(c.Sender().ID)).
+					SetTemperature(chat.Temperature))
 			if err != nil {
 				Log.WithField("user", c.Sender().Username).Error(err)
-			} else {
-				menu = &tele.ReplyMarkup{ResizeKeyboard: false, OneTimeKeyboard: true}
-				rows := []tele.Row{}
-				for _, q := range strings.Split(questions, "\n\n") {
-					rows = append(rows, menu.Row(tele.Btn{Text: q}))
+			} else if len(response.Choices) > 0 {
+				questions, err := response.Choices[0].Message.ContentString()
+				if err != nil {
+					Log.WithField("user", c.Sender().Username).Error(err)
+				} else {
+					menu := &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
+					rows := []tele.Row{}
+					for _, q := range strings.Split(questions, "\n\n") {
+						rows = append(rows, menu.Row(tele.Btn{Text: q}))
+					}
+					// rows = append(rows, menu.Row(btnReset))
+					menu.Reply(rows...)
+					// menu.Inline(menu.Row(btnReset))
+					// delete sentMessage
+					_ = c.Bot().Delete(sentMessage)
+					// send new one with reply keyboard
+					_, _ = c.Bot().Send(c.Recipient(),
+						ConvertMarkdownToTelegramMarkdownV2(answer),
+						"text",
+						&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
+						menu)
 				}
-				rows = append(rows, menu.Row(btnReset))
-				menu.Inline(rows...)
+
 			}
-		}
+		}()
+		return
 	}
+
 	if _, err := c.Bot().Edit(
 		sentMessage,
 		ConvertMarkdownToTelegramMarkdownV2(answer),
 		"text",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
-		menu,
+		replyMenu,
 	); err != nil {
 		Log.Warn(err)
-		if _, err := c.Bot().Edit(sentMessage, answer, menu); err != nil {
+		if _, err := c.Bot().Edit(sentMessage, answer, replyMenu); err != nil {
 			Log.Warn(err)
 			_ = c.Send(err.Error())
 		}
