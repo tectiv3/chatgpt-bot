@@ -438,7 +438,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 	if _, err := s.bot.Send(tele.ChatID(chat.ChatID),
 		str,
 		"text",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+		&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
 		replyMenu,
 	); err != nil {
 		Log.Error("Sending", "error=", err)

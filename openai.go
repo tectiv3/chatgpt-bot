@@ -154,7 +154,7 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 		text = fmt.Sprintf(chat.t("_Transcript:_\n%s\n\n_Answer:_ \n\n"), message)
 		sentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdown,
+			ParseMode: tele.ModeMarkdownV2,
 		})
 		chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
 		c.Set("reply", *sentMessage)
@@ -368,6 +368,54 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			s.saveHistory(chat)
 
 			return nil
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
+	sentMessage := chat.getSentMessage(c)
+	menu := replyMenu
+	if chat.QA {
+		msg := openai.NewChatUserMessage(answer)
+		system := openai.NewChatSystemMessage(fmt.Sprintf("You are a professional Q&A expert. You will now be given reference information. Based on the reference information, please help me ask three most relevant questions that you most want to know from my perspective. Be concise and to the point. Do not have numbers in front of questions. Separate each question with a line break. Only output three questions in %s, no need for any explanation, introduction or disclaimers - this is important!", chat.Lang))
+		s.ai.Verbose = s.conf.Verbose
+		history := []openai.ChatMessage{system}
+		history = append(history, msg)
+
+		response, err := s.ai.CreateChatCompletion(mGTP3, history,
+			openai.ChatCompletionOptions{}.
+				SetUser(userAgent(c.Sender().ID)).
+				SetTemperature(chat.Temperature))
+		if err != nil {
+			Log.WithField("user", c.Sender().Username).Error(err)
+		} else if len(response.Choices) > 0 {
+			questions, err := response.Choices[0].Message.ContentString()
+			if err != nil {
+				Log.WithField("user", c.Sender().Username).Error(err)
+			} else {
+				menu = &tele.ReplyMarkup{ResizeKeyboard: false, OneTimeKeyboard: true}
+				rows := []tele.Row{}
+				for _, q := range strings.Split(questions, "\n\n") {
+					rows = append(rows, menu.Row(tele.Btn{Text: q}))
+				}
+				rows = append(rows, menu.Row(btnReset))
+				menu.Inline(rows...)
+			}
+		}
+	}
+	if _, err := c.Bot().Edit(
+		sentMessage,
+		answer,
+		"text",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
+		menu,
+	); err != nil {
+		Log.Warn(err)
+		if _, err := c.Bot().Edit(sentMessage, answer, menu); err != nil {
+			Log.Warn(err)
+			_ = c.Send(err.Error())
 		}
 	}
 
