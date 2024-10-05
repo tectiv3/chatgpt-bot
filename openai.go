@@ -150,13 +150,18 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 	chat := s.getChat(c.Chat(), c.Sender())
 	text := "..."
 	sentMessage := c.Message()
+	var err error
 	// reply is a flag to indicate if we need to reply to another message, otherwise it is a voice transcription
 	if !reply {
-		text = fmt.Sprintf(chat.t("_Transcript:_\n%s\n\n_Answer:_ \n\n"), message)
-		sentMessage, _ = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
+		text = fmt.Sprintf(chat.t("_Transcript:_\n\n%s\n\n_Answer:_ \n\n"), message)
+		sentMessage, err = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
 			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdownV2,
+			ParseMode: tele.ModeMarkdown,
 		})
+		if err != nil {
+			Log.WithField("user", c.Sender().Username).Error(err)
+			sentMessage, _ = c.Bot().Send(c.Recipient(), err.Error())
+		}
 		chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
 		c.Set("reply", *sentMessage)
 	}

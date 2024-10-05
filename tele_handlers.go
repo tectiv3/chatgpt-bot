@@ -185,7 +185,7 @@ func (s *Server) onGetUsers(c tele.Context) {
 		)
 	}
 
-	_ = c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdownV2})
+	_ = c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
 func (s *Server) onState(c tele.Context) {
