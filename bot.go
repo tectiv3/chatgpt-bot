@@ -220,7 +220,7 @@ func (s *Server) run() {
 		}
 
 		if c.Data() != "create" {
-			roleID := as_uint(c.Data())
+			roleID := asUint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
@@ -259,7 +259,7 @@ func (s *Server) run() {
 		user := chat.User
 
 		if c.Data() != "update" {
-			roleID := as_uint(c.Data())
+			roleID := asUint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
 				return c.Edit(chat.t("Role not found"))
@@ -310,7 +310,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 
 		if c.Data() != "delete" {
-			roleID := as_uint(c.Data())
+			roleID := asUint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
