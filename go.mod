@@ -1,8 +1,6 @@
 module github.com/tectiv3/chatgpt-bot
 
-go 1.22.5
-
-toolchain go1.22.6
+go 1.23.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.9.2
@@ -30,10 +28,12 @@ require (
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
+	github.com/imacks/aws-sigv4 v0.1.1 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
+	github.com/tectiv3/awsnova-go v0.0.0-20250112121330-0810b49b9250 // indirect
 	golang.org/x/sys v0.24.0 // indirect
 	golang.org/x/term v0.23.0 // indirect
 	golang.org/x/text v0.17.0 // indirect

@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
+	"github.com/tectiv3/awsnova-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"golang.org/x/crypto/ssh/terminal"
 	"gorm.io/driver/sqlite"
@@ -98,6 +99,10 @@ func main() {
 			conf: conf,
 			ai:   openai.NewClient(apiKey, orgID),
 			db:   db,
+			nova: awsnova.NewClient(conf.AWSRegion, conf.AWSModelID, awsnova.AWSCredentials{
+				AccessKeyID:     conf.AWSAccessKeyID,
+				SecretAccessKey: conf.AWSSecretAccessKey,
+			}),
 		}
 		l = i18n.New("ru", "en")
 

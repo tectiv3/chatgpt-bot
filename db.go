@@ -113,6 +113,8 @@ func (s *Server) getModel(modelName string) string {
 		model = s.conf.OllamaModel
 	} else if model == mGroq && len(s.conf.GroqAPIKey) > 0 {
 		model = s.conf.GroqModel
+	} else if model == mNova && len(s.conf.AWSModelID) > 0 {
+		model = s.conf.AWSModelID
 	}
 
 	return model

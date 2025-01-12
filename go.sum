@@ -265,6 +265,8 @@ github.com/hashicorp/serf v0.9.6/go.mod h1:TXZNMjZQijwlDvp+r0b63xZ45H7JmCmgg4gpT
 github.com/hashicorp/serf v0.9.7/go.mod h1:TXZNMjZQijwlDvp+r0b63xZ45H7JmCmgg4gpTwn9UV4=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
+github.com/imacks/aws-sigv4 v0.1.1 h1:fxc278QpG1myNoi2LvzR5n0lBm+7ZLu5QVxjELPkzxI=
+github.com/imacks/aws-sigv4 v0.1.1/go.mod h1:Acmjho4qkq/3QQHKbYNfbkpWGuntIu4aLVPyw4o6Nf8=
 github.com/jinzhu/inflection v1.0.0 h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD/E=
 github.com/jinzhu/inflection v1.0.0/go.mod h1:h+uFLlag+Qp1Va5pdKtLDYj+kHp5pxUVkryuEj+Srlc=
 github.com/jinzhu/now v1.1.5 h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
@@ -397,6 +399,8 @@ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/subosito/gotenv v1.4.1/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
+github.com/tectiv3/awsnova-go v0.0.0-20250112121330-0810b49b9250 h1:MrtglWXdwna2SkZqvKCBVVMoF3+VZsLGEWgoSmHK7/E=
+github.com/tectiv3/awsnova-go v0.0.0-20250112121330-0810b49b9250/go.mod h1:uHQ4ArgV2YTUGdVjrg7QtbN5G9poWcGr8xcs0qgSCto=
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794 h1:X1dBW7XXk7ta3uH4bsyWWkuvev0bj2fk+pMkV+jRobQ=
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794/go.mod h1:L1Df1Q+hQKQpQZnSzNo+qwsmdVMjF7HGpersx/21GP8=
 github.com/tectiv3/openai-go v0.4.8-0.20240413013544-cb9b1058c0f9 h1:EYJsh67MseuQ57iHvOpLOptAHiQnX+hSHyDPjsp1qfU=

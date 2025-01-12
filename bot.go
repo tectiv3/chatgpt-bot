@@ -42,6 +42,7 @@ const (
 	mOllama       = "ollama"
 	mGroq         = "groq"
 	mGTP3         = "gpt-4o-mini"
+	mNova         = "nova"
 	openAILatest  = "openAILatest"
 )
 
@@ -51,6 +52,7 @@ var (
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
 	btn3       = tele.Btn{Text: "GPT4o-mini", Unique: "btnModel", Data: mGTP3}
 	btn4       = tele.Btn{Text: "GPT4o", Unique: "btnModel", Data: openAILatest}
+	btn5       = tele.Btn{Text: "Nova Pro", Unique: "btnModel", Data: mNova}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -120,7 +122,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		model := c.Message().Payload
 		if model == "" {
-			menu.Inline(menu.Row(btn3, btn4))
+			menu.Inline(menu.Row(btn3, btn4, btn5))
 
 			return c.Send(chat.t("Select model"), menu)
 		}

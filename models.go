@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/awsnova-go"
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
 )
@@ -30,6 +31,11 @@ type config struct {
 	GroqModel            string `json:"groq_model"`
 	GroqAPIKey           string `json:"groq_api_key"`
 
+	AWSAccessKeyID     string `json:"aws_access_key_id"`
+	AWSSecretAccessKey string `json:"aws_secret_access_key"`
+	AWSModelID         string `json:"aws_model_id"`
+	AWSRegion          string `json:"aws_region"`
+
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
@@ -41,6 +47,7 @@ type Server struct {
 	conf  config
 	users []string
 	ai    *openai.Client
+	nova  *awsnova.Client
 	bot   *tele.Bot
 	db    *gorm.DB
 }
