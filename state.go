@@ -4,7 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
-	// tele "gopkg.in/telebot.v3"
+
 	"strconv"
 )
 
@@ -58,7 +58,7 @@ func findEmptyStep(step *Step) *Step {
 	return step
 }
 
-func as_uint(s string) uint {
+func asUint(s string) uint {
 	i, _ := strconv.Atoi(s)
 
 	return uint(i)

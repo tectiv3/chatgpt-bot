@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"github.com/meinside/openai-go"
-	"github.com/tectiv3/chatgpt-bot/opus"
-	"github.com/tectiv3/go-lame"
-	tele "gopkg.in/telebot.v3"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/meinside/openai-go"
+	"github.com/tectiv3/chatgpt-bot/opus"
+	"github.com/tectiv3/go-lame"
+	tele "gopkg.in/telebot.v3"
 )
 
 func convertToWav(r io.Reader) ([]byte, error) {

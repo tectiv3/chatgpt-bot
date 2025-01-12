@@ -1,13 +1,15 @@
 package main
 
 import (
-	"github.com/meinside/openai-go"
-	"github.com/tectiv3/chatgpt-bot/i18n"
-	tele "gopkg.in/telebot.v3"
 	"io"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/meinside/openai-go"
+	"github.com/tectiv3/awsnova-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
+	tele "gopkg.in/telebot.v3"
 )
 
 func (c *Chat) getSentMessage(context tele.Context) *tele.Message {
@@ -35,7 +37,7 @@ func (c *Chat) addToolResultToDialog(id, content string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	msg := openai.NewChatToolMessage(id, content)
-	//log.Printf("Adding tool message to history: %v\n", msg)
+	// log.Printf("Adding tool message to history: %v\n", msg)
 	c.History = append(c.History,
 		ChatMessage{
 			Role:       msg.Role,
@@ -63,7 +65,7 @@ func (c *Chat) addImageToDialog(text, path string) {
 func (c *Chat) addMessageToDialog(msg openai.ChatMessage) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	//log.Printf("Adding message to history: %v\n", msg)
+	// log.Printf("Adding message to history: %v\n", msg)
 	toolCalls := make([]ToolCall, 0)
 	for _, tc := range msg.ToolCalls {
 		toolCalls = append(toolCalls, ToolCall{
@@ -152,7 +154,71 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 		history = append(history, message)
 	}
 
-	//Log.Infof("Dialog history: %v", history)
+	// Log.Infof("Dialog history: %v", history)
+
+	return history
+}
+
+func (c *Chat) getNovaDialog(request *string) []awsnova.Message {
+	c.History = append(c.History, ChatMessage{
+		Role:      "user",
+		Content:   request,
+		ChatID:    c.ChatID,
+		CreatedAt: time.Now(),
+	})
+
+	history := []awsnova.Message{}
+	for _, h := range c.History {
+		if h.CreatedAt.Before(
+			time.Now().AddDate(0, 0, -int(c.ConversationAge)),
+		) {
+			continue
+		}
+
+		var message awsnova.Message
+
+		if h.ImagePath != nil {
+			reader, err := os.Open(*h.ImagePath)
+			if err != nil {
+				Log.Warn("Error opening image file", "error=", err)
+				continue
+			}
+			defer reader.Close()
+
+			image, err := io.ReadAll(reader)
+			if err != nil {
+				Log.Warn("Error reading file content", "error=", err)
+				continue
+			}
+			content := []awsnova.Content{{
+				Text: h.Content,
+				Image: &awsnova.Image{Format: "png", Source: struct {
+					Bytes string `json:"bytes"`
+				}{Bytes: toBase64(image)}},
+			}}
+			message = awsnova.Message{Role: string(h.Role), Content: content}
+		} else {
+			message = awsnova.Message{Role: string(h.Role), Content: []awsnova.Content{{
+				Text: h.Content,
+			}}}
+		}
+		// if h.Role == "assistant" && h.ToolCalls != nil {
+		// 	message.ToolCalls = make([]openai.ToolCall, 0)
+		// 	for _, tc := range h.ToolCalls {
+		// 		message.ToolCalls = append(message.ToolCalls, openai.ToolCall{
+		// 			ID:       tc.ID,
+		// 			Type:     tc.Type,
+		// 			Function: tc.Function,
+		// 		})
+		// 	}
+		// }
+		// if h.ToolCallID != nil {
+		// 	message.ToolCallID = h.ToolCallID
+		// }
+		history = append(history, message)
+	}
+
+	// Log.Infof("Dialog history: %v", history)
 
 	return history
 }
@@ -168,5 +234,4 @@ func (c *Chat) removeMenu(context tele.Context) {
 		c.MessageID = nil
 	}
 	c.mutex.Unlock()
-
 }

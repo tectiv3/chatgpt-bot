@@ -5,20 +5,22 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/joho/godotenv"
-	"github.com/meinside/openai-go"
-	log "github.com/sirupsen/logrus"
-	"github.com/tectiv3/chatgpt-bot/i18n"
-	"golang.org/x/crypto/ssh/terminal"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	stdlog "log"
 	"os"
 	"path"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/meinside/openai-go"
+	log "github.com/sirupsen/logrus"
+	"github.com/tectiv3/awsnova-go"
+	"github.com/tectiv3/chatgpt-bot/i18n"
+	"golang.org/x/crypto/ssh/terminal"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var (
@@ -74,7 +76,6 @@ func main() {
 		)
 
 		db, err := gorm.Open(sqlite.Open("bot.db"), &gorm.Config{Logger: newLogger})
-
 		if err != nil {
 			panic("failed to connect database")
 		}
@@ -98,6 +99,10 @@ func main() {
 			conf: conf,
 			ai:   openai.NewClient(apiKey, orgID),
 			db:   db,
+			nova: awsnova.NewClient(conf.AWSRegion, conf.AWSModelID, awsnova.AWSCredentials{
+				AccessKeyID:     conf.AWSAccessKeyID,
+				SecretAccessKey: conf.AWSSecretAccessKey,
+			}),
 		}
 		l = i18n.New("ru", "en")
 

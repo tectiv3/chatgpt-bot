@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/tectiv3/chatgpt-bot/i18n"
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/tectiv3/chatgpt-bot/i18n"
+
 	tele "gopkg.in/telebot.v3"
-	"gopkg.in/telebot.v3/react"
 )
 
 const (
@@ -32,6 +32,8 @@ const (
 	cmdToSpanish  = "/es"
 	cmdToChinese  = "/cn"
 	cmdRoles      = "/roles"
+	cmdRole       = "/role"
+	cmdQA         = "/qa"
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
@@ -40,6 +42,7 @@ const (
 	mOllama       = "ollama"
 	mGroq         = "groq"
 	mGTP3         = "gpt-4o-mini"
+	mNova         = "nova"
 	openAILatest  = "openAILatest"
 )
 
@@ -47,8 +50,9 @@ var (
 	menu       = &tele.ReplyMarkup{ResizeKeyboard: true}
 	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
-	btn3       = tele.Btn{Text: "GPT3", Unique: "btnModel", Data: mGTP3}
-	btn4       = tele.Btn{Text: "GPT4", Unique: "btnModel", Data: openAILatest}
+	btn3       = tele.Btn{Text: "GPT4o-mini", Unique: "btnModel", Data: mGTP3}
+	btn4       = tele.Btn{Text: "GPT4o", Unique: "btnModel", Data: openAILatest}
+	btn5       = tele.Btn{Text: "Nova Pro", Unique: "btnModel", Data: mNova}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -60,7 +64,7 @@ var (
 	btnDelete  = tele.Btn{Text: "Delete", Unique: "btnDelete", Data: "delete"}
 	btnCancel  = tele.Btn{Text: "Cancel", Unique: "btnRole", Data: "cancel"}
 
-	btnReset = tele.Btn{Text: "New Thread", Unique: "btnreset", Data: "r"}
+	btnReset = tele.Btn{Text: "New Conversation", Unique: "btnreset", Data: "r"}
 	btnEmpty = tele.Btn{Text: "", Data: "no_data"}
 )
 
@@ -81,9 +85,10 @@ func (s *Server) run() {
 				"edited_message",
 				"inline_query",
 				"callback_query",
-				"message_reaction",
-				"message_reaction_count",
-			}},
+				// "message_reaction",
+				// "message_reaction_count",
+			},
+		},
 	})
 	if err != nil {
 		Log.Fatal(err)
@@ -97,7 +102,7 @@ func (s *Server) run() {
 	//	return
 	//}
 
-	//b.Use(middleware.Logger())
+	// b.Use(middleware.Logger())
 	s.loadUsers()
 
 	s.Lock()
@@ -106,14 +111,18 @@ func (s *Server) run() {
 	s.Unlock()
 
 	b.Handle(cmdStart, func(c tele.Context) error {
-		return c.Send(l.GetWithLocale(c.Sender().LanguageCode, msgStart), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(
+			l.GetWithLocale(c.Sender().LanguageCode, msgStart),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		model := c.Message().Payload
 		if model == "" {
-			menu.Inline(menu.Row(btn3, btn4))
+			menu.Inline(menu.Row(btn3, btn4, btn5))
 
 			return c.Send(chat.t("Select model"), menu)
 		}
@@ -129,7 +138,34 @@ func (s *Server) run() {
 		menu.Inline(menu.Row(btnT0, btnT2, btnT4, btnT6, btnT8, btnT10))
 		chat := s.getChat(c.Chat(), c.Sender())
 
-		return c.Send(fmt.Sprintf(chat.t("Set temperature from less random (0.0) to more random (1.0).\nCurrent: %0.2f (default: 0.8)"), chat.Temperature), menu)
+		return c.Send(
+			fmt.Sprintf(
+				chat.t(
+					"Set temperature from less random (0.0) to more random (1.0).\nCurrent: %0.2f (default: 0.8)",
+				),
+				chat.Temperature,
+			),
+			menu,
+		)
+	})
+
+	b.Handle(cmdRole, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		name := c.Message().Payload
+		if name == "" {
+			return c.Send(
+				chat.t("Please provide a role name"),
+				"text",
+				&tele.SendOptions{ReplyTo: c.Message()},
+			)
+		}
+		role := s.findRole(chat.UserID, name)
+		if role == nil {
+			return c.Send(chat.t("Role not found"))
+		}
+		s.setChatRole(&role.ID, chat.ChatID)
+
+		return c.Send(chat.t("Role set to {{.role}}", &i18n.Replacements{"role": role.Name}))
 	})
 
 	b.Handle(cmdRoles, func(c tele.Context) error {
@@ -138,16 +174,21 @@ func (s *Server) run() {
 		rows := []tele.Row{}
 		// iterate over roles, add menu button with role name 3 buttons in a row
 		row := []tele.Btn{
-			tele.Btn{Text: chat.t("default"),
+			{
+				Text:   chat.t("default"),
 				Unique: "btnRole",
-				Data:   "___default___"},
+				Data:   "___default___",
+			},
 		}
 		for _, role := range roles {
 			if len(row) == 3 {
 				rows = append(rows, menu.Row(row...))
 				row = []tele.Btn{}
 			}
-			row = append(row, tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))})
+			row = append(
+				row,
+				tele.Btn{Text: role.Name, Unique: "btnRole", Data: strconv.Itoa(int(role.ID))},
+			)
 		}
 		if len(row) != 0 {
 			rows = append(rows, menu.Row(row...))
@@ -174,18 +215,17 @@ func (s *Server) run() {
 
 		if c.Data() == "___default___" {
 			chat.MasterPrompt = masterPrompt
-			chat.RoleID = nil
 			s.db.Save(&chat)
+			s.setChatRole(nil, chat.ChatID)
 
 			return c.Edit(chat.t("Default prompt set"))
 		}
 
 		if c.Data() != "create" {
-			roleID := as_uint(c.Data())
+			roleID := asUint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
-
 			}
 			// s.db.Model(&chat).Update("RoleID", role.ID) // gorm is weird
 			s.setChatRole(&role.ID, chat.ChatID)
@@ -221,7 +261,7 @@ func (s *Server) run() {
 		user := chat.User
 
 		if c.Data() != "update" {
-			roleID := as_uint(c.Data())
+			roleID := asUint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
 				return c.Edit(chat.t("Role not found"))
@@ -256,7 +296,10 @@ func (s *Server) run() {
 				rows = append(rows, menu.Row(row...))
 				row = []tele.Btn{}
 			}
-			row = append(row, tele.Btn{Text: role.Name, Unique: "btnUpdate", Data: strconv.Itoa(int(role.ID))})
+			row = append(
+				row,
+				tele.Btn{Text: role.Name, Unique: "btnUpdate", Data: strconv.Itoa(int(role.ID))},
+			)
 		}
 		rows = append(rows, menu.Row(row...), menu.Row(btnCancel))
 		menu.Inline(rows...)
@@ -269,7 +312,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 
 		if c.Data() != "delete" {
-			roleID := as_uint(c.Data())
+			roleID := asUint(c.Data())
 			role := s.getRole(roleID)
 			if role == nil {
 				return c.Send(chat.t("Role not found"))
@@ -290,13 +333,17 @@ func (s *Server) run() {
 		roles := chat.User.Roles
 		rows := []tele.Row{}
 		// iterate over roles, add menu button with role name, 3 buttons in a row
+		// TODO: refactor to use native menu.Split(3, btns)
 		row := []tele.Btn{}
 		for _, role := range roles {
 			if len(row) == 3 {
 				rows = append(rows, menu.Row(row...))
 				row = []tele.Btn{}
 			}
-			row = append(row, tele.Btn{Text: role.Name, Unique: "btnDelete", Data: strconv.Itoa(int(role.ID))})
+			row = append(
+				row,
+				tele.Btn{Text: role.Name, Unique: "btnDelete", Data: strconv.Itoa(int(role.ID))},
+			)
 		}
 		rows = append(rows, menu.Row(row...), menu.Row(btnCancel))
 		menu.Inline(rows...)
@@ -315,14 +362,22 @@ func (s *Server) run() {
 		chat.ConversationAge = int64(age)
 		s.db.Save(&chat)
 
-		return c.Send(fmt.Sprintf(chat.t("Conversation age set to %d days"), age), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(
+			fmt.Sprintf(chat.t("Conversation age set to %d days"), age),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
 	})
 
 	b.Handle(cmdPrompt, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		query := c.Message().Payload
 		if len(query) < 3 {
-			return c.Send(chat.t("Please provide a longer prompt"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			return c.Send(
+				chat.t("Please provide a longer prompt"),
+				"text",
+				&tele.SendOptions{ReplyTo: c.Message()},
+			)
 		}
 
 		chat.MasterPrompt = query
@@ -353,6 +408,19 @@ func (s *Server) run() {
 		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
+	b.Handle(cmdQA, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+		chat.QA = !chat.QA
+		s.db.Save(&chat)
+		status := "disabled"
+		if chat.QA {
+			status = "enabled"
+		}
+		text := chat.t("Questions List is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
+
+		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
+	})
+
 	b.Handle(cmdVoice, func(c tele.Context) error {
 		go s.pageToSpeech(c, c.Message().Payload)
 
@@ -360,7 +428,6 @@ func (s *Server) run() {
 	})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
-
 		return nil
 	})
 
@@ -379,10 +446,17 @@ func (s *Server) run() {
 			role = chat.Role.Name
 		}
 
-		return c.Send(fmt.Sprintf("Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
-			Version, s.getModel(chat.ModelName), chat.Temperature,
-			prompt, status, chat.ConversationAge, role,
-		),
+		return c.Send(
+			fmt.Sprintf(
+				"Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
+				Version,
+				s.getModel(chat.ModelName),
+				chat.Temperature,
+				prompt,
+				status,
+				chat.ConversationAge,
+				role,
+			),
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
 		)
@@ -440,11 +514,19 @@ func (s *Server) run() {
 	b.Handle(cmdLang, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		if c.Message().Payload == "" {
-			return c.Send("Language code (e.g. ru) is required", "text", &tele.SendOptions{ReplyTo: c.Message()})
+			return c.Send(
+				"Language code (e.g. ru) is required",
+				"text",
+				&tele.SendOptions{ReplyTo: c.Message()},
+			)
 		}
 		chat.Lang = c.Message().Payload
 		s.db.Save(&chat)
-		return c.Send(fmt.Sprintf("Language set to %s", chat.Lang), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(
+			fmt.Sprintf("Language set to %s", chat.Lang),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
 	})
 
 	b.Handle(&btn3, func(c tele.Context) error {
@@ -467,18 +549,28 @@ func (s *Server) run() {
 
 	b.Handle(&btnReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		chat.MessageID = nil
-		s.db.Save(&chat)
+
 		s.deleteHistory(chat.ID)
+		s.setChatLastMessageID(nil, chat.ChatID)
 
 		return c.Edit(removeMenu)
 	})
 
 	b.Handle(cmdReset, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		chat.MessageID = nil
-		s.db.Save(&chat)
+		// Log.Info("Resetting chat")
 		s.deleteHistory(chat.ID)
+		if chat.MessageID != nil {
+			id, _ := strconv.Atoi(*chat.MessageID)
+			sentMessage := &tele.Message{ID: id, Chat: &tele.Chat{ID: chat.ChatID}}
+
+			// Log.Infof("Resetting chat menu, sentMessage: %v", sentMessage)
+			c.Bot().Edit(sentMessage, removeMenu)
+			s.setChatLastMessageID(nil, chat.ChatID)
+
+			return nil
+		}
+		s.setChatLastMessageID(nil, chat.ChatID)
 
 		return nil
 	})
@@ -488,9 +580,9 @@ func (s *Server) run() {
 
 		// not handling  user input through stepper/state machine
 		if chat.User.State == nil {
-			if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
-				Log.Warn(e)
-			}
+			// if e := b.React(c.Sender(), c.Message(), react.React(react.Eyes)); e != nil {
+			// 	Log.Warn(e)
+			// }
 
 			go s.onText(c)
 		} else {
@@ -532,7 +624,7 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		go s.onDocument(c)
 
-		b.React(c.Recipient(), c.Message(), react.React(react.Eyes))
+		// b.React(c.Recipient(), c.Message(), react.React(react.Eyes))
 
 		return c.Send(chat.t("Processing document. Please wait..."))
 	})
@@ -628,7 +720,11 @@ func (s *Server) whitelist() tele.MiddlewareFunc {
 			Usernames: s.users,
 			In:        next,
 			Out: func(c tele.Context) error {
-				return c.Send(fmt.Sprintf("not allowed: %s", c.Sender().Username), "text", &tele.SendOptions{ReplyTo: c.Message()})
+				return c.Send(
+					fmt.Sprintf("not allowed: %s", c.Sender().Username),
+					"text",
+					&tele.SendOptions{ReplyTo: c.Message()},
+				)
 			},
 		})(next)
 	}
