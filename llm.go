@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/awsnova-go"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -148,10 +150,12 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 
 func (s *Server) complete(c tele.Context, message string, reply bool) {
 	chat := s.getChat(c.Chat(), c.Sender())
+
 	text := "..."
 	sentMessage := c.Message()
 	var err error
 	// reply is a flag to indicate if we need to reply to another message, otherwise it is a voice transcription
+	// TODO: refactor me, this is a mess
 	if !reply {
 		text = fmt.Sprintf(chat.t("_Transcript:_\n\n%s\n\n_Answer:_ \n\n"), message)
 		sentMessage, err = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
@@ -171,6 +175,11 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 		msgPtr = nil
 	}
 
+	if chat.ModelName == mNova {
+		s.getNovaAnswer(chat, c, msgPtr)
+		return
+	}
+
 	if chat.Stream {
 		if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
 			Log.WithField("user", c.Sender().Username).Error(err)
@@ -187,9 +196,9 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 
 func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	_ = c.Notify(tele.Typing)
-	options := openai.ChatCompletionOptions{}
 
 	model := s.getModel(chat.ModelName)
+	options := openai.ChatCompletionOptions{}
 	s.ai.APIKey = s.conf.OpenAIAPIKey
 	options.SetTools(s.getFunctionTools())
 
@@ -485,4 +494,96 @@ func (s *Server) saveHistory(chat *Chat) {
 	chat.TotalTokens += response.Usage.TotalTokens
 
 	s.db.Save(&chat)
+}
+
+func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
+	maxTokens := 1000
+	system := chat.MasterPrompt
+	if chat.RoleID != nil {
+		system = chat.Role.Prompt
+	}
+	req := awsnova.Request{
+		Messages: chat.getNovaDialog(question),
+		InferenceConfig: awsnova.InferenceConfig{
+			MaxTokens:   &maxTokens,
+			Temperature: &chat.Temperature,
+		},
+		System: system,
+	}
+
+	chat.removeMenu(c)
+	sentMessage := chat.getSentMessage(c)
+	// Create a context with a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// Invoke the model with response stream
+	ch, err := s.nova.InvokeModelWithResponseStream(ctx, req)
+	if err != nil {
+		Log.WithField("user", c.Sender().Username).Error(err)
+		_, _ = c.Bot().Edit(sentMessage, err.Error())
+		return
+	}
+
+	result := ""
+	_ = c.Notify(tele.Typing)
+	tokens := 0
+
+	for {
+		select {
+		case comp, ok := <-ch:
+			if !ok {
+				// channel closed
+				return
+			}
+			// Log.WithField("user", c.Sender().Username).Info(comp)
+			if comp.Error != "" {
+				Log.WithField("user", c.Sender().Username).Error(comp.Error)
+				_, _ = c.Bot().Edit(sentMessage, comp.Error)
+				return
+			}
+			if comp.Content != "" {
+				result += comp.Content
+				tokens++
+				// every 10 tokens update the message
+				if tokens%10 == 0 {
+					_, _ = c.Bot().Edit(sentMessage, result)
+				}
+			}
+			if comp.Done {
+				continue
+			}
+			if comp.Usage != nil {
+				if len(result) == 0 {
+					result = "No response from model."
+				}
+				s.updateReply(chat, result, c)
+
+				Log.WithField("user", c.Sender().Username).
+					WithField("tokens", tokens).
+					WithFields(map[string]interface{}{
+						"input_tokens":  comp.Usage.InputTokens,
+						"output_tokens": comp.Usage.OutputTokens,
+					}).Info("Nova stream finished")
+
+				chat.mutex.Lock()
+				chat.TotalTokens += comp.Usage.InputTokens + comp.Usage.OutputTokens
+				chat.mutex.Unlock()
+
+				chat.History = append(chat.History,
+					ChatMessage{
+						Role:      "assistant",
+						Content:   &result,
+						ChatID:    chat.ChatID,
+						CreatedAt: time.Now(),
+					})
+				s.saveHistory(chat)
+
+				return
+			}
+		case <-ctx.Done():
+			_, _ = c.Bot().Edit(sentMessage, "Timeout")
+			return
+		}
+	}
 }

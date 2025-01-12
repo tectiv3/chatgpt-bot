@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/awsnova-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	tele "gopkg.in/telebot.v3"
 )
@@ -150,6 +151,70 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 		if h.ToolCallID != nil {
 			message.ToolCallID = h.ToolCallID
 		}
+		history = append(history, message)
+	}
+
+	// Log.Infof("Dialog history: %v", history)
+
+	return history
+}
+
+func (c *Chat) getNovaDialog(request *string) []awsnova.Message {
+	c.History = append(c.History, ChatMessage{
+		Role:      "user",
+		Content:   request,
+		ChatID:    c.ChatID,
+		CreatedAt: time.Now(),
+	})
+
+	history := []awsnova.Message{}
+	for _, h := range c.History {
+		if h.CreatedAt.Before(
+			time.Now().AddDate(0, 0, -int(c.ConversationAge)),
+		) {
+			continue
+		}
+
+		var message awsnova.Message
+
+		if h.ImagePath != nil {
+			reader, err := os.Open(*h.ImagePath)
+			if err != nil {
+				Log.Warn("Error opening image file", "error=", err)
+				continue
+			}
+			defer reader.Close()
+
+			image, err := io.ReadAll(reader)
+			if err != nil {
+				Log.Warn("Error reading file content", "error=", err)
+				continue
+			}
+			content := []awsnova.Content{{
+				Text: h.Content,
+				Image: &awsnova.Image{Format: "png", Source: struct {
+					Bytes string `json:"bytes"`
+				}{Bytes: toBase64(image)}},
+			}}
+			message = awsnova.Message{Role: string(h.Role), Content: content}
+		} else {
+			message = awsnova.Message{Role: string(h.Role), Content: []awsnova.Content{{
+				Text: h.Content,
+			}}}
+		}
+		// if h.Role == "assistant" && h.ToolCalls != nil {
+		// 	message.ToolCalls = make([]openai.ToolCall, 0)
+		// 	for _, tc := range h.ToolCalls {
+		// 		message.ToolCalls = append(message.ToolCalls, openai.ToolCall{
+		// 			ID:       tc.ID,
+		// 			Type:     tc.Type,
+		// 			Function: tc.Function,
+		// 		})
+		// 	}
+		// }
+		// if h.ToolCallID != nil {
+		// 	message.ToolCallID = h.ToolCallID
+		// }
 		history = append(history, message)
 	}
 
