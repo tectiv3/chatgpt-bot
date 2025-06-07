@@ -155,7 +155,7 @@ func (s *Server) handleVoice(c tele.Context) {
 		return
 	}
 	audio := openai.NewFileParamFromBytes(mp3)
-	transcript, err := s.ai.CreateTranscription(audio, "whisper-1", nil)
+	transcript, err := s.openAI.CreateTranscription(audio, "whisper-1", nil)
 	if err != nil {
 		Log.Warn("failed to create transcription", "error=", err)
 		return

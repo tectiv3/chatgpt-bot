@@ -21,6 +21,8 @@ type config struct {
 	TelegramBotToken  string `json:"telegram_bot_token"`
 	TelegramServerURL string `json:"telegram_server_url"`
 
+	Models []AiModel `json:"models"`
+
 	// openai api
 	OpenAIAPIKey         string `json:"openai_api_key"`
 	OpenAIOrganizationID string `json:"openai_org_id"`
@@ -31,10 +33,14 @@ type config struct {
 	GroqModel            string `json:"groq_model"`
 	GroqAPIKey           string `json:"groq_api_key"`
 
+	AnthropicAPIKey  string `json:"anthropic_api_key"`
+	AnthropicEnabled bool   `json:"anthropic_enabled"`
+
 	AWSAccessKeyID     string `json:"aws_access_key_id"`
 	AWSSecretAccessKey string `json:"aws_secret_access_key"`
 	AWSModelID         string `json:"aws_model_id"`
 	AWSRegion          string `json:"aws_region"`
+	AWSEnabled         bool   `json:"aws_enabled"`
 
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
@@ -42,14 +48,21 @@ type config struct {
 	PiperDir             string   `json:"piper_dir"`
 }
 
+type AiModel struct {
+	ModelID  string `json:"model_id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"` // openai, ollama, groq, nova
+}
+
 type Server struct {
 	sync.RWMutex
-	conf  config
-	users []string
-	ai    *openai.Client
-	nova  *awsnova.Client
-	bot   *tele.Bot
-	db    *gorm.DB
+	conf      config
+	users     []string
+	openAI    *openai.Client
+	anthropic *openai.Client
+	nova      *awsnova.Client
+	bot       *tele.Bot
+	db        *gorm.DB
 }
 
 type User struct {

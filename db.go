@@ -32,7 +32,7 @@ func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	}
 
 	// s.db.Find(&chat.History, "chat_id = ?", chat.ID)
-	//log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
+	// log.Printf("History %d, chatid %d\n", len(chat.History), chat.ID)
 
 	return &chat
 }
@@ -105,19 +105,20 @@ func (s *Server) findRole(userID uint, name string) *Role {
 	return &r
 }
 
-func (s *Server) getModel(modelName string) string {
-	model := modelName
-	if model == openAILatest {
-		model = s.conf.OpenAILatestModel
-	} else if model == mOllama && len(s.conf.OllamaURL) > 0 {
-		model = s.conf.OllamaModel
-	} else if model == mGroq && len(s.conf.GroqAPIKey) > 0 {
-		model = s.conf.GroqModel
-	} else if model == mNova && len(s.conf.AWSModelID) > 0 {
-		model = s.conf.AWSModelID
+func (s *Server) getModel(model string) *AiModel {
+	for _, m := range s.conf.Models {
+		if m.Name == model {
+			return &m
+		}
+		if m.ModelID == model {
+			return &m
+		}
+		if model == openAILatest {
+			return &AiModel{s.conf.OpenAILatestModel, "OpenAI Latest", "openai"}
+		}
 	}
 
-	return model
+	return &AiModel{model, model, "openai"}
 }
 
 func (s *Server) getRole(id uint) *Role {

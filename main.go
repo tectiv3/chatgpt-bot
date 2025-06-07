@@ -96,13 +96,16 @@ func main() {
 
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
-			conf: conf,
-			ai:   openai.NewClient(apiKey, orgID),
-			db:   db,
+			conf:   conf,
+			db:     db,
+			openAI: openai.NewClient(apiKey, orgID),
 			nova: awsnova.NewClient(conf.AWSRegion, conf.AWSModelID, awsnova.AWSCredentials{
 				AccessKeyID:     conf.AWSAccessKeyID,
 				SecretAccessKey: conf.AWSSecretAccessKey,
 			}),
+		}
+		if conf.AnthropicEnabled {
+			server.anthropic = openai.NewClient(conf.AnthropicAPIKey, "").SetBaseURL("https://api.anthropic.com")
 		}
 		l = i18n.New("ru", "en")
 

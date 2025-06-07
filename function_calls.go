@@ -106,16 +106,16 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 	}
 
-	availableTools = append(availableTools,
-		openai.NewChatCompletionTool(
-			"generate_image",
-			"Generate an image based on the input text",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("text", "string", "The text to generate an image from").
-				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
-				SetRequiredParameters([]string{"text", "hd"}),
-		),
-	)
+	// availableTools = append(availableTools,
+	// 	openai.NewChatCompletionTool(
+	// 		"generate_image",
+	// 		"Generate an image based on the input text",
+	// 		openai.NewToolFunctionParameters().
+	// 			AddPropertyWithDescription("text", "string", "The text to generate an image from").
+	// 			AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
+	// 			SetRequiredParameters([]string{"text", "hd"}),
+	// 	),
+	// )
 
 	return availableTools
 }
@@ -425,7 +425,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 
 	history := []openai.ChatMessage{system, msg}
 
-	response, err := s.ai.CreateChatCompletion(mGTP3, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+	response, err := s.openAI.CreateChatCompletion(miniModel, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 	if err != nil {
 		Log.Warn("failed to create chat completion", "error=", err)
 		s.bot.Send(tele.ChatID(chat.ChatID), err.Error(), "text", replyMenu)
