@@ -160,12 +160,9 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 }
 
 func (c *Chat) getNovaDialog(request *string) []awsnova.Message {
-	c.History = append(c.History, ChatMessage{
-		Role:      "user",
-		Content:   request,
-		ChatID:    c.ChatID,
-		CreatedAt: time.Now(),
-	})
+	if request != nil {
+		c.addMessageToDialog(openai.NewChatUserMessage(*request))
+	}
 
 	history := []awsnova.Message{}
 	for _, h := range c.History {
@@ -225,6 +222,25 @@ func (c *Chat) getNovaDialog(request *string) []awsnova.Message {
 
 func (c *Chat) t(key string, replacements ...*i18n.Replacements) string {
 	return l.GetWithLocale(c.Lang, key, replacements...)
+}
+
+// Safe methods for updating chat properties
+func (c *Chat) updateTotalTokens(tokens int) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.TotalTokens += tokens
+}
+
+func (c *Chat) setMessageID(id *string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.MessageID = id
+}
+
+func (c *Chat) getMessageID() *string {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.MessageID
 }
 
 func (c *Chat) removeMenu(context tele.Context) {

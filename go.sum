@@ -404,8 +404,8 @@ github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117 h1:NOIsMMmwqlbG
 github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117/go.mod h1:uHQ4ArgV2YTUGdVjrg7QtbN5G9poWcGr8xcs0qgSCto=
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794 h1:X1dBW7XXk7ta3uH4bsyWWkuvev0bj2fk+pMkV+jRobQ=
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794/go.mod h1:L1Df1Q+hQKQpQZnSzNo+qwsmdVMjF7HGpersx/21GP8=
-github.com/tectiv3/openai-go v0.4.8 h1:4pjm+IV6ZcQwCwaQZ7rX72f12rC/728EsoKJ4e/Jmd0=
-github.com/tectiv3/openai-go v0.4.8/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
+github.com/tectiv3/openai-go v0.5.0 h1:dXKECOsGEl0vSuOZQ6VskHRPZjP1Y9jm06qp5Z3cdtE=
+github.com/tectiv3/openai-go v0.5.0/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

@@ -19,6 +19,9 @@ func userAgent(userID int64) string {
 }
 
 func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
+	ctx, cancel := WithTimeout(DefaultTimeout)
+	defer cancel()
+
 	_ = c.Notify(tele.Typing)
 	chat := s.getChat(c.Chat(), c.Sender())
 	msg := openai.NewChatUserMessage(request)
@@ -42,10 +45,8 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	history := []openai.ChatMessage{system}
 	history = append(history, msg)
 
-	response, err := aiClient.CreateChatCompletion(modelID, history,
-		openai.ChatCompletionOptions{}.
-			SetUser(userAgent(c.Sender().ID)).
-			SetTemperature(chat.Temperature))
+	response, err := aiClient.CreateChatCompletionWithContext(ctx, modelID, history,
+		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature))
 	if err != nil {
 		Log.WithField("user", c.Sender().Username).Error(err)
 		return err.Error(), err
@@ -78,6 +79,9 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 }
 
 func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error) {
+	ctx, cancel := WithTimeout(DefaultTimeout)
+	defer cancel()
+
 	_ = c.Notify(tele.Typing)
 	msg := openai.NewChatUserMessage(request)
 	system := openai.NewChatSystemMessage(masterPrompt)
@@ -87,7 +91,7 @@ func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error)
 	history := []openai.ChatMessage{system}
 	history = append(history, msg)
 
-	response, err := aiClient.CreateChatCompletion(
+	response, err := aiClient.CreateChatCompletionWithContext(ctx,
 		s.conf.OpenAILatestModel,
 		history,
 		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(0.8),
@@ -143,7 +147,10 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	history = append(history, msg)
 	Log.Info("Chat history len: ", len(history))
 
-	response, err := s.openAI.CreateChatCompletion(
+	ctx, cancel := WithTimeout(DefaultTimeout)
+	defer cancel()
+
+	response, err := s.openAI.CreateChatCompletionWithContext(ctx,
 		miniModel,
 		history,
 		openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5),
@@ -229,7 +236,10 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 
 	chat.removeMenu(c)
 
-	response, err := aiClient.CreateChatCompletion(modelID, history,
+	ctx, cancel := WithTimeout(LongTimeout)
+	defer cancel()
+
+	response, err := aiClient.CreateChatCompletionWithContext(ctx, modelID, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature))
@@ -253,9 +263,7 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 			Log.WithField("user", c.Sender().Username).Error(err)
 			return err
 		}
-		chat.mutex.Lock()
-		chat.TotalTokens += response.Usage.TotalTokens
-		chat.mutex.Unlock()
+		chat.updateTotalTokens(response.Usage.TotalTokens)
 		chat.addMessageToDialog(openai.NewChatAssistantMessage(answer))
 		s.saveHistory(chat)
 	}
@@ -320,7 +328,10 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	}
 
 	// s.ai.Verbose = s.conf.Verbose
-	if _, err := aiClient.CreateChatCompletion(modelID, history,
+	ctx, cancel := WithTimeout(LongTimeout)
+	defer cancel()
+
+	if _, err := aiClient.CreateChatCompletionWithContext(ctx, modelID, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getFunctionTools()).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
@@ -358,8 +369,8 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 				}
 				tokens++
 			}
-			// every 20 tokens update the message
-			if tokens%20 == 0 {
+			// every 16 tokens update the message
+			if tokens%16 == 0 {
 				_, _ = c.Bot().Edit(sentMessage, result)
 			}
 		} else {
@@ -390,9 +401,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
 			// 	Log.Warn(err)
 			// }
-			chat.mutex.Lock()
-			chat.TotalTokens += tokens
-			chat.mutex.Unlock()
+			chat.updateTotalTokens(tokens)
 			chat.addMessageToDialog(openai.NewChatAssistantMessage(result))
 			s.saveHistory(chat)
 
@@ -419,7 +428,10 @@ func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 			history := []openai.ChatMessage{system}
 			history = append(history, msg)
 
-			response, err := s.openAI.CreateChatCompletion(miniModel, history,
+			ctx, cancel := WithTimeout(DefaultTimeout)
+			defer cancel()
+
+			response, err := s.openAI.CreateChatCompletionWithContext(ctx, miniModel, history,
 				openai.ChatCompletionOptions{}.
 					SetUser(userAgent(c.Sender().ID)).
 					SetTemperature(chat.Temperature))
@@ -576,8 +588,8 @@ func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
 			if comp.Content != "" {
 				result += comp.Content
 				tokens++
-				// every 20 tokens update the message
-				if tokens%20 == 0 {
+				// every 16 tokens update the message
+				if tokens%16 == 0 {
 					_, _ = c.Bot().Edit(sentMessage, result)
 				}
 			}
@@ -597,9 +609,7 @@ func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
 						"output_tokens": comp.Usage.OutputTokens,
 					}).Info("Nova stream finished")
 
-				chat.mutex.Lock()
-				chat.TotalTokens += comp.Usage.InputTokens + comp.Usage.OutputTokens
-				chat.mutex.Unlock()
+				chat.updateTotalTokens(comp.Usage.InputTokens + comp.Usage.OutputTokens)
 
 				chat.History = append(chat.History,
 					ChatMessage{

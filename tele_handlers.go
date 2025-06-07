@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tectiv3/chatgpt-bot/i18n"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -24,6 +25,18 @@ func (s *Server) onDocument(c tele.Context) {
 		WithField("size", c.Message().Document.FileSize).
 		Info("Got a file")
 
+	// Validate file size
+	if err := ValidateFileSize(c.Message().Document.FileSize); err != nil {
+		chat := s.getChat(c.Chat(), c.Sender())
+		_ = c.Send(
+			chat.t("File too large: {{.error}}", &i18n.Replacements{"error": err.Error()}),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
+		return
+	}
+
+	// Validate file type
 	if c.Message().Document.MIME != "text/plain" {
 		chat := s.getChat(c.Chat(), c.Sender())
 		_ = c.Send(
@@ -83,9 +96,26 @@ func (s *Server) onText(c tele.Context) {
 		}
 	}()
 
-	message := c.Message().Payload
+	message := strings.TrimSpace(c.Message().Payload)
 	if len(message) == 0 {
-		message = c.Message().Text
+		message = strings.TrimSpace(c.Message().Text)
+	}
+
+	// Basic validation for message length
+	if len(message) == 0 {
+		chat := s.getChat(c.Chat(), c.Sender())
+		_ = c.Send(chat.t("Please provide a message"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return
+	}
+
+	if len(message) > MaxPromptLength {
+		chat := s.getChat(c.Chat(), c.Sender())
+		_ = c.Send(
+			chat.t("Message too long. Maximum length is {{.max}} characters", &i18n.Replacements{"max": fmt.Sprintf("%d", MaxPromptLength)}),
+			"text",
+			&tele.SendOptions{ReplyTo: c.Message()},
+		)
+		return
 	}
 
 	s.complete(c, message, true)
