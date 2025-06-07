@@ -106,16 +106,16 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 		),
 	}
 
-	availableTools = append(availableTools,
-		openai.NewChatCompletionTool(
-			"generate_image",
-			"Generate an image based on the input text",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("text", "string", "The text to generate an image from").
-				AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
-				SetRequiredParameters([]string{"text", "hd"}),
-		),
-	)
+	// availableTools = append(availableTools,
+	// 	openai.NewChatCompletionTool(
+	// 		"generate_image",
+	// 		"Generate an image based on the input text",
+	// 		openai.NewToolFunctionParameters().
+	// 			AddPropertyWithDescription("text", "string", "The text to generate an image from").
+	// 			AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
+	// 			SetRequiredParameters([]string{"text", "hd"}),
+	// 	),
+	// )
 
 	return availableTools
 }
