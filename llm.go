@@ -29,11 +29,20 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	}
 	system := openai.NewChatSystemMessage(prompt)
 
-	s.ai.Verbose = s.conf.Verbose
+	aiClient := s.openAI
+	model := s.getModel(chat.ModelName)
+	modelID := model.ModelID
+	if model.Provider == pAnthropic {
+		aiClient = s.anthropic
+	} else if model.Provider != pOpenAI {
+		modelID = s.conf.OpenAILatestModel
+	}
+
+	aiClient.Verbose = s.conf.Verbose
 	history := []openai.ChatMessage{system}
 	history = append(history, msg)
 
-	response, err := s.ai.CreateChatCompletion(s.getModel(chat.ModelName), history,
+	response, err := aiClient.CreateChatCompletion(modelID, history,
 		openai.ChatCompletionOptions{}.
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature))
@@ -72,11 +81,13 @@ func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error)
 	_ = c.Notify(tele.Typing)
 	msg := openai.NewChatUserMessage(request)
 	system := openai.NewChatSystemMessage(masterPrompt)
-	s.ai.Verbose = s.conf.Verbose
+
+	aiClient := s.openAI
+	aiClient.Verbose = s.conf.Verbose
 	history := []openai.ChatMessage{system}
 	history = append(history, msg)
 
-	response, err := s.ai.CreateChatCompletion(
+	response, err := aiClient.CreateChatCompletion(
 		s.conf.OpenAILatestModel,
 		history,
 		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(0.8),
@@ -132,8 +143,8 @@ func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, e
 	history = append(history, msg)
 	Log.Info("Chat history len: ", len(history))
 
-	response, err := s.ai.CreateChatCompletion(
-		mGTP3,
+	response, err := s.openAI.CreateChatCompletion(
+		miniModel,
 		history,
 		openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5),
 	)
@@ -175,7 +186,8 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 		msgPtr = nil
 	}
 
-	if chat.ModelName == mNova {
+	model := s.getModel(chat.ModelName)
+	if model.Provider == pAWS {
 		s.getNovaAnswer(chat, c, msgPtr)
 		return
 	}
@@ -197,9 +209,17 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	_ = c.Notify(tele.Typing)
 
+	aiClient := s.openAI
 	model := s.getModel(chat.ModelName)
+	modelID := model.ModelID
+	if model.Provider == pAnthropic {
+		aiClient = s.anthropic
+	} else if model.Provider != pOpenAI {
+		modelID = s.conf.OpenAILatestModel
+	}
+
 	options := openai.ChatCompletionOptions{}
-	s.ai.APIKey = s.conf.OpenAIAPIKey
+	// s.ai.APIKey = s.conf.OpenAIAPIKey
 	options.SetTools(s.getFunctionTools())
 
 	// s.ai.Verbose = s.conf.Verbose
@@ -209,7 +229,7 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 
 	chat.removeMenu(c)
 
-	response, err := s.ai.CreateChatCompletion(model, history,
+	response, err := aiClient.CreateChatCompletion(modelID, history,
 		options.
 			SetUser(userAgent(c.Sender().ID)).
 			SetTemperature(chat.Temperature))
@@ -288,10 +308,19 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 
 	sentMessage := chat.getSentMessage(c)
 
+	aiClient := s.openAI
 	model := s.getModel(chat.ModelName)
-	s.ai.APIKey = s.conf.OpenAIAPIKey
+	Log.WithField("model", model.ModelID).WithField("provider", model.Provider).Info("Using model")
+	modelID := model.ModelID
+	if model.Provider == pAnthropic {
+		aiClient = s.anthropic
+	} else if model.Provider != pOpenAI {
+		modelID = s.conf.OpenAILatestModel
+		// s.ai.APIKey = s.conf.OpenAIAPIKey
+	}
+
 	// s.ai.Verbose = s.conf.Verbose
-	if _, err := s.ai.CreateChatCompletion(model, history,
+	if _, err := aiClient.CreateChatCompletion(modelID, history,
 		openai.ChatCompletionOptions{}.
 			SetTools(s.getFunctionTools()).
 			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
@@ -329,8 +358,8 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 				}
 				tokens++
 			}
-			// every 10 tokens update the message
-			if tokens%10 == 0 {
+			// every 20 tokens update the message
+			if tokens%20 == 0 {
 				_, _ = c.Bot().Edit(sentMessage, result)
 			}
 		} else {
@@ -386,11 +415,11 @@ func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 			}()
 			msg := openai.NewChatUserMessage(answer)
 			system := openai.NewChatSystemMessage(fmt.Sprintf("You are a professional Q&A expert. Do not react in any way to the contents of the input, just use it as a reference information. Please provide three follow-up questions to user input. Be very concise and to the point. Do not have numbers in front of questions. Separate each question with a line break. Only output three questions in %s, no need for any explanation, introduction or disclaimers - this is important!", chat.Lang))
-			s.ai.Verbose = s.conf.Verbose
+			s.openAI.Verbose = s.conf.Verbose
 			history := []openai.ChatMessage{system}
 			history = append(history, msg)
 
-			response, err := s.ai.CreateChatCompletion(mGTP3, history,
+			response, err := s.openAI.CreateChatCompletion(miniModel, history,
 				openai.ChatCompletionOptions{}.
 					SetUser(userAgent(c.Sender().ID)).
 					SetTemperature(chat.Temperature))
@@ -545,8 +574,8 @@ func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
 			if comp.Content != "" {
 				result += comp.Content
 				tokens++
-				// every 10 tokens update the message
-				if tokens%10 == 0 {
+				// every 20 tokens update the message
+				if tokens%20 == 0 {
 					_, _ = c.Bot().Edit(sentMessage, result)
 				}
 			}

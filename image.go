@@ -2,17 +2,18 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
-	"os"
 )
 
 func (s *Server) handleImage(c tele.Context) {
 	photo := c.Message().Photo.File
 
 	var fileName string
-	//var err error
-	//var reader io.ReadCloser
+	// var err error
+	// var reader io.ReadCloser
 
 	if s.conf.TelegramServerURL != "" {
 		f, err := c.Bot().FileByID(photo.FileID)
@@ -82,7 +83,7 @@ func (s *Server) textToImage(c tele.Context, text string, hd bool) error {
 		options.SetQuality("hd")
 	}
 
-	created, err := s.ai.CreateImage(text, options)
+	created, err := s.openAI.CreateImage(text, options)
 	if err != nil {
 		return fmt.Errorf("failed to create image: %s", err)
 	}

@@ -39,10 +39,12 @@ const (
 	cmdDelUser    = "/del"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
-	mOllama       = "ollama"
-	mGroq         = "groq"
-	mGTP3         = "gpt-4o-mini"
-	mNova         = "nova"
+	pOllama       = "ollama"
+	pGroq         = "groq"
+	pOpenAI       = "openai"
+	miniModel     = "gpt-4o-mini"
+	pAWS          = "aws"
+	pAnthropic    = "anthropic"
 	openAILatest  = "openAILatest"
 )
 
@@ -50,9 +52,7 @@ var (
 	menu       = &tele.ReplyMarkup{ResizeKeyboard: true}
 	replyMenu  = &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
 	removeMenu = &tele.ReplyMarkup{RemoveKeyboard: true}
-	btn3       = tele.Btn{Text: "GPT4o-mini", Unique: "btnModel", Data: mGTP3}
-	btn4       = tele.Btn{Text: "GPT4o", Unique: "btnModel", Data: openAILatest}
-	btn5       = tele.Btn{Text: "Nova Pro", Unique: "btnModel", Data: mNova}
+	btnModel   = tele.Btn{Text: "Select Model", Unique: "btnModel", Data: ""}
 	btnT0      = tele.Btn{Text: "0.0", Unique: "btntemp", Data: "0.0"}
 	btnT2      = tele.Btn{Text: "0.2", Unique: "btntemp", Data: "0.2"}
 	btnT4      = tele.Btn{Text: "0.4", Unique: "btntemp", Data: "0.4"}
@@ -122,7 +122,28 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		model := c.Message().Payload
 		if model == "" {
-			menu.Inline(menu.Row(btn3, btn4, btn5))
+			models := []tele.Btn{}
+			for _, m := range s.conf.Models {
+				if m.Provider == pOpenAI {
+					models = append(models, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.ModelID})
+				}
+			}
+			if s.conf.AnthropicEnabled {
+				// iterate over config.Models slice and find model with provider = pAnthropic and add them
+				for _, m := range s.conf.Models {
+					if m.Provider == pAnthropic {
+						models = append(models, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.ModelID})
+					}
+				}
+			}
+			if s.conf.AWSEnabled {
+				for _, m := range s.conf.Models {
+					if m.Provider == pAWS {
+						models = append(models, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.ModelID})
+					}
+				}
+			}
+			menu.Inline(menu.Row(models...))
 
 			return c.Send(chat.t("Select model"), menu)
 		}
@@ -529,7 +550,7 @@ func (s *Server) run() {
 		)
 	})
 
-	b.Handle(&btn3, func(c tele.Context) error {
+	b.Handle(&btnModel, func(c tele.Context) error {
 		Log.WithField("user", c.Sender().Username).Info("Selected model ", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.ModelName = c.Data()
