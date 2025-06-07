@@ -90,6 +90,7 @@ func (s *Server) loadUsers() {
 	admins := s.conf.AllowedTelegramUsers
 	var usernames []string
 	s.db.Model(&User{}).Pluck("username", &usernames)
+	s.users = []string{}
 	for _, username := range admins {
 		if !in_array(username, usernames) {
 			usernames = append(usernames, username)
