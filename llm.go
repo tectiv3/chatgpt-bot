@@ -453,17 +453,19 @@ func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 		return
 	}
 
-	if _, err := c.Bot().Edit(
-		sentMessage,
-		ConvertMarkdownToTelegramMarkdownV2(answer),
-		"text",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
-		replyMenu,
-	); err != nil {
-		Log.Warn(err)
-		if _, err := c.Bot().Edit(sentMessage, answer, replyMenu); err != nil {
+	if len(answer) > 0 {
+		if _, err := c.Bot().Edit(
+			sentMessage,
+			ConvertMarkdownToTelegramMarkdownV2(answer),
+			"text",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
+			replyMenu,
+		); err != nil {
 			Log.Warn(err)
-			_ = c.Send(err.Error())
+			if _, err := c.Bot().Edit(sentMessage, answer, replyMenu); err != nil {
+				Log.Warn(err)
+				_ = c.Send(err.Error())
+			}
 		}
 	}
 }
