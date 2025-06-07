@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
@@ -219,3 +220,21 @@ type CoinCap struct {
 func toBase64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// Context handling utilities
+
+// WithTimeout creates a context with timeout for operations
+func WithTimeout(duration time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), duration)
+}
+
+// WithCancel creates a cancellable context
+func WithCancel() (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.Background())
+}
+
+// DefaultTimeout for operations
+const (
+	DefaultTimeout = 30 * time.Second
+	LongTimeout    = 5 * time.Minute
+)
