@@ -122,28 +122,21 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		model := c.Message().Payload
 		if model == "" {
-			models := []tele.Btn{}
+			rows := []tele.Row{}
+			row := []tele.Btn{}
+
 			for _, m := range s.conf.Models {
-				if m.Provider == pOpenAI {
-					models = append(models, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.ModelID})
+				if len(row) == 3 {
+					rows = append(rows, menu.Row(row...))
+					row = []tele.Btn{}
+				}
+				if m.Provider == pOpenAI || (m.Provider == pAnthropic && s.conf.AnthropicEnabled) || (m.Provider == pAWS && s.conf.AWSEnabled) {
+					row = append(row, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.Name})
 				}
 			}
-			if s.conf.AnthropicEnabled {
-				// iterate over config.Models slice and find model with provider = pAnthropic and add them
-				for _, m := range s.conf.Models {
-					if m.Provider == pAnthropic {
-						models = append(models, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.ModelID})
-					}
-				}
-			}
-			if s.conf.AWSEnabled {
-				for _, m := range s.conf.Models {
-					if m.Provider == pAWS {
-						models = append(models, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.ModelID})
-					}
-				}
-			}
-			menu.Inline(menu.Row(models...))
+			rows = append(rows, menu.Row(row...))
+
+			menu.Inline(rows...)
 
 			return c.Send(chat.t("Select model"), menu)
 		}
