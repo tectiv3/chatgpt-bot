@@ -253,9 +253,7 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 			Log.WithField("user", c.Sender().Username).Error(err)
 			return err
 		}
-		chat.mutex.Lock()
-		chat.TotalTokens += response.Usage.TotalTokens
-		chat.mutex.Unlock()
+		chat.updateTotalTokens(response.Usage.TotalTokens)
 		chat.addMessageToDialog(openai.NewChatAssistantMessage(answer))
 		s.saveHistory(chat)
 	}
@@ -390,9 +388,7 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 			// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
 			// 	Log.Warn(err)
 			// }
-			chat.mutex.Lock()
-			chat.TotalTokens += tokens
-			chat.mutex.Unlock()
+			chat.updateTotalTokens(tokens)
 			chat.addMessageToDialog(openai.NewChatAssistantMessage(result))
 			s.saveHistory(chat)
 
@@ -597,9 +593,7 @@ func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
 						"output_tokens": comp.Usage.OutputTokens,
 					}).Info("Nova stream finished")
 
-				chat.mutex.Lock()
-				chat.TotalTokens += comp.Usage.InputTokens + comp.Usage.OutputTokens
-				chat.mutex.Unlock()
+				chat.updateTotalTokens(comp.Usage.InputTokens + comp.Usage.OutputTokens)
 
 				chat.History = append(chat.History,
 					ChatMessage{

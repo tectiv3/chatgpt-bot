@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,7 +121,7 @@ func (s *Server) run() {
 
 	b.Handle(cmdModel, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		model := c.Message().Payload
+		model := strings.TrimSpace(c.Message().Payload)
 		if model == "" {
 			rows := []tele.Row{}
 			row := []tele.Btn{}
@@ -165,10 +166,10 @@ func (s *Server) run() {
 
 	b.Handle(cmdRole, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		name := c.Message().Payload
-		if name == "" {
+		name := strings.TrimSpace(c.Message().Payload)
+		if err := ValidateRoleName(name); err != nil {
 			return c.Send(
-				chat.t("Please provide a role name"),
+				chat.t("Invalid role name: {{.error}}", &i18n.Replacements{"error": err.Error()}),
 				"text",
 				&tele.SendOptions{ReplyTo: c.Message()},
 			)
@@ -367,11 +368,14 @@ func (s *Server) run() {
 
 	b.Handle(cmdAge, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		age, err := strconv.Atoi(c.Message().Payload)
+		ageStr := strings.TrimSpace(c.Message().Payload)
+		age, err := ValidateAge(ageStr)
 		if err != nil {
-			return c.Send(chat.t("Please provide a number"), "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
+			return c.Send(
+				chat.t("Invalid age: {{.error}}", &i18n.Replacements{"error": err.Error()}),
+				"text",
+				&tele.SendOptions{ReplyTo: c.Message()},
+			)
 		}
 		chat.ConversationAge = int64(age)
 		s.db.Save(&chat)
@@ -385,10 +389,10 @@ func (s *Server) run() {
 
 	b.Handle(cmdPrompt, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		query := c.Message().Payload
-		if len(query) < 3 {
+		query := strings.TrimSpace(c.Message().Payload)
+		if err := ValidatePrompt(query); err != nil {
 			return c.Send(
-				chat.t("Please provide a longer prompt"),
+				chat.t("Invalid prompt: {{.error}}", &i18n.Replacements{"error": err.Error()}),
 				"text",
 				&tele.SendOptions{ReplyTo: c.Message()},
 			)
@@ -527,14 +531,15 @@ func (s *Server) run() {
 
 	b.Handle(cmdLang, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		if c.Message().Payload == "" {
+		langCode := strings.TrimSpace(c.Message().Payload)
+		if err := ValidateLanguageCode(langCode); err != nil {
 			return c.Send(
-				"Language code (e.g. ru) is required",
+				chat.t("Invalid language code: {{.error}}", &i18n.Replacements{"error": err.Error()}),
 				"text",
 				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
-		chat.Lang = c.Message().Payload
+		chat.Lang = langCode
 		s.db.Save(&chat)
 		return c.Send(
 			fmt.Sprintf("Language set to %s", chat.Lang),
@@ -555,7 +560,12 @@ func (s *Server) run() {
 	b.Handle(&btnT0, func(c tele.Context) error {
 		Log.WithField("user", c.Sender().Username).Info("Selected temperature ", c.Data())
 		chat := s.getChat(c.Chat(), c.Sender())
-		chat.Temperature, _ = strconv.ParseFloat(c.Data(), 64)
+		temp, err := ValidateTemperature(c.Data())
+		if err != nil {
+			Log.WithField("error", err).Warn("Invalid temperature value")
+			return c.Edit(chat.t("Invalid temperature value"))
+		}
+		chat.Temperature = temp
 		s.db.Save(&chat)
 
 		return c.Edit(chat.t("Temperature set to {{.temp}}", &i18n.Replacements{"temp": c.Data()}))
@@ -668,11 +678,13 @@ func (s *Server) run() {
 		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
 			return nil
 		}
-		name := c.Message().Payload
-		if len(name) < 3 {
-			return c.Send("Username is too short", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
+		name := strings.TrimSpace(c.Message().Payload)
+		if err := ValidateUsername(name); err != nil {
+			return c.Send(
+				fmt.Sprintf("Invalid username: %s", err.Error()),
+				"text",
+				&tele.SendOptions{ReplyTo: c.Message()},
+			)
 		}
 		s.addUser(name)
 		s.loadUsers()
@@ -686,11 +698,13 @@ func (s *Server) run() {
 		if !in_array(c.Sender().Username, s.conf.AllowedTelegramUsers) {
 			return nil
 		}
-		name := c.Message().Payload
-		if len(name) < 3 {
-			return c.Send("Username is too short", "text", &tele.SendOptions{
-				ReplyTo: c.Message(),
-			})
+		name := strings.TrimSpace(c.Message().Payload)
+		if err := ValidateUsername(name); err != nil {
+			return c.Send(
+				fmt.Sprintf("Invalid username: %s", err.Error()),
+				"text",
+				&tele.SendOptions{ReplyTo: c.Message()},
+			)
 		}
 		s.delUser(name)
 		s.loadUsers()
