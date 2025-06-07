@@ -39,4 +39,4 @@ require (
 	golang.org/x/text v0.26.0 // indirect
 )
 
-replace github.com/meinside/openai-go => github.com/tectiv3/openai-go v0.4.8
+replace github.com/meinside/openai-go => github.com/tectiv3/openai-go v0.5.0
