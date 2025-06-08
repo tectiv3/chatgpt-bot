@@ -21,43 +21,45 @@ import (
 
 func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	availableTools := []openai.ChatCompletionTool{
-		openai.NewChatCompletionTool(
-			"search_images",
-			"Search image or GIFs for a given query",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("query", "string", "The query to search for").
-				AddPropertyWithEnums("type", "string", "The type of image to search for. Default to `photo` if not specified", []string{"photo", "gif"}).
-				AddPropertyWithEnums("region", "string",
-					"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
-					[]string{
-						"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
-						"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
-						"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
-						"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
-						"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
-						"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
-						"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-						"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt",
-					}).
-				SetRequiredParameters([]string{"query", "type", "region"}),
-		),
-		openai.NewChatCompletionTool(
-			"web_search",
-			"This is web search. Use this tool to search the internet. Use it when you need access to real time information. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the vector_search tool. Input should be a string. Append sources to the response.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("query", "string", "A query to search the web for").
-				// AddPropertyWithEnums("region", "string",
-				//	"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
-				//	[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
-				//		"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
-				//		"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
-				//		"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
-				//		"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
-				//		"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
-				//		"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
-				//		"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
-				SetRequiredParameters([]string{"query"}),
-		),
+		/*
+			openai.NewChatCompletionTool(
+				"search_images",
+				"Search image or GIFs for a given query",
+				openai.NewToolFunctionParameters().
+					AddPropertyWithDescription("query", "string", "The query to search for").
+					AddPropertyWithEnums("type", "string", "The type of image to search for. Default to `photo` if not specified", []string{"photo", "gif"}).
+					AddPropertyWithEnums("region", "string",
+						"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
+						[]string{
+							"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+							"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+							"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+							"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+							"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+							"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+							"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+							"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt",
+						}).
+					SetRequiredParameters([]string{"query", "type", "region"}),
+			),
+			openai.NewChatCompletionTool(
+				"web_search",
+				"This is web search. Use this tool to search the internet. Use it when you need access to real time information. The top 10 results will be added to the vector db. The top 3 results are also getting returned to you directly. For more search queries through the same websites, use the vector_search tool. Input should be a string. Append sources to the response.",
+				openai.NewToolFunctionParameters().
+					AddPropertyWithDescription("query", "string", "A query to search the web for").
+					// AddPropertyWithEnums("region", "string",
+					//	"The region to use for the search. Infer this from the language used for the query. Default to `wt-wt` if not specified or can not be inferred. Do not leave it empty.",
+					//	[]string{"xa-ar", "xa-en", "ar-es", "au-en", "at-de", "be-fr", "be-nl", "br-pt", "bg-bg",
+					//		"ca-en", "ca-fr", "ct-ca", "cl-es", "cn-zh", "co-es", "hr-hr", "cz-cs", "dk-da",
+					//		"ee-et", "fi-fi", "fr-fr", "de-de", "gr-el", "hk-tzh", "hu-hu", "in-en", "id-id",
+					//		"id-en", "ie-en", "il-he", "it-it", "jp-jp", "kr-kr", "lv-lv", "lt-lt", "xl-es",
+					//		"my-ms", "my-en", "mx-es", "nl-nl", "nz-en", "no-no", "pe-es", "ph-en", "ph-tl",
+					//		"pl-pl", "pt-pt", "ro-ro", "ru-ru", "sg-en", "sk-sk", "sl-sl", "za-en", "es-es",
+					//		"se-sv", "ch-de", "ch-fr", "ch-it", "tw-tzh", "th-th", "tr-tr", "ua-uk", "uk-en",
+					//		"us-en", "ue-es", "ve-es", "vn-vi", "wt-wt"}).
+					SetRequiredParameters([]string{"query"}),
+			),
+		*/
 		openai.NewChatCompletionTool(
 			"text_to_speech",
 			"Convert provided text to speech.",
@@ -68,20 +70,22 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 					[]string{"fr", "ru", "en", "ja", "ua", "de", "es", "it", "tw"}).
 				SetRequiredParameters([]string{"text", "language"}),
 		),
-		openai.NewChatCompletionTool(
-			"full_webpage_to_speech",
-			"Download full web page and convert it to speech. Use ONLY when you need to pass the full content of a web page to the speech synthesiser.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
-				SetRequiredParameters([]string{"url"}),
-		),
-		openai.NewChatCompletionTool(
-			"vector_search",
-			`Useful for searching through added files and websites. Search for keywords in the text not whole questions, avoid relative words like "yesterday" think about what could be in the text. The input to this tool will be run against a vector db. The top results will be returned as json.`,
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("query", "string", "A query to search the vector db").
-				SetRequiredParameters([]string{"query"}),
-		),
+		/*
+			openai.NewChatCompletionTool(
+				"full_webpage_to_speech",
+				"Download full web page and convert it to speech. Use ONLY when you need to pass the full content of a web page to the speech synthesiser.",
+				openai.NewToolFunctionParameters().
+					AddPropertyWithDescription("url", "string", "A valid URL to a web page, should not end in PDF.").
+					SetRequiredParameters([]string{"url"}),
+			),
+			openai.NewChatCompletionTool(
+				"vector_search",
+				`Useful for searching through added files and websites. Search for keywords in the text not whole questions, avoid relative words like "yesterday" think about what could be in the text. The input to this tool will be run against a vector db. The top results will be returned as json.`,
+				openai.NewToolFunctionParameters().
+					AddPropertyWithDescription("query", "string", "A query to search the vector db").
+					SetRequiredParameters([]string{"query"}),
+			),
+		*/
 		openai.NewChatCompletionTool(
 			"set_reminder",
 			"Set a reminder to do something at a specific time.",
@@ -118,6 +122,10 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	// )
 
 	return availableTools
+}
+
+func (s *Server) handleResponseFunctionCalls(chat *Chat, c tele.Context, functions []openai.ResponseOutput) (string, error) {
+	return "", nil
 }
 
 func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
@@ -457,6 +465,8 @@ func (s *Server) getCryptoRate(asset string) (string, error) {
 		asset = "ethereum"
 	case "ltc":
 		asset = "litecoin"
+	case "sol":
+		asset = "solana"
 	case "xrp":
 		asset = "ripple"
 		format = "$%0.3f"

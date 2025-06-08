@@ -18,6 +18,177 @@ func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
 }
 
+// convertDialogToResponseMessages converts OpenAI chat messages to ResponseMessage format
+func (s *Server) convertDialogToResponseMessages(history []openai.ChatMessage) []openai.ResponseMessage {
+	var messages []openai.ResponseMessage
+
+	for _, msg := range history {
+		// Skip system messages as they'll be handled via instructions
+		if msg.Role == openai.ChatMessageRoleSystem {
+			continue
+		}
+
+		// Convert content to string
+		content, err := msg.ContentString()
+		if err != nil {
+			// Try to get content from array format
+			if contentArr, arrErr := msg.ContentArray(); arrErr == nil {
+				for _, c := range contentArr {
+					if c.Type == "text" && c.Text != nil {
+						content = *c.Text
+						break
+					}
+				}
+			}
+		}
+
+		if content != "" {
+			messages = append(messages, openai.NewResponseMessage(string(msg.Role), content))
+		}
+	}
+
+	return messages
+}
+
+// getResponseStream uses the Responses API for streaming when available
+func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string) error {
+	_ = c.Notify(tele.Typing)
+	type completion struct {
+		event openai.ResponseStreamEvent
+		done  bool
+		err   error
+	}
+	ch := make(chan completion, 1)
+
+	history := chat.getDialog(question)
+	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Response Stream")
+
+	chat.removeMenu(c)
+	sentMessage := chat.getSentMessage(c)
+
+	model := s.getModel(chat.ModelName)
+	if model.Provider != pOpenAI {
+		return s.getStreamAnswer(chat, c, question)
+	}
+
+	modelID := model.ModelID
+	messages := s.convertDialogToResponseMessages(history)
+	aiClient := s.openAI
+
+	instructions := chat.MasterPrompt
+	if chat.RoleID != nil {
+		instructions = chat.Role.Prompt
+	}
+
+	options := openai.ResponseOptions{}
+	options.SetInstructions(instructions)
+	options.SetMaxOutputTokens(4000)
+	options.SetTemperature(chat.Temperature)
+	options.SetUser(userAgent(c.Sender().ID))
+
+	// tools := s.getFunctionTools()
+	// if len(tools) > 0 {
+	options.SetTools([]any{openai.NewBuiltinTool("web_search_preview")})
+	options.SetToolChoiceAuto()
+	// }
+
+	ctx, cancel := WithTimeout(LongTimeout)
+	defer cancel()
+
+	reply := ""
+	tokens := 0
+	var functionCalls []openai.ResponseOutput
+
+	if err := aiClient.CreateResponseStreamWithContext(ctx, modelID, messages, options,
+		func(event openai.ResponseStreamEvent, d bool, e error) {
+			ch <- completion{event: event, done: d, err: e}
+			if d {
+				close(ch)
+			}
+		}); err != nil {
+		Log.WithField("user", c.Sender().Username).Error("Response stream error:", err)
+		return err
+	}
+
+	for comp := range ch {
+		if comp.err != nil {
+			Log.WithField("user", c.Sender().Username).Error(comp.err)
+
+			return comp.err
+		}
+
+		if comp.done {
+			// Handle function calls if any
+			if len(functionCalls) > 0 {
+				_ = c.Notify(tele.Typing)
+				result, err := s.handleResponseFunctionCalls(chat, c, functionCalls)
+				if err != nil {
+					return err
+				}
+				s.updateReply(chat, reply+result, c)
+
+				return nil
+			}
+
+			// Update token count and save history
+			if tokens > 0 {
+				chat.updateTotalTokens(tokens)
+			}
+
+			if reply != "" {
+				chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
+				s.saveHistory(chat)
+			}
+
+			return nil
+		}
+
+		event := comp.event
+
+		switch event.Type {
+		case "response.output_item.added":
+			if event.Item != nil {
+				Log.WithField("item", event.Item.Type).Info("Output added")
+				switch event.Item.Type {
+				case "function_call":
+					Log.WithField("function", event.Item.Name).Info("Function call started")
+				case "web_search_call":
+					_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
+				}
+			}
+		case "response.output_text.delta":
+			if event.Delta != nil {
+				reply += *event.Delta
+				tokens++
+				if tokens%16 == 0 {
+					_, _ = c.Bot().Edit(sentMessage, reply)
+				}
+			}
+
+		case "response.output_item.done":
+			if event.Item != nil {
+				switch event.Item.Type {
+				case "message":
+					Log.WithField("user", c.Sender().Username).Info("Message output completed")
+					s.updateReply(chat, event.Item.Content[0].Text, c)
+				case "function_call":
+					functionCalls = append(functionCalls, *event.Item)
+					Log.WithField("user", c.Sender().Username).WithField("function", event.Item.Name).Info("Function call completed")
+				}
+			}
+
+		case "response.done":
+			if event.Response != nil && event.Response.Usage != nil {
+				tokens = event.Response.Usage.TotalTokens
+			}
+			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Response stream finished")
+		}
+
+	}
+
+	return nil
+}
+
 func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	ctx, cancel := WithTimeout(DefaultTimeout)
 	defer cancel()
@@ -200,9 +371,17 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 	}
 
 	if chat.Stream {
-		if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-			_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		// Use new Responses API for OpenAI models, fall back to regular streaming for others
+		if model.Provider == pOpenAI {
+			if err := s.getResponseStream(chat, c, msgPtr); err != nil {
+				Log.WithField("user", c.Sender().Username).Error(err)
+				_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			}
+		} else {
+			if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
+				Log.WithField("user", c.Sender().Username).Error(err)
+				_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			}
 		}
 		return
 	}
@@ -299,7 +478,6 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	return nil
 }
 
-// getStreamAnswer starts a stream with the given chat and history
 func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) error {
 	_ = c.Notify(tele.Typing)
 	type completion struct {

@@ -28,11 +28,11 @@ type config struct {
 	OpenAIAPIKey         string `json:"openai_api_key"`
 	OpenAIOrganizationID string `json:"openai_org_id"`
 	OpenAILatestModel    string `json:"openai_latest_model"`
-	OllamaURL            string `json:"ollama_url"`
-	OllamaModel          string `json:"ollama_model"`
-	OllamaEnabled        bool   `json:"ollama_enabled"`
-	GroqModel            string `json:"groq_model"`
-	GroqAPIKey           string `json:"groq_api_key"`
+
+	OllamaURL     string `json:"ollama_url"`
+	OllamaEnabled bool   `json:"ollama_enabled"`
+
+	GroqAPIKey string `json:"groq_api_key"`
 
 	AnthropicAPIKey  string `json:"anthropic_api_key"`
 	AnthropicEnabled bool   `json:"anthropic_enabled"`
