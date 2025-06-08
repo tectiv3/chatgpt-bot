@@ -124,6 +124,10 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	return availableTools
 }
 
+func (s *Server) handleResponseFunctionCalls(chat *Chat, c tele.Context, functions []openai.ResponseOutput) (string, error) {
+	return "", nil
+}
+
 func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
 	// refactor to handle multiple function calls not just the first one
 	result := ""
