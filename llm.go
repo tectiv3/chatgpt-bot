@@ -18,6 +18,147 @@ func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
 }
 
+// convertDialogToResponseMessages converts OpenAI chat messages to ResponseMessage format
+func (s *Server) convertDialogToResponseMessages(history []openai.ChatMessage) []openai.ResponseMessage {
+	var messages []openai.ResponseMessage
+
+	for _, msg := range history {
+		// Skip system messages as they'll be handled via instructions
+		if msg.Role == openai.ChatMessageRoleSystem {
+			continue
+		}
+
+		// Convert content to string
+		content, err := msg.ContentString()
+		if err != nil {
+			// Try to get content from array format
+			if contentArr, arrErr := msg.ContentArray(); arrErr == nil {
+				for _, c := range contentArr {
+					if c.Type == "text" && c.Text != nil {
+						content = *c.Text
+						break
+					}
+				}
+			}
+		}
+
+		if content != "" {
+			messages = append(messages, openai.NewResponseMessage(string(msg.Role), content))
+		}
+	}
+
+	return messages
+}
+
+// getResponseStream uses the new Responses API for streaming when available
+func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string) error {
+	_ = c.Notify(tele.Typing)
+
+	history := chat.getDialog(question)
+	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Response Stream")
+
+	chat.removeMenu(c)
+	sentMessage := chat.getSentMessage(c)
+
+	aiClient := s.openAI
+	model := s.getModel(chat.ModelName)
+	Log.WithField("model", model.ModelID).WithField("provider", model.Provider).Info("Using model")
+	modelID := model.ModelID
+
+	// Only use OpenAI provider for Responses API for now
+	if model.Provider != pOpenAI {
+		// Fall back to regular streaming for non-OpenAI providers
+		return s.getStreamAnswer(chat, c, question)
+	}
+
+	// Convert dialog to ResponseMessage format
+	messages := s.convertDialogToResponseMessages(history)
+
+	// Get system prompt for instructions
+	instructions := chat.MasterPrompt
+	if chat.RoleID != nil {
+		instructions = chat.Role.Prompt
+	}
+
+	// Set up response options
+	options := openai.ResponseOptions{}
+	options.SetInstructions(instructions)
+	options.SetMaxOutputTokens(4000)
+	options.SetTemperature(chat.Temperature)
+	options.SetUser(userAgent(c.Sender().ID))
+
+	// Add tools if available
+	tools := s.getFunctionTools()
+	if len(tools) > 0 {
+		options.SetTools(tools)
+		options.SetToolChoiceAuto()
+	}
+
+	ctx, cancel := WithTimeout(LongTimeout)
+	defer cancel()
+
+	reply := ""
+	tokens := 0
+	var functionCalls []openai.ResponseOutput
+
+	// Stream the response
+	err := aiClient.CreateResponseStreamWithContext(ctx, modelID, messages, options, func(event openai.ResponseStreamEvent) {
+		switch event.Type {
+		case "response.output.item.delta":
+			if event.Item != nil && len(event.Item.Content) > 0 {
+				for _, content := range event.Item.Content {
+					if content.Type == "text" {
+						reply += content.Text
+						s.updateReply(chat, reply, c)
+					}
+				}
+			}
+
+		case "response.output.item.done":
+			if event.Item != nil {
+				switch event.Item.Type {
+				case "message":
+					// Message completed
+					Log.WithField("user", c.Sender().Username).Info("Message output completed")
+
+				case "function_call":
+					// Function call completed
+					functionCalls = append(functionCalls, *event.Item)
+					Log.WithField("user", c.Sender().Username).WithField("function", event.Item.Name).Info("Function call completed")
+				}
+			}
+
+		case "response.done":
+			if event.Response != nil && event.Response.Usage != nil {
+				tokens = event.Response.Usage.TotalTokens
+			}
+			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Response stream finished")
+		}
+	})
+
+	if err != nil {
+		Log.WithField("user", c.Sender().Username).Error("Response stream error:", err)
+		return err
+	}
+
+	// Handle function calls if any
+	if len(functionCalls) > 0 {
+		return s.handleResponseFunctionCalls(chat, c, functionCalls, messages, reply)
+	}
+
+	// Update token count and save history
+	if tokens > 0 {
+		chat.updateTotalTokens(tokens)
+	}
+
+	if reply != "" {
+		chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
+		s.saveHistory(chat)
+	}
+
+	return nil
+}
+
 func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	ctx, cancel := WithTimeout(DefaultTimeout)
 	defer cancel()
@@ -200,9 +341,17 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 	}
 
 	if chat.Stream {
-		if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-			_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		// Use new Responses API for OpenAI models, fall back to regular streaming for others
+		if model.Provider == pOpenAI {
+			if err := s.getResponseStream(chat, c, msgPtr); err != nil {
+				Log.WithField("user", c.Sender().Username).Error(err)
+				_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			}
+		} else {
+			if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
+				Log.WithField("user", c.Sender().Username).Error(err)
+				_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			}
 		}
 		return
 	}
@@ -300,6 +449,16 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 }
 
 // getStreamAnswer starts a stream with the given chat and history
+// handleResponseFunctionCalls handles function calls from the Responses API
+func (s *Server) handleResponseFunctionCalls(chat *Chat, c tele.Context, functionCalls []openai.ResponseOutput, originalMessages []openai.ResponseMessage, assistantReply string) error {
+	// For now, implement a simple version that falls back to regular function handling
+	// TODO: Implement proper Responses API function call handling with follow-up calls
+	Log.WithField("user", c.Sender().Username).WithField("functions", len(functionCalls)).Info("Function calls detected, falling back to regular streaming")
+
+	// Fall back to regular streaming for function calls
+	return s.getStreamAnswer(chat, c, nil)
+}
+
 func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) error {
 	_ = c.Notify(tele.Typing)
 	type completion struct {
