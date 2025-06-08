@@ -500,7 +500,6 @@ func (s *Server) run() {
 
 	b.Handle(cmdToItalian, func(c tele.Context) error {
 		go s.onTranslate(c, "To Italian: ")
-
 		return nil
 	})
 
