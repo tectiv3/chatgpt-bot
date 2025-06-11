@@ -24,6 +24,7 @@ var localizations = map[string]string{
 	"ru.Please provide a number":             "Пожалуйста, введите число",
 	"ru.Please provide a text file":          "Пожалуйста, загрузите текстовый файл",
 	"ru.Processing document. Please wait...": "Идет обработка документа. Пожалуйста, подождите...",
+	"ru.Web search started, please wait...":  "Выполняется поиск в интернете. Пожалуйста, подождите...",
 	"ru.Prompt set":                          "Новый системный запрос установлен",
 	"ru.Role deleted":                        "Роль была успешно удалена",
 	"ru.Role not found":                      "Роль не найдена",

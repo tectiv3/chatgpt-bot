@@ -83,12 +83,17 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	options := openai.ResponseOptions{}
 	options.SetInstructions(instructions)
 	options.SetMaxOutputTokens(4000)
-	options.SetTemperature(chat.Temperature)
+	if !model.Reasoning {
+		options.SetTemperature(chat.Temperature)
+	}
 	options.SetUser(userAgent(c.Sender().ID))
+	options.SetStore(false)
 
 	// tools := s.getFunctionTools()
 	// if len(tools) > 0 {
-	options.SetTools([]any{openai.NewBuiltinTool("web_search_preview")})
+	if len(model.SearchTool) > 0 {
+		options.SetTools([]any{openai.NewBuiltinTool(model.SearchTool)})
+	}
 	options.SetToolChoiceAuto()
 	// }
 

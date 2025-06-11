@@ -50,9 +50,11 @@ type config struct {
 }
 
 type AiModel struct {
-	ModelID  string `json:"model_id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"` // openai, ollama, groq, nova
+	ModelID    string `json:"model_id"`
+	Name       string `json:"name"`
+	Provider   string `json:"provider"` // openai, ollama, groq, nova
+	SearchTool string `json:"search_tool,omitempty"`
+	Reasoning  bool   `json:"reasoning,omitempty"`
 }
 
 type Server struct {
