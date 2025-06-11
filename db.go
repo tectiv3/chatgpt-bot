@@ -115,11 +115,11 @@ func (s *Server) getModel(model string) *AiModel {
 			return &m
 		}
 		if model == openAILatest {
-			return &AiModel{s.conf.OpenAILatestModel, "OpenAI Latest", "openai"}
+			return &AiModel{s.conf.OpenAILatestModel, "OpenAI Latest", "openai", "web_search_preview", false}
 		}
 	}
 
-	return &AiModel{model, model, "openai"}
+	return &AiModel{model, model, "openai", "", false}
 }
 
 func (s *Server) getRole(id uint) *Role {
