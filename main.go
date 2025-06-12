@@ -105,7 +105,10 @@ func main() {
 			}),
 		}
 		if conf.AnthropicEnabled {
-			server.anthropic = openai.NewClient(conf.AnthropicAPIKey, "").SetBaseURL("https://api.anthropic.com")
+			server.anthropic = openai.NewClient(conf.AnthropicAPIKey, "").SetBaseURL("https://api.anthropic.com/v1")
+		}
+		if conf.GeminiEnabled {
+			server.gemini = openai.NewClient(conf.GeminiAPIKey, "").SetBaseURL("https://generativelanguage.googleapis.com/v1beta/openai")
 		}
 		l = i18n.New("ru", "en")
 

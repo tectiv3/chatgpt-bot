@@ -46,6 +46,7 @@ const (
 	miniModel     = "gpt-4o-mini"
 	pAWS          = "aws"
 	pAnthropic    = "anthropic"
+	pGemini       = "gemini"
 	openAILatest  = "openAILatest"
 )
 
@@ -131,7 +132,10 @@ func (s *Server) run() {
 					rows = append(rows, menu.Row(row...))
 					row = []tele.Btn{}
 				}
-				if m.Provider == pOpenAI || (m.Provider == pAnthropic && s.conf.AnthropicEnabled) || (m.Provider == pAWS && s.conf.AWSEnabled) {
+				if m.Provider == pOpenAI ||
+					(m.Provider == pAnthropic && s.conf.AnthropicEnabled) ||
+					(m.Provider == pAWS && s.conf.AWSEnabled) ||
+					(m.Provider == pGemini && s.conf.GeminiEnabled) {
 					row = append(row, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.Name})
 				}
 			}
