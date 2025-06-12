@@ -43,6 +43,9 @@ type config struct {
 	AWSRegion          string `json:"aws_region"`
 	AWSEnabled         bool   `json:"aws_enabled"`
 
+	GeminiEnabled bool   `json:"gemini_enabled"`
+	GeminiAPIKey  string `json:"gemini_api_key"`
+
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
@@ -63,6 +66,7 @@ type Server struct {
 	users     []string
 	openAI    *openai.Client
 	anthropic *openai.Client
+	gemini    *openai.Client
 	nova      *awsnova.Client
 	bot       *tele.Bot
 	db        *gorm.DB

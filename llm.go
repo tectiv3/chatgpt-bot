@@ -79,6 +79,8 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	if chat.RoleID != nil {
 		instructions = chat.Role.Prompt
 	}
+	// append current date and time to instructions
+	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
 
 	options := openai.ResponseOptions{}
 	options.SetInstructions(instructions)
@@ -213,6 +215,8 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	modelID := model.ModelID
 	if model.Provider == pAnthropic {
 		aiClient = s.anthropic
+	} else if model.Provider == pGemini {
+		aiClient = s.gemini
 	} else if model.Provider != pOpenAI {
 		modelID = s.conf.OpenAILatestModel
 	}
@@ -405,6 +409,8 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	modelID := model.ModelID
 	if model.Provider == pAnthropic {
 		aiClient = s.anthropic
+	} else if model.Provider == pGemini {
+		aiClient = s.gemini
 	} else if model.Provider != pOpenAI {
 		modelID = s.conf.OpenAILatestModel
 	}
@@ -505,12 +511,14 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	modelID := model.ModelID
 	if model.Provider == pAnthropic {
 		aiClient = s.anthropic
+	} else if model.Provider == pGemini {
+		aiClient = s.gemini
 	} else if model.Provider != pOpenAI {
 		modelID = s.conf.OpenAILatestModel
 		// s.ai.APIKey = s.conf.OpenAIAPIKey
 	}
 
-	// s.ai.Verbose = s.conf.Verbose
+	// aiClient.Verbose = s.conf.Verbose
 	ctx, cancel := WithTimeout(LongTimeout)
 	defer cancel()
 
