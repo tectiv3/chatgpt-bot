@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
@@ -65,7 +66,7 @@ type Server struct {
 	conf      config
 	users     []string
 	openAI    *openai.Client
-	anthropic *openai.Client
+	anthropic *anthropic.Client
 	gemini    *openai.Client
 	nova      *awsnova.Client
 	bot       *tele.Bot

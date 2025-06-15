@@ -60,16 +60,16 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 					SetRequiredParameters([]string{"query"}),
 			),
 		*/
-		openai.NewChatCompletionTool(
-			"text_to_speech",
-			"Convert provided text to speech.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("text", "string", "A text to use.").
-				AddPropertyWithEnums("language", "string",
-					"The language to use for the speech synthesis. Default to `en` if could not be detected.",
-					[]string{"fr", "ru", "en", "ja", "ua", "de", "es", "it", "tw"}).
-				SetRequiredParameters([]string{"text", "language"}),
-		),
+		// openai.NewChatCompletionTool(
+		// 	"text_to_speech",
+		// 	"Convert provided text to speech.",
+		// 	openai.NewToolFunctionParameters().
+		// 		AddPropertyWithDescription("text", "string", "A text to use.").
+		// 		AddPropertyWithEnums("language", "string",
+		// 			"The language to use for the speech synthesis. Default to `en` if could not be detected.",
+		// 			[]string{"fr", "ru", "en", "ja", "ua", "de", "es", "it", "tw"}).
+		// 		SetRequiredParameters([]string{"text", "language"}),
+		// ),
 		/*
 			openai.NewChatCompletionTool(
 				"full_webpage_to_speech",

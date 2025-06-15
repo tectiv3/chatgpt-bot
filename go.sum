@@ -400,6 +400,8 @@ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/subosito/gotenv v1.4.1/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
+github.com/tectiv3/anthropic-go v0.1.0 h1:Q/dLxPm/SvRe3Ned8TrKvZwi49k9SpWLa05xFxJtcdg=
+github.com/tectiv3/anthropic-go v0.1.0/go.mod h1:7GyeaaPq5Q3UZGzIsVvx9KgyotwBvHYufcE6j6f6FTY=
 github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117 h1:NOIsMMmwqlbGqfUva1opfXdYxv534V2hAX3u7GjpS54=
 github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117/go.mod h1:uHQ4ArgV2YTUGdVjrg7QtbN5G9poWcGr8xcs0qgSCto=
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794 h1:X1dBW7XXk7ta3uH4bsyWWkuvev0bj2fk+pMkV+jRobQ=
