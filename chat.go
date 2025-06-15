@@ -2,11 +2,13 @@ package main
 
 import (
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	tele "gopkg.in/telebot.v3"
@@ -155,6 +157,55 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 	}
 
 	// Log.Infof("Dialog history: %v", history)
+
+	return history
+}
+
+func (c *Chat) getAnthropicDialog(request *string) []*anthropic.Message {
+	if request != nil {
+		c.addMessageToDialog(openai.NewChatUserMessage(*request))
+	}
+
+	history := []*anthropic.Message{}
+	for _, h := range c.History {
+		if h.CreatedAt.Before(
+			time.Now().AddDate(0, 0, -int(c.ConversationAge)),
+		) {
+			continue
+		}
+
+		var message *anthropic.Message
+
+		if h.ImagePath != nil {
+			reader, err := os.Open(*h.ImagePath)
+			if err != nil {
+				Log.Warn("Error opening image file", "error=", err)
+				continue
+			}
+			defer reader.Close()
+
+			image, err := io.ReadAll(reader)
+			if err != nil {
+				Log.Warn("Error reading file content", "error=", err)
+				continue
+			}
+			message = anthropic.NewMessage(anthropic.Role(h.Role),
+				[]anthropic.Content{
+					anthropic.NewTextContent(*h.Content),
+					&anthropic.ImageContent{
+						Source: &anthropic.ContentSource{
+							Type:      anthropic.ContentSourceTypeBase64,
+							MediaType: http.DetectContentType(image),
+							Data:      toBase64(image),
+						},
+					},
+				},
+			)
+		} else {
+			message = anthropic.NewMessage(anthropic.Role(h.Role), []anthropic.Content{anthropic.NewTextContent(*h.Content)})
+		}
+		history = append(history, message)
+	}
 
 	return history
 }

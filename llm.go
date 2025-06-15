@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/meinside/openai-go"
+	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
 	tele "gopkg.in/telebot.v3"
 )
@@ -214,7 +215,7 @@ func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	model := s.getModel(chat.ModelName)
 	modelID := model.ModelID
 	if model.Provider == pAnthropic {
-		aiClient = s.anthropic
+		aiClient = openai.NewClient(s.conf.AnthropicAPIKey, "").SetBaseURL("https://api.anthropic.com/v1")
 	} else if model.Provider == pGemini {
 		aiClient = s.gemini
 	} else if model.Provider != pOpenAI {
@@ -379,6 +380,11 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 		return
 	}
 
+	if model.Provider == pAnthropic {
+		s.getAnthropicAnswer(chat, c, msgPtr)
+		return
+	}
+
 	if chat.Stream {
 		// Use new Responses API for OpenAI models, fall back to regular streaming for others
 		if model.Provider == pOpenAI {
@@ -408,7 +414,8 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	model := s.getModel(chat.ModelName)
 	modelID := model.ModelID
 	if model.Provider == pAnthropic {
-		aiClient = s.anthropic
+		s.getAnthropicAnswer(chat, c, question)
+		return nil
 	} else if model.Provider == pGemini {
 		aiClient = s.gemini
 	} else if model.Provider != pOpenAI {
@@ -510,7 +517,8 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	Log.WithField("model", model.ModelID).WithField("provider", model.Provider).Info("Using model")
 	modelID := model.ModelID
 	if model.Provider == pAnthropic {
-		aiClient = s.anthropic
+		s.getAnthropicAnswer(chat, c, question)
+		return nil
 	} else if model.Provider == pGemini {
 		aiClient = s.gemini
 	} else if model.Provider != pOpenAI {
@@ -728,6 +736,114 @@ func (s *Server) saveHistory(chat *Chat) {
 	chat.TotalTokens += response.Usage.TotalTokens
 
 	s.db.Save(&chat)
+}
+
+func (s *Server) getAnthropicAnswer(chat *Chat, c tele.Context, question *string) {
+	maxTokens := 1000
+	system := chat.MasterPrompt
+	if chat.RoleID != nil {
+		system = chat.Role.Prompt
+	}
+
+	chat.removeMenu(c)
+	sentMessage := chat.getSentMessage(c)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s.anthropic.Apply(anthropic.WithSystemPrompt(system))
+	s.anthropic.Apply(anthropic.WithTools(anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 5})))
+	s.anthropic.Apply(anthropic.WithMaxTokens(maxTokens))
+	// s.anthropic.Apply(anthropic.WithTemperature(chat.Temperature))
+
+	stream, err := s.anthropic.Stream(ctx, chat.getAnthropicDialog(question))
+	if err != nil {
+		Log.WithField("user", c.Sender().Username).Error(err)
+		_, _ = c.Bot().Edit(sentMessage, err.Error())
+		return
+	}
+	defer stream.Close()
+
+	var result strings.Builder
+	searchQuery := ""
+	_ = c.Notify(tele.Typing)
+	tokens := 0
+	accumulator := anthropic.NewResponseAccumulator()
+
+	for stream.Next() {
+		select {
+		case <-ctx.Done():
+			_, _ = c.Bot().Edit(sentMessage, "Timeout")
+			return
+		default:
+			// Continue processing
+		}
+		event := stream.Event()
+		accumulator.AddEvent(event)
+
+		switch event.Type {
+		case anthropic.EventTypeContentBlockStart:
+			if event.ContentBlock != nil {
+				switch event.ContentBlock.Type {
+				case anthropic.ContentTypeServerToolUse:
+					if event.ContentBlock.Name == "web_search" {
+						_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
+					} else {
+						Log.WithField("content_block", event.ContentBlock.Name).Info("Content block started")
+					}
+				}
+			}
+		case anthropic.EventTypeContentBlockDelta:
+			if event.Delta == nil {
+				continue
+			}
+			switch event.Delta.Type {
+			case anthropic.EventDeltaTypeText:
+				result.WriteString(event.Delta.Text)
+				tokens++
+				if tokens%10 == 0 {
+					_, _ = c.Bot().Edit(sentMessage, result.String())
+				}
+
+			case anthropic.EventDeltaTypeInputJSON:
+				searchQuery += event.Delta.PartialJSON
+				// Log("Input JSON delta: %q", event.Delta.PartialJSON)
+			}
+
+		case anthropic.EventTypeMessageStop:
+			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Response stream finished")
+			// done
+		}
+	}
+	Log.WithField("searchQuery", searchQuery).Info("Search query")
+
+	if err := stream.Err(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			Log.WithField("user", c.Sender().Username).Error("Timeout after 60s. Partial response: ", result.String())
+			_, _ = c.Bot().Edit(sentMessage, "Timeout after 60s. Partial response: "+result.String())
+		} else if ctx.Err() == context.Canceled {
+			Log.WithField("user", c.Sender().Username).Error("Request cancelled. Partial response: ", result.String())
+			_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial response: "+result.String())
+		} else {
+			Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
+			_, _ = c.Bot().Edit(sentMessage, "Streaming error: "+err.Error())
+		}
+	}
+
+	if accumulator.IsComplete() {
+		usage := accumulator.Usage()
+		reply := result.String()
+		s.updateReply(chat, reply, c)
+		tokens = usage.InputTokens + usage.OutputTokens
+		// Update token count and save history
+		if tokens > 0 {
+			chat.updateTotalTokens(tokens)
+		}
+
+		if reply != "" {
+			chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
+			s.saveHistory(chat)
+		}
+	}
 }
 
 func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {

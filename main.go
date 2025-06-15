@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
+	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"golang.org/x/crypto/ssh/terminal"
@@ -105,7 +106,7 @@ func main() {
 			}),
 		}
 		if conf.AnthropicEnabled {
-			server.anthropic = openai.NewClient(conf.AnthropicAPIKey, "").SetBaseURL("https://api.anthropic.com/v1")
+			server.anthropic = anthropic.New(anthropic.WithAPIKey(conf.AnthropicAPIKey))
 		}
 		if conf.GeminiEnabled {
 			server.gemini = openai.NewClient(conf.GeminiAPIKey, "").SetBaseURL("https://generativelanguage.googleapis.com/v1beta/openai")

@@ -1,6 +1,6 @@
 module github.com/tectiv3/chatgpt-bot
 
-go 1.23.3
+go 1.24.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3
@@ -34,6 +34,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-sqlite3 v1.14.28 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
+	github.com/tectiv3/anthropic-go v0.1.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
