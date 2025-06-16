@@ -122,6 +122,7 @@ type ChatMessage struct {
 	ToolCallID *string                `json:"tool_call_id,omitempty"`
 	Content    *string                `json:"content,omitempty"`
 	ImagePath  *string                `json:"image_path,omitempty"`
+	Filename   *string                `json:"filename,omitempty"`
 
 	// for function call
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'

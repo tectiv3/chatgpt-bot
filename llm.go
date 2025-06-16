@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -28,24 +29,38 @@ func (s *Server) convertDialogToResponseMessages(history []openai.ChatMessage) [
 		if msg.Role == openai.ChatMessageRoleSystem {
 			continue
 		}
-
-		// Convert content to string
-		content, err := msg.ContentString()
-		if err != nil {
-			// Try to get content from array format
-			if contentArr, arrErr := msg.ContentArray(); arrErr == nil {
-				for _, c := range contentArr {
-					if c.Type == "text" && c.Text != nil {
-						content = *c.Text
-						break
-					}
+		if str, err := msg.ContentString(); err == nil {
+			messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: str})
+		} else if contentArr, err := msg.ContentArray(); err == nil {
+			fixed := []openai.ChatMessageContent{}
+			for _, c := range contentArr {
+				if c.Type == "text" && c.Text != nil {
+					fixed = append(fixed, openai.ChatMessageContent{Type: "input_text", Text: c.Text})
+				} else {
+					fixed = append(fixed, c)
 				}
 			}
+			messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: fixed})
 		}
+		//
+		// 		// Convert content to string
+		// 		content, err := msg.ContentString()
+		// 		if err != nil {
+		// 			// Try to get content from array format
+		// 			if contentArr, arrErr := msg.ContentArray(); arrErr == nil {
+		// 				for _, c := range contentArr {
+		// 					if c.Type == "text" && c.Text != nil {
+		// 						// content = *c.Text
+		// 						break
+		// } else if c.Type == "image_url" && c.ImageURL != nil {
+		// 				}
+		// 			}
+		// 		}
+		//
 
-		if content != "" {
-			messages = append(messages, openai.NewResponseMessage(string(msg.Role), content))
-		}
+		// 		if content != "" {
+		// messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: msg.Content})
+		// }
 	}
 
 	return messages
@@ -91,6 +106,7 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	}
 	options.SetUser(userAgent(c.Sender().ID))
 	options.SetStore(false)
+	// aiClient.Verbose = s.conf.Verbose
 
 	// tools := s.getFunctionTools()
 	// if len(tools) > 0 {
@@ -934,4 +950,35 @@ func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
 			return
 		}
 	}
+}
+
+func (s *Server) processPDF(c tele.Context) {
+	pdf := c.Message().Document.File
+	var fileName string
+
+	if s.conf.TelegramServerURL != "" {
+		f, err := c.Bot().FileByID(pdf.FileID)
+		if err != nil {
+			Log.Warn("Error getting file ID", "error=", err)
+			return
+		}
+		fileName = f.FilePath
+	} else {
+		out, err := os.Create("uploads/" + pdf.FileID + ".pdf")
+		if err != nil {
+			Log.Warn("Error creating file", "error=", err)
+			return
+		}
+		if err := c.Bot().Download(&pdf, out.Name()); err != nil {
+			Log.Warn("Error getting file content", "error=", err)
+			return
+		}
+		fileName = out.Name()
+	}
+
+	chat := s.getChat(c.Chat(), c.Sender())
+	chat.addFileToDialog(c.Message().Caption, fileName, c.Message().Document.FileName)
+	s.db.Save(&chat)
+
+	s.complete(c, "", true)
 }
