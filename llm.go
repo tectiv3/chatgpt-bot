@@ -36,6 +36,14 @@ func (s *Server) convertDialogToResponseMessages(history []openai.ChatMessage) [
 			for _, c := range contentArr {
 				if c.Type == "text" && c.Text != nil {
 					fixed = append(fixed, openai.ChatMessageContent{Type: "input_text", Text: c.Text})
+				} else if c.Type == "image_url" {
+					// cast c.ImageURL to map[string]string and get "url"
+					if url, ok := c.ImageURL.(map[string]string)["url"]; ok {
+						fixed = append(fixed, openai.ChatMessageContent{Type: "input_image", ImageURL: url})
+					} else {
+						Log.Warnf("Image URL is not a string map: %v", c.ImageURL)
+						continue
+					}
 				} else {
 					fixed = append(fixed, c)
 				}
@@ -194,7 +202,7 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 				switch event.Item.Type {
 				case "message":
 					Log.WithField("user", c.Sender().Username).Info("Message output completed")
-					s.updateReply(chat, event.Item.Content[0].Text, c)
+					s.updateReply(chat, reply, c)
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
 					Log.WithField("user", c.Sender().Username).WithField("function", event.Item.Name).Info("Function call completed")
