@@ -37,6 +37,11 @@ func (s *Server) onDocument(c tele.Context) {
 	}
 
 	// Validate file type
+	if c.Message().Document.MIME == "application/pdf" {
+		s.processPDF(c)
+		return
+	}
+
 	if c.Message().Document.MIME != "text/plain" {
 		chat := s.getChat(c.Chat(), c.Sender())
 		_ = c.Send(

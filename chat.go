@@ -64,6 +64,21 @@ func (c *Chat) addImageToDialog(text, path string) {
 		})
 }
 
+func (c *Chat) addFileToDialog(text, path, filename string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.History = append(c.History,
+		ChatMessage{
+			Role:      openai.ChatMessageRoleUser,
+			Content:   &text,
+			ImagePath: &path,
+			Filename:  &filename,
+			ChatID:    c.ChatID,
+			CreatedAt: time.Now(),
+		})
+}
+
 func (c *Chat) addMessageToDialog(msg openai.ChatMessage) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -121,7 +136,24 @@ func (c *Chat) getDialog(request *string) []openai.ChatMessage {
 
 		var message openai.ChatMessage
 
-		if h.ImagePath != nil {
+		if h.Filename != nil {
+			reader, err := os.Open(*h.ImagePath)
+			if err != nil {
+				Log.Warn("Error opening image file", "error=", err)
+				continue
+			}
+			defer reader.Close()
+
+			bytes, err := io.ReadAll(reader)
+			if err != nil {
+				Log.Warn("Error reading file content", "error=", err)
+				continue
+			}
+			content := []openai.ChatMessageContent{{Type: "text", Text: h.Content}}
+			content = append(content, openai.NewChatMessageContentFileWithBytes(bytes, *h.Filename))
+			Log.Info("Adding file message to history", "filename=", *h.Filename)
+			message = openai.ChatMessage{Role: h.Role, Content: content}
+		} else if h.ImagePath != nil {
 			reader, err := os.Open(*h.ImagePath)
 			if err != nil {
 				Log.Warn("Error opening image file", "error=", err)
