@@ -108,14 +108,14 @@ func (s *Server) findRole(userID uint, name string) *Role {
 
 func (s *Server) getModel(model string) *AiModel {
 	modelName := model
-	if model == openAILatest {
+	if modelName == openAILatest {
 		modelName = s.conf.OpenAILatestModel
 	}
 	for _, m := range s.conf.Models {
-		if m.Name == model {
+		if m.Name == modelName {
 			return &m
 		}
-		if m.ModelID == model {
+		if m.ModelID == modelName {
 			return &m
 		}
 	}
