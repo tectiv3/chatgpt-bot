@@ -89,9 +89,14 @@ func (s *Server) onDocument(c tele.Context) {
 	if len(response) == 0 {
 		return
 	}
-
-	file := tele.FromReader(strings.NewReader(response))
-	_ = c.Send(&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"})
+	// only if len response > 4kb then reply as a file but generate filename using mini
+	if len(response) > 4000 {
+		file := tele.FromReader(strings.NewReader(response))
+		fileName := fmt.Sprintf("answer_%d.md", time.Now().Unix())
+		_ = c.Send(&tele.Document{File: file, FileName: fileName, MIME: "text/plain"})
+		return
+	}
+	_ = c.Send(response, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
 }
 
 func (s *Server) onText(c tele.Context) {

@@ -29,6 +29,16 @@ func (s *Server) convertDialogToResponseMessages(history []openai.ChatMessage) [
 		if msg.Role == openai.ChatMessageRoleSystem {
 			continue
 		}
+		// Convert tool messages to user messages with clear context for Responses API
+		if msg.Role == openai.ChatMessageRoleTool {
+			if str, err := msg.ContentString(); err == nil {
+				messages = append(messages, openai.ResponseMessage{
+					Role:    "user",
+					Content: fmt.Sprintf("[Tool execution result]: %s", str),
+				})
+			}
+			continue
+		}
 		if str, err := msg.ContentString(); err == nil {
 			messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: str})
 		} else if contentArr, err := msg.ContentArray(); err == nil {
@@ -116,13 +126,17 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	options.SetStore(false)
 	// aiClient.Verbose = s.conf.Verbose
 
-	// tools := s.getFunctionTools()
-	// if len(tools) > 0 {
+	// Get custom function tools for responses API
+	tools := s.getResponseTools()
+
+	// Add built-in search tool if configured
 	if len(model.SearchTool) > 0 {
-		options.SetTools([]any{openai.NewBuiltinTool(model.SearchTool)})
+		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
 	}
-	options.SetToolChoiceAuto()
-	// }
+
+	if len(tools) > 0 {
+		options.SetTools(tools)
+	}
 
 	ctx, cancel := WithTimeout(LongTimeout)
 	defer cancel()
@@ -153,6 +167,28 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 			// Handle function calls if any
 			if len(functionCalls) > 0 {
 				_ = c.Notify(tele.Typing)
+
+				// First, add the assistant's message with tool calls to conversation history
+				assistantMsg := openai.NewChatAssistantMessage(reply)
+				// Convert ResponseOutput function calls to ToolCall format for history
+				var toolCalls []openai.ToolCall
+				for _, responseOutput := range functionCalls {
+					if responseOutput.Type == "function_call" {
+						toolCall := openai.ToolCall{
+							ID:   responseOutput.CallID,
+							Type: "function",
+							Function: openai.ToolCallFunction{
+								Name:      responseOutput.Name,
+								Arguments: responseOutput.Arguments,
+							},
+						}
+						toolCalls = append(toolCalls, toolCall)
+					}
+				}
+				assistantMsg.ToolCalls = toolCalls
+				chat.addMessageToDialog(assistantMsg)
+
+				// Execute the tool calls
 				result, err := s.handleResponseFunctionCalls(chat, c, functionCalls)
 				if err != nil {
 					return err

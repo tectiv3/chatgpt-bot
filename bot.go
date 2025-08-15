@@ -468,11 +468,13 @@ func (s *Server) run() {
 			role = chat.Role.Name
 		}
 
+		model := s.getModel(chat.ModelName)
 		return c.Send(
 			fmt.Sprintf(
-				"Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConvesation Age (days): %d\nRole: %s",
+				"Version: %s\nModel: %s (%s)\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConversation Age (days): %d\nRole: %s",
 				Version,
-				s.getModel(chat.ModelName),
+				model.Name,
+				model.Provider,
 				chat.Temperature,
 				prompt,
 				status,
