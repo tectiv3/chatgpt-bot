@@ -257,6 +257,143 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	return nil
 }
 
+// getResponse uses the non-streaming Responses API
+func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error {
+	_ = c.Notify(tele.Typing)
+
+	history := chat.getDialog(question)
+	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Response Non-Stream")
+
+	chat.removeMenu(c)
+
+	model := s.getModel(chat.ModelName)
+	if model.Provider != pOpenAI {
+		return s.getAnswer(chat, c, question)
+	}
+
+	modelID := model.ModelID
+	messages := s.convertDialogToResponseMessages(history)
+	aiClient := s.openAI
+
+	instructions := chat.MasterPrompt
+	if chat.RoleID != nil {
+		instructions = chat.Role.Prompt
+	}
+	// append current date and time to instructions
+	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
+
+	options := openai.ResponseOptions{}
+	options.SetInstructions(instructions)
+	options.SetMaxOutputTokens(4000)
+	if !model.Reasoning {
+		options.SetTemperature(chat.Temperature)
+	}
+	options.SetUser(userAgent(c.Sender().ID))
+	options.SetStore(false)
+
+	// Get custom function tools for responses API
+	tools := s.getResponseTools()
+
+	// Add built-in search tool if configured
+	if len(model.SearchTool) > 0 {
+		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
+	}
+
+	if len(tools) > 0 {
+		options.SetTools(tools)
+	}
+
+	ctx, cancel := WithTimeout(LongTimeout)
+	defer cancel()
+
+	response, err := aiClient.CreateResponseWithContext(ctx, modelID, messages, options)
+	if err != nil {
+		Log.WithField("user", c.Sender().Username).Error("Response error:", err)
+		return err
+	}
+
+	// Check if response has function calls
+	var functionCalls []openai.ResponseOutput
+	for _, output := range response.Output {
+		if output.Type == "function_call" {
+			functionCalls = append(functionCalls, output)
+		}
+	}
+
+	// Handle function calls if any
+	if len(functionCalls) > 0 {
+		_ = c.Notify(tele.Typing)
+
+		// First, add the assistant's message with tool calls to conversation history
+		reply := ""
+		if len(response.Output) > 0 {
+			for _, output := range response.Output {
+				if output.Type == "message" && len(output.Content) > 0 {
+					for _, content := range output.Content {
+						if content.Type == "text" && content.Text != "" {
+							reply += content.Text
+						}
+					}
+				}
+			}
+		}
+
+		assistantMsg := openai.NewChatAssistantMessage(reply)
+		// Convert ResponseOutput function calls to ToolCall format for history
+		var toolCalls []openai.ToolCall
+		for _, responseOutput := range functionCalls {
+			if responseOutput.Type == "function_call" {
+				toolCall := openai.ToolCall{
+					ID:   responseOutput.CallID,
+					Type: "function",
+					Function: openai.ToolCallFunction{
+						Name:      responseOutput.Name,
+						Arguments: responseOutput.Arguments,
+					},
+				}
+				toolCalls = append(toolCalls, toolCall)
+			}
+		}
+		assistantMsg.ToolCalls = toolCalls
+		chat.addMessageToDialog(assistantMsg)
+
+		// Execute the tool calls
+		result, err := s.handleResponseFunctionCalls(chat, c, functionCalls)
+		if err != nil {
+			return err
+		}
+
+		// Update UI with tool results and end conversation
+		s.updateReply(chat, reply+"\n\n"+result, c)
+		return nil
+	}
+
+	// No function calls - handle normal response
+	reply := ""
+	for _, output := range response.Output {
+		if output.Type == "message" && len(output.Content) > 0 {
+			for _, content := range output.Content {
+				if content.Type == "text" && content.Text != "" {
+					reply += content.Text
+				}
+			}
+		}
+	}
+
+	// Update token count and save history
+	if response.Usage != nil {
+		chat.updateTotalTokens(response.Usage.TotalTokens)
+	}
+
+	if reply != "" {
+		chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
+		s.saveHistory(chat)
+		s.updateReply(chat, reply, c)
+	}
+
+	return nil
+}
+
 func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	ctx, cancel := WithTimeout(DefaultTimeout)
 	defer cancel()
