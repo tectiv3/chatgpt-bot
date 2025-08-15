@@ -4,10 +4,18 @@ import (
 	"context"
 	"github.com/go-shiori/go-readability"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 )
+
+// withBrowserUserAgent creates a RequestWith modifier that sets a realistic browser user agent
+func withBrowserUserAgent() readability.RequestWith {
+	return func(r *http.Request) {
+		r.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+	}
+}
 
 // VectorStore is the interface for saving and querying documents in the
 // form of vector embeddings.
@@ -81,7 +89,7 @@ func saveToVectorDb(timeoutCtx context.Context, docs []Document, sessionString s
 }
 
 func DownloadWebsiteToVectorDB(ctx context.Context, url string, sessionString string) error {
-	article, err := readability.FromURL(url, 10*time.Second)
+	article, err := readability.FromURL(url, 10*time.Second, withBrowserUserAgent())
 	if err != nil {
 		return err
 	}

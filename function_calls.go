@@ -19,6 +19,13 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
+// withBrowserUserAgent creates a RequestWith modifier that sets a realistic browser user agent
+func withBrowserUserAgent() readability.RequestWith {
+	return func(r *http.Request) {
+		r.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+	}
+}
+
 // getResponseTools converts function tools to format compatible with Responses API
 func (s *Server) getResponseTools() []any {
 	traditionalTools := s.getFunctionTools()
@@ -454,7 +461,7 @@ func (s *Server) pageToSpeech(c tele.Context, url string) {
 		}
 	}()
 
-	article, err := readability.FromURL(url, 30*time.Second)
+	article, err := readability.FromURL(url, 30*time.Second, withBrowserUserAgent())
 	if err != nil {
 		Log.Fatalf("failed to parse %s, %v\n", url, err)
 	}
@@ -473,7 +480,7 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
-	article, err := readability.FromURL(url, 30*time.Second)
+	article, err := readability.FromURL(url, 30*time.Second, withBrowserUserAgent())
 	if err != nil {
 		Log.Fatalf("failed to parse %s, %v\n", url, err)
 	}
