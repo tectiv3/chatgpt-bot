@@ -1,21 +1,17 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-shiori/go-readability"
 	"github.com/meinside/openai-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
-	"github.com/tectiv3/chatgpt-bot/tools"
-	"github.com/tectiv3/chatgpt-bot/vectordb"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -200,110 +196,6 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 		Log.WithField("tools", toolCallsCount).WithField("tool", i).WithField("function", function.Name).WithField("user", c.Sender().Username).Info("Function call")
 
 		switch function.Name {
-		case "search_images":
-			type parsed struct {
-				Query  string `json:"query"`
-				Type   string `json:"type"`
-				Region string `json:"region"`
-			}
-			var arguments parsed
-			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
-				continue
-			}
-			if s.conf.Verbose {
-				Log.Info("Will call ", function.Name, "(", arguments.Query, ", ", arguments.Type, ", ", arguments.Region, ")")
-			}
-			_, _ = c.Bot().Edit(sentMessage,
-				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query),
-			)
-			param, err := tools.NewSearchImageParam(arguments.Query, arguments.Region, arguments.Type)
-			if err != nil {
-				resultErr = err
-				continue
-			}
-			result := tools.SearchImages(param)
-			if result.IsErr() {
-				resultErr = result.Error()
-				continue
-			}
-			res := *result.Unwrap()
-			if len(res) == 0 {
-				resultErr = fmt.Errorf("no results found")
-				continue
-			}
-			img := tele.FromURL(res[0].Image)
-			return "", c.Send(&tele.Photo{
-				File:    img,
-				Caption: fmt.Sprintf("%s\n%s", res[0].Title, res[0].Link),
-			})
-
-		case "web_search":
-			type parsed struct {
-				Query string `json:"query"`
-				// Region string `json:"region"`
-			}
-			var arguments parsed
-			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
-				continue
-			}
-			if len(reply) > 0 {
-				reply += "\n"
-			}
-			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
-			_, _ = c.Bot().Edit(sentMessage, reply)
-
-			if s.conf.Verbose {
-				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
-			}
-			var err error
-			result, err = s.webSearchSearX(arguments.Query, "wt-wt", c.Sender().Username)
-			if err != nil {
-				Log.Warn("Failed to search web", "error=", err)
-				continue
-			}
-			resultErr = nil
-			toolID = toolCall.ID
-			// Add assistant message with tool call to dialog
-			assistantMsg := openai.ChatMessage{
-				Role:      openai.ChatMessageRoleAssistant,
-				ToolCalls: []openai.ToolCall{toolCall},
-			}
-			chat.addMessageToDialog(assistantMsg)
-
-		case "vector_search":
-			type parsed struct {
-				Query string `json:"query"`
-			}
-			var arguments parsed
-			if err := toolCall.ArgumentsInto(&arguments); err != nil {
-				resultErr = fmt.Errorf("failed to parse arguments into struct: %s", err)
-				continue
-			}
-			if s.conf.Verbose {
-				Log.Info("Will call ", function.Name, "(", arguments.Query, ")")
-			}
-			if len(reply) > 0 {
-				reply += "\n"
-			}
-			reply += fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Query)
-			_, _ = c.Bot().Edit(sentMessage, reply)
-			var err error
-			result, err = s.vectorSearch(arguments.Query, c.Sender().Username)
-			if err != nil {
-				Log.Warn("Failed to search vector", "error=", err)
-				continue
-			}
-			resultErr = nil
-			toolID = toolCall.ID
-			// Add assistant message with tool call to dialog
-			assistantMsg := openai.ChatMessage{
-				Role:      openai.ChatMessageRoleAssistant,
-				ToolCalls: []openai.ToolCall{toolCall},
-			}
-			chat.addMessageToDialog(assistantMsg)
-
 		case "text_to_speech":
 			type parsed struct {
 				Text     string `json:"text"`
@@ -390,7 +282,9 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 				continue
 			}
 
-			return fmt.Sprintf("Reminder set for %d minutes from now", arguments.Minutes), nil
+			reminderResult := fmt.Sprintf("Reminder set for %d minutes from now", arguments.Minutes)
+			result = reminderResult
+			toolID = toolCall.ID
 
 		case "make_summary":
 			type parsed struct {
@@ -407,8 +301,16 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.URL),
 			)
-			go s.getPageSummary(chat, arguments.URL)
-			continue
+
+			summary, err := s.getPageSummary(arguments.URL)
+			if err != nil {
+				resultErr = fmt.Errorf("failed to get page summary: %s", err)
+				continue
+			}
+
+			// Store result for continuing conversation
+			result = summary
+			toolID = toolCall.ID
 
 		case "get_crypto_rate":
 			type parsed struct {
@@ -425,7 +327,15 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 			_, _ = c.Bot().Edit(sentMessage,
 				fmt.Sprintf(chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": chat.t(function.Name)}), arguments.Asset))
 
-			return s.getCryptoRate(arguments.Asset)
+			rate, err := s.getCryptoRate(arguments.Asset)
+			if err != nil {
+				resultErr = fmt.Errorf("failed to get crypto rate: %s", err)
+				continue
+			}
+
+			// Store result for continuing conversation
+			result = rate
+			toolID = toolCall.ID
 		}
 	}
 
@@ -435,13 +345,30 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 	}
 	chat.addToolResultToDialog(toolID, result)
 
+	// For OpenAI Responses API, don't automatically continue the conversation
+	// Let the tool result be the final response, user can ask follow-up questions
+	model := s.getModel(chat.ModelName)
+	if model.Provider == pOpenAI {
+		// Save history and return - conversation ends with tool result
+		s.saveHistory(chat)
+		return result, nil
+	}
+
+	// For other providers, continue with Chat Completions API
 	if chat.Stream {
 		_ = s.getStreamAnswer(chat, c, nil)
 		return "", nil
 	}
 
-	err := s.getAnswer(chat, c, nil)
-	return "", err
+	// Non-streaming mode
+	if model.Provider == pOpenAI {
+		// TODO: Implement non-streaming Responses API continuation with tool results
+		err := s.getAnswer(chat, c, nil)
+		return "", err
+	} else {
+		err := s.getAnswer(chat, c, nil)
+		return "", err
+	}
 }
 
 func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
@@ -474,15 +401,17 @@ func (s *Server) pageToSpeech(c tele.Context, url string) {
 	s.sendAudio(c, article.TextContent)
 }
 
-func (s *Server) getPageSummary(chat *Chat, url string) {
+// getPageSummary gets a page summary synchronously and returns the result
+func (s *Server) getPageSummary(url string) (string, error) {
 	defer func() {
 		if err := recover(); err != nil {
 			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
 		}
 	}()
+
 	article, err := readability.FromURL(url, 30*time.Second, withBrowserUserAgent())
 	if err != nil {
-		Log.Fatalf("failed to parse %s, %v\n", url, err)
+		return "", fmt.Errorf("failed to parse %s: %v", url, err)
 	}
 
 	if s.conf.Verbose {
@@ -497,24 +426,12 @@ func (s *Server) getPageSummary(chat *Chat, url string) {
 
 	response, err := s.openAI.CreateChatCompletion(miniModel, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
 	if err != nil {
-		Log.Warn("failed to create chat completion", "error=", err)
-		s.bot.Send(tele.ChatID(chat.ChatID), err.Error(), "text", replyMenu)
-		return
+		return "", fmt.Errorf("failed to create chat completion: %v", err)
 	}
 
-	chat.TotalTokens += response.Usage.TotalTokens
 	str, _ := response.Choices[0].Message.ContentString()
-	chat.addMessageToDialog(openai.NewChatAssistantMessage(str))
-	s.db.Save(&chat)
 
-	if _, err := s.bot.Send(tele.ChatID(chat.ChatID),
-		str,
-		"text",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-		replyMenu,
-	); err != nil {
-		Log.Error("Sending", "error=", err)
-	}
+	return str, nil
 }
 
 func (s *Server) getCryptoRate(asset string) (string, error) {
@@ -525,15 +442,10 @@ func (s *Server) getCryptoRate(asset string) (string, error) {
 		asset = "bitcoin"
 	case "eth":
 		asset = "ethereum"
-	case "ltc":
-		asset = "litecoin"
 	case "sol":
 		asset = "solana"
 	case "xrp":
 		asset = "ripple"
-		format = "$%0.3f"
-	case "xlm":
-		asset = "stellar"
 		format = "$%0.3f"
 	case "ada":
 		asset = "cardano"
@@ -559,138 +471,4 @@ func (s *Server) getCryptoRate(asset string) (string, error) {
 	price, _ := strconv.ParseFloat(symbol.Data.PriceUsd, 64)
 
 	return fmt.Sprintf(format, price), nil
-}
-
-func (s *Server) webSearchDDG(input, region, username string) (string, error) {
-	param, err := tools.NewSearchParam(input, region)
-	if err != nil {
-		return "", err
-	}
-	result := tools.Search(param)
-	if result.IsErr() {
-		return "", result.Error()
-	}
-	res := *result.Unwrap()
-	if len(res) == 0 {
-		return "", fmt.Errorf("no results found")
-	}
-	Log.Info("Search results found=", len(res))
-	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
-	limit := 10
-
-	wg := sync.WaitGroup{}
-	counter := 0
-	for i := range res {
-		if counter > limit {
-			break
-		}
-		// if result link ends in .pdf, skip
-		if strings.HasSuffix(res[i].Link, ".pdf") {
-			continue
-		}
-
-		counter += 1
-		wg.Add(1)
-		go func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
-				}
-			}()
-			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].Link, username)
-			if err != nil {
-				Log.Warn("Error downloading website", "error=", err)
-				wg.Done()
-				return
-			}
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
-
-	return s.vectorSearch(input, username)
-}
-
-func (s *Server) webSearchSearX(input, region, username string) (string, error) {
-	input = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(input, "\""), "\""), "?")
-	//if region != "" && region != "wt-wt" {
-	//	input += ":" + region
-	//}
-	res, err := tools.SearchSearX(input)
-	if err != nil {
-		return "", err
-	}
-
-	Log.Info("Search results found=", len(res))
-	ctx := context.WithValue(context.Background(), "ollama", s.conf.OllamaEnabled)
-	limit := 10
-
-	wg := sync.WaitGroup{}
-	counter := 0
-	for i := range res {
-		if counter > limit {
-			break
-		}
-		// if result link ends in .pdf, skip
-		if strings.HasSuffix(res[i].URL, ".pdf") {
-			continue
-		}
-
-		counter += 1
-		wg.Add(1)
-		go func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
-				}
-			}()
-			err := vectordb.DownloadWebsiteToVectorDB(ctx, res[i].URL, username)
-			if err != nil {
-				Log.Warn("Error downloading website", "error=", err)
-				wg.Done()
-				return
-			}
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
-
-	return s.vectorSearch(input, username)
-}
-
-func (s *Server) vectorSearch(input string, username string) (string, error) {
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "ollama", s.conf.OllamaEnabled)
-	docs, err := vectordb.SearchVectorDB(ctx, input, username)
-	type DocResult struct {
-		Text   string
-		Source string
-	}
-	var results []DocResult
-
-	for _, r := range docs {
-		newResult := DocResult{Text: r.PageContent}
-		source, ok := r.Metadata["url"].(string)
-		if ok {
-			newResult.Source = source
-		}
-
-		results = append(results, newResult)
-	}
-
-	if len(docs) == 0 {
-		response := "no results found. Try other db search keywords or download more websites."
-		Log.Warn("no results found", "input", input)
-		results = append(results, DocResult{Text: response})
-	} else if len(results) == 0 {
-		response := "No new results found, all returned results have been used already. Try other db search keywords or download more websites."
-		results = append(results, DocResult{Text: response})
-	}
-
-	resultJson, err := json.Marshal(results)
-	if err != nil {
-		return "", err
-	}
-
-	return string(resultJson), nil
 }
