@@ -362,8 +362,8 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 
 	// Non-streaming mode
 	if model.Provider == pOpenAI {
-		// TODO: Implement non-streaming Responses API continuation with tool results
-		err := s.getAnswer(chat, c, nil)
+		// For OpenAI models, use non-streaming Responses API
+		err := s.getResponse(chat, c, nil)
 		return "", err
 	} else {
 		err := s.getAnswer(chat, c, nil)
