@@ -116,13 +116,18 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	options.SetStore(false)
 	// aiClient.Verbose = s.conf.Verbose
 
-	// tools := s.getFunctionTools()
-	// if len(tools) > 0 {
+	// Get custom function tools for responses API
+	tools := s.getResponseTools()
+
+	// Add built-in search tool if configured
 	if len(model.SearchTool) > 0 {
-		options.SetTools([]any{openai.NewBuiltinTool(model.SearchTool)})
+		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
 	}
-	options.SetToolChoiceAuto()
-	// }
+
+	if len(tools) > 0 {
+		options.SetTools(tools)
+		options.SetToolChoiceAuto()
+	}
 
 	ctx, cancel := WithTimeout(LongTimeout)
 	defer cancel()

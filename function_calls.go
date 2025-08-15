@@ -19,6 +19,27 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
+// getResponseTools converts function tools to format compatible with Responses API
+func (s *Server) getResponseTools() []any {
+	traditionalTools := s.getFunctionTools()
+	responseTools := make([]any, 0, len(traditionalTools))
+
+	for _, tool := range traditionalTools {
+		// Convert ChatCompletionTool to ResponseTool format
+		responseTool := openai.ResponseTool{
+			Type:       "function",
+			Name:       tool.Function.Name,
+			Parameters: tool.Function.Parameters,
+		}
+		if tool.Function.Description != nil {
+			responseTool.Description = *tool.Function.Description
+		}
+		responseTools = append(responseTools, responseTool)
+	}
+
+	return responseTools
+}
+
 func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	availableTools := []openai.ChatCompletionTool{
 		/*
@@ -124,19 +145,45 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	return availableTools
 }
 
+// handleResponseFunctionCalls converts ResponseOutput to ToolCalls and delegates to unified handler
 func (s *Server) handleResponseFunctionCalls(chat *Chat, c tele.Context, functions []openai.ResponseOutput) (string, error) {
-	return "", nil
+	// Convert ResponseOutput function calls to ToolCall format
+	var toolCalls []openai.ToolCall
+
+	for _, responseOutput := range functions {
+		// Only process function calls
+		if responseOutput.Type != "function_call" {
+			continue
+		}
+
+		toolCall := openai.ToolCall{
+			ID:   responseOutput.CallID,
+			Type: "function",
+			Function: openai.ToolCallFunction{
+				Name:      responseOutput.Name,
+				Arguments: responseOutput.Arguments,
+			},
+		}
+		toolCalls = append(toolCalls, toolCall)
+	}
+
+	// Use the unified handler with converted tool calls
+	return s.handleToolCalls(chat, c, toolCalls)
 }
 
 func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
-	// refactor to handle multiple function calls not just the first one
+	return s.handleToolCalls(chat, c, response.ToolCalls)
+}
+
+// handleToolCalls processes a slice of tool calls (unified logic for both APIs)
+func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.ToolCall) (string, error) {
 	result := ""
 	var resultErr error
 	var toolID string
 	sentMessage := chat.getSentMessage(c)
-	toolCallsCount := len(response.ToolCalls)
+	toolCallsCount := len(toolCalls)
 	reply := ""
-	for i, toolCall := range response.ToolCalls {
+	for i, toolCall := range toolCalls {
 		function := toolCall.Function
 		if function.Name == "" {
 			err := fmt.Sprint("there was no returned function call name")
@@ -211,8 +258,12 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			resultErr = nil
 			toolID = toolCall.ID
-			response.Role = openai.ChatMessageRoleAssistant
-			chat.addMessageToDialog(response)
+			// Add assistant message with tool call to dialog
+			assistantMsg := openai.ChatMessage{
+				Role:      openai.ChatMessageRoleAssistant,
+				ToolCalls: []openai.ToolCall{toolCall},
+			}
+			chat.addMessageToDialog(assistantMsg)
 
 		case "vector_search":
 			type parsed struct {
@@ -239,8 +290,12 @@ func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.
 			}
 			resultErr = nil
 			toolID = toolCall.ID
-			response.Role = openai.ChatMessageRoleAssistant
-			chat.addMessageToDialog(response)
+			// Add assistant message with tool call to dialog
+			assistantMsg := openai.ChatMessage{
+				Role:      openai.ChatMessageRoleAssistant,
+				ToolCalls: []openai.ToolCall{toolCall},
+			}
+			chat.addMessageToDialog(assistantMsg)
 
 		case "text_to_speech":
 			type parsed struct {
