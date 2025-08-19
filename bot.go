@@ -38,6 +38,7 @@ const (
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
+	cmdHelp       = "/help"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	pOllama       = "ollama"
@@ -118,6 +119,69 @@ func (s *Server) run() {
 			"text",
 			&tele.SendOptions{ReplyTo: c.Message()},
 		)
+	})
+
+	b.Handle(cmdHelp, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		helpText := fmt.Sprintf(`%s
+
+**General:**
+/help - %s
+/start - %s
+/info - %s
+/reset - %s
+
+**Model Settings:**
+/model - %s
+/temperature - %s
+/stream - %s
+/qa - %s
+/age <days> - %s
+
+**Prompts & Roles:**
+/prompt <text> - %s
+/defaultprompt - %s
+/roles - %s
+/role <name> - %s
+
+**Translation:**
+/ja - %s
+/en - %s
+/ru - %s
+/it - %s
+/es - %s
+/cn - %s
+
+**Other Features:**
+/image <prompt> - %s
+/voice <url> - %s
+/lang <code> - %s`,
+			chat.t("Available commands:"),
+			chat.t("Show this help message"),
+			chat.t("Start the bot"),
+			chat.t("Show current settings"),
+			chat.t("Reset conversation history"),
+			chat.t("Select AI model"),
+			chat.t("Set creativity level (0.0-1.0)"),
+			chat.t("Toggle streaming responses"),
+			chat.t("Toggle questions list mode"),
+			chat.t("Set conversation history age limit"),
+			chat.t("Set custom system prompt"),
+			chat.t("Reset to default prompt"),
+			chat.t("Manage saved roles"),
+			chat.t("Switch to a specific role"),
+			chat.t("Translate to Japanese"),
+			chat.t("Translate to English"),
+			chat.t("Translate to Russian"),
+			chat.t("Translate to Italian"),
+			chat.t("Translate to Spanish"),
+			chat.t("Translate to Chinese"),
+			chat.t("Generate an image"),
+			chat.t("Convert webpage to speech"),
+			chat.t("Set bot language"))
+
+		return c.Send(helpText, "Markdown", &tele.SendOptions{ReplyTo: c.Message()})
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
