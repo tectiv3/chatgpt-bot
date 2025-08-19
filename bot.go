@@ -128,7 +128,6 @@ func (s *Server) run() {
 
 **General:**
 /help - %s
-/start - %s
 /info - %s
 /reset - %s
 
@@ -136,7 +135,6 @@ func (s *Server) run() {
 /model - %s
 /temperature - %s
 /stream - %s
-/qa - %s
 /age <days> - %s
 
 **Prompts & Roles:**
@@ -146,8 +144,8 @@ func (s *Server) run() {
 /role <name> - %s
 
 **Translation:**
-/ja - %s
 /en - %s
+/ja - %s
 /ru - %s
 /it - %s
 /es - %s
@@ -159,13 +157,11 @@ func (s *Server) run() {
 /lang <code> - %s`,
 			chat.t("Available commands:"),
 			chat.t("Show this help message"),
-			chat.t("Start the bot"),
 			chat.t("Show current settings"),
 			chat.t("Reset conversation history"),
 			chat.t("Select AI model"),
-			chat.t("Set creativity level (0.0-1.0)"),
+			chat.t("Set creativity level"),
 			chat.t("Toggle streaming responses"),
-			chat.t("Toggle questions list mode"),
 			chat.t("Set conversation history age limit"),
 			chat.t("Set custom system prompt"),
 			chat.t("Reset to default prompt"),
@@ -181,7 +177,10 @@ func (s *Server) run() {
 			chat.t("Convert webpage to speech"),
 			chat.t("Set bot language"))
 
-		return c.Send(helpText, "Markdown", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Send(ConvertMarkdownToTelegramMarkdownV2(helpText), "text", &tele.SendOptions{
+			ReplyTo:   c.Message(),
+			ParseMode: tele.ModeMarkdownV2,
+		})
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
