@@ -39,6 +39,7 @@ const (
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
 	cmdHelp       = "/help"
+	cmdMiniApp    = "/webapp"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	pOllama       = "ollama"
@@ -179,6 +180,21 @@ func (s *Server) run() {
 		})
 	})
 
+	b.Handle(cmdMiniApp, func(c tele.Context) error {
+		if !s.conf.MiniAppEnabled {
+			return c.Reply("Mini app is not enabled")
+		}
+
+		// Create inline keyboard with mini app button
+		markup := &tele.ReplyMarkup{}
+		btnWebApp := markup.WebApp("🚀 Open Assistant", &tele.WebApp{
+			URL: s.conf.MiniAppURL,
+		})
+		markup.Inline(markup.Row(btnWebApp))
+
+		return c.Send("Open the mini app to chat with enhanced features like threading, visual settings, and role management:", markup)
+	})
+
 	b.Handle(cmdModel, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		model := strings.TrimSpace(c.Message().Payload)
@@ -247,6 +263,7 @@ func (s *Server) run() {
 	b.Handle(cmdRoles, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		roles := chat.User.Roles
+
 		rows := []tele.Row{}
 		// iterate over roles, add menu button with role name 3 buttons in a row
 		row := []tele.Btn{

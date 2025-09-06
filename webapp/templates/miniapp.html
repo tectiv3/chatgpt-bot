@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.BotName}} Assistant</title>
+    <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="/assets/css/app.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Loading State -->
+        <div v-if="loading" class="loading-container">
+            <div class="loading-spinner"></div>
+            <div>Loading...</div>
+        </div>
+
+        <!-- Main App -->
+        <div v-else class="app-container">
+            <!-- Sidebar -->
+            <div class="sidebar" :class="{ 'sidebar-open': sidebarOpen }">
+                <div class="sidebar-header">
+                    <button @click="newThread()" class="new-thread-btn">
+                        <i class="fas fa-plus"></i>
+                        New Thread
+                    </button>
+                </div>
+                
+                <div class="threads-list">
+                    <div 
+                        v-for="thread in sortedThreads" 
+                        :key="thread.id"
+                        @click="selectThread(thread.id)"
+                        class="thread-item"
+                        :class="{ active: currentThreadId === thread.id }"
+                    >
+                        <div class="thread-title">[[ thread.title ]]</div>
+                        <div class="thread-meta">
+                            <span class="message-count">[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
+                            <span class="thread-date">[[ formatDate(thread.updated_at) ]]</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sidebar-footer">
+                    <button @click="showRoleManager = true" class="sidebar-btn">
+                        <i class="fas fa-user-tag"></i>
+                        Roles
+                    </button>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Header -->
+                <div class="header">
+                    <button @click="sidebarOpen = !sidebarOpen" class="sidebar-toggle">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    
+                    <div v-if="currentThreadId" class="thread-toolbar">
+                        <!-- Show selectors for new threads with no messages -->
+                        <div v-if="currentMessageCount === 0" class="thread-selectors">
+                            <div class="selector-group">
+                                <select v-model="threadSettings.model_name" @change="updateThreadSettings" class="setting-select">
+                                    <option v-for="model in models" :key="model.id" :value="model.id">
+                                        [[ model.name ]]
+                                    </option>
+                                </select>
+                            </div>
+                            
+                            <div v-if="roles.length > 0" class="selector-group">
+                                <select v-model="threadSettings.role_id" @change="updateThreadSettings" class="setting-select">
+                                    <option :value="null">Default Role</option>
+                                    <option v-for="role in roles" :key="role.id" :value="role.id">
+                                        [[ role.name ]]
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Show current settings badges after first message -->
+                        <div v-else class="current-settings">
+                            <div class="setting-badge model-badge">
+                                <i class="fas fa-brain"></i>
+                                [[ threadSettings.model_name || 'No model' ]]
+                            </div>
+                            
+                            <div v-if="threadSettings.role_id" class="setting-badge role-badge">
+                                <i class="fas fa-user-tag"></i>
+                                [[ currentRoleName ]]
+                            </div>
+                            
+                            <div class="setting-badge temp-badge">
+                                <i class="fas fa-thermometer-half"></i>
+                                [[ threadSettings.temperature || 1.0 ]]
+                            </div>
+                        </div>
+                        
+                        <!-- Thread settings button -->
+                        <button @click="showSettings = true" class="thread-settings-btn" title="Thread Settings">
+                            <i class="fas fa-cog"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Messages -->
+                <div class="messages-container" ref="messagesContainer">
+                    <div v-if="!currentThreadId" class="welcome-message">
+                        <h2>Welcome to {{.BotName}} Assistant</h2>
+                        <p>Create a new thread to start chatting, or select an existing thread from the sidebar.</p>
+                    </div>
+                    
+                    <div v-else>
+                        <div 
+                            v-for="message in messages" 
+                            :key="message.id"
+                            class="message"
+                            :class="[message.role, message.message_type]"
+                        >
+                            <div class="message-avatar">
+                                <i v-if="message.role === 'user'" class="fas fa-user"></i>
+                                <i v-else-if="message.role === 'assistant'" class="fas fa-robot"></i>
+                                <i v-else class="fas fa-info-circle"></i>
+                            </div>
+                            <div class="message-content">
+                                <div v-if="message.message_type === 'summary'" class="summary-header">
+                                    <i class="fas fa-compress-alt"></i>
+                                    Conversation Summary
+                                </div>
+                                <div class="message-text" v-html="formatMessage(message.content)"></div>
+                                <div class="message-meta">
+                                    [[ formatTime(message.created_at) ]]
+                                    <span v-if="!message.is_live" class="archived-badge">Archived</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div v-if="currentThreadId" class="input-container">
+                    <div class="input-wrapper">
+                        <textarea
+                            ref="messageInput"
+                            v-model="messageInput"
+                            @keydown="handleKeyDown"
+                            placeholder="Type your message..."
+                            class="message-input"
+                            :disabled="sending"
+                        ></textarea>
+                        <button 
+                            @click="sendMessage"
+                            :disabled="!canSendMessage"
+                            class="send-button"
+                        >
+                            <i v-if="sending" class="fas fa-spinner fa-spin"></i>
+                            <i v-else class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div v-if="showSettings" class="modal-overlay" @click="showSettings = false">
+            <div class="modal" @click.stop>
+                <div class="modal-header">
+                    <h3>Thread Settings</h3>
+                    <button @click="showSettings = false" class="close-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="setting-group">
+                        <label>Model</label>
+                        <select v-model="threadSettings.model_name">
+                            <option v-for="model in models" :key="model.id" :value="model.id">
+                                [[ model.name ]] ([[ model.provider ]])
+                            </option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>Temperature: [[ threadSettings.temperature ]]</label>
+                        <input 
+                            type="range" 
+                            v-model.number="threadSettings.temperature"
+                            min="0" 
+                            max="1" 
+                            step="0.1"
+                            class="slider"
+                        >
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>Role ([[ roles.length ]] available)</label>
+                        <select v-model="threadSettings.role_id">
+                            <option :value="null">No role</option>
+                            <option v-if="roles.length === 0" disabled>Loading roles...</option>
+                            <option v-for="role in roles" :key="role.id" :value="role.id">
+                                [[ role.name ]]
+                            </option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>Context Limit</label>
+                        <input 
+                            type="number" 
+                            v-model.number="threadSettings.context_limit"
+                            min="1000" 
+                            max="8000"
+                            step="500"
+                        >
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" v-model="threadSettings.stream">
+                            Enable streaming
+                        </label>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" v-model="threadSettings.qa">
+                            Q&A mode
+                        </label>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" v-model="threadSettings.voice">
+                            Voice responses
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="saveSettings" class="save-btn">Save Settings</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Role Manager Modal -->
+        <div v-if="showRoleManager" class="modal-overlay" @click="showRoleManager = false">
+            <div class="modal" @click.stop>
+                <div class="modal-header">
+                    <h3>Role Manager</h3>
+                    <button @click="showRoleManager = false" class="close-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <button @click="newRole" class="new-role-btn">
+                        <i class="fas fa-plus"></i>
+                        New Role
+                    </button>
+                    
+                    <div class="roles-list">
+                        <div 
+                            v-for="role in roles" 
+                            :key="role.id"
+                            class="role-item"
+                        >
+                            <div class="role-header">
+                                <span class="role-name">[[ role.name ]]</span>
+                                <div class="role-actions">
+                                    <button @click="editRole(role)" class="edit-btn">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button @click="deleteRole(role.id)" class="delete-btn">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="role-prompt">[[ role.prompt ]]</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Role Editor Modal -->
+        <div v-if="showRoleEditor" class="modal-overlay" @click="showRoleEditor = false">
+            <div class="modal" @click.stop>
+                <div class="modal-header">
+                    <h3>[[ editingRole?.id ? 'Edit Role' : 'New Role' ]]</h3>
+                    <button @click="showRoleEditor = false" class="close-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="setting-group">
+                        <label>Role Name</label>
+                        <input 
+                            type="text" 
+                            v-model="editingRole.name"
+                            placeholder="Enter role name"
+                        >
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label>System Prompt</label>
+                        <textarea 
+                            v-model="editingRole.prompt"
+                            placeholder="Enter system prompt..."
+                            rows="6"
+                        ></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="saveRole" class="save-btn">
+                        [[ editingRole?.id ? 'Update Role' : 'Create Role' ]]
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/assets/js/app.js"></script>
+</body>
+</html>

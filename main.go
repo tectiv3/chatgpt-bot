@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	stdlog "log"
 	"os"
 	"path"
@@ -94,6 +95,9 @@ func main() {
 		if err := db.AutoMigrate(&Role{}); err != nil {
 			panic("failed to migrate role")
 		}
+		if err := db.AutoMigrate(&WebAppSession{}); err != nil {
+			panic("failed to migrate webapp session")
+		}
 
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
@@ -112,6 +116,32 @@ func main() {
 			server.gemini = openai.NewClient(conf.GeminiAPIKey, "").SetBaseURL("https://generativelanguage.googleapis.com/v1beta/openai")
 		}
 		l = i18n.New("ru", "en")
+
+		// Setup and start web server if enabled
+		if conf.MiniAppEnabled {
+			mux := server.setupWebServer()
+			
+			port := conf.WebServerPort
+			if port == "" {
+				port = ":8080"
+			}
+			
+			if !strings.HasPrefix(port, ":") {
+				port = ":" + port
+			}
+			
+			server.webServer = &http.Server{
+				Addr:    port,
+				Handler: mux,
+			}
+			
+			Log.WithField("port", port).Info("Starting web server for mini app")
+			go func() {
+				if err := server.webServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					Log.WithField("error", err).Fatal("Failed to start web server")
+				}
+			}()
+		}
 
 		server.run()
 	} else {

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
 	"github.com/meinside/openai-go"
 	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
@@ -51,6 +52,11 @@ type config struct {
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
 	PiperDir             string   `json:"piper_dir"`
+
+	// Mini app configuration
+	MiniAppEnabled bool   `json:"mini_app_enabled"`
+	WebServerPort  string `json:"web_server_port"`
+	MiniAppURL     string `json:"mini_app_url"`
 }
 
 type AiModel struct {
@@ -71,6 +77,7 @@ type Server struct {
 	nova      *awsnova.Client
 	bot       *tele.Bot
 	db        *gorm.DB
+	webServer *http.Server
 }
 
 type User struct {
@@ -96,6 +103,8 @@ type Chat struct {
 	mutex           sync.Mutex `gorm:"-"`
 	ChatID          int64      `sql:"chat_id" json:"chat_id"`
 	UserID          uint       `json:"user_id" gorm:"nullable:false"`
+	ThreadID        *string    `json:"thread_id" gorm:"index;nullable:true"` // NULL for default chat, UUID for threads
+	ThreadTitle     *string    `json:"thread_title" gorm:"nullable:true"`    // Generated topic for thread
 	RoleID          *uint      `json:"role_id" gorm:"nullable:true"`
 	MessageID       *string    `json:"last_message_id" gorm:"nullable:true"`
 	Lang            string
@@ -110,6 +119,7 @@ type Chat struct {
 	Voice           bool
 	ConversationAge int64
 	TotalTokens     int `json:"total_tokens"`
+	ContextLimit    int `json:"context_limit" gorm:"default:4000"` // Context limit for this thread
 }
 
 type ChatMessage struct {
@@ -123,6 +133,10 @@ type ChatMessage struct {
 	Content    *string                `json:"content,omitempty"`
 	ImagePath  *string                `json:"image_path,omitempty"`
 	Filename   *string                `json:"filename,omitempty"`
+
+	// Context management
+	IsLive      bool   `json:"is_live" gorm:"default:true"`        // If false, not sent to model
+	MessageType string `json:"message_type" gorm:"default:normal"` // normal, summary, system
 
 	// for function call
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'
