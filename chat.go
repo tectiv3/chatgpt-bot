@@ -29,7 +29,7 @@ func (c *Chat) getSentMessage(context tele.Context) *tele.Message {
 		return &sentMessage
 	}
 
-	msgPointer, _ := context.Bot().Send(context.Recipient(), "...", "text", &tele.SendOptions{ReplyTo: context.Message()})
+	msgPointer, _ := context.Bot().Reply(context.Message(), "...")
 	c.MessageID = &([]string{strconv.Itoa(msgPointer.ID)}[0])
 
 	return msgPointer

@@ -96,7 +96,7 @@ func (s *Server) textToImage(c tele.Context, text string, hd bool) error {
 
 	for _, item := range created.Data {
 		m := &tele.Photo{File: tele.FromURL(*item.URL)}
-		_ = c.Send(m, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		_ = c.Reply(c.Message(), m)
 	}
 
 	return nil

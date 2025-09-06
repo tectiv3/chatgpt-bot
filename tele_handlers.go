@@ -28,10 +28,9 @@ func (s *Server) onDocument(c tele.Context) {
 	// Validate file size
 	if err := ValidateFileSize(c.Message().Document.FileSize); err != nil {
 		chat := s.getChat(c.Chat(), c.Sender())
-		_ = c.Send(
+		_ = c.Reply(
+			c.Message(),
 			chat.t("File too large: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 		return
 	}
@@ -44,10 +43,9 @@ func (s *Server) onDocument(c tele.Context) {
 
 	if c.Message().Document.MIME != "text/plain" {
 		chat := s.getChat(c.Chat(), c.Sender())
-		_ = c.Send(
+		_ = c.Reply(
+			c.Message(),
 			chat.t("Please provide a text file"),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 		return
 	}
@@ -68,14 +66,14 @@ func (s *Server) onDocument(c tele.Context) {
 	} else {
 		reader, err = s.bot.File(&c.Message().Document.File)
 		if err != nil {
-			_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+			_ = c.Reply(c.Message(), err.Error())
 			return
 		}
 	}
 	defer reader.Close()
 	bytes, err := io.ReadAll(reader)
 	if err != nil {
-		_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		_ = c.Reply(c.Message(), err.Error())
 		return
 	}
 
@@ -96,7 +94,12 @@ func (s *Server) onDocument(c tele.Context) {
 		_ = c.Send(&tele.Document{File: file, FileName: fileName, MIME: "text/plain"})
 		return
 	}
-	_ = c.Send(response, "text", &tele.SendOptions{ReplyTo: c.Message(), ParseMode: tele.ModeMarkdown})
+	_ = c.Reply(
+		c.Message(),
+		response,
+		"text",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+	)
 }
 
 func (s *Server) onText(c tele.Context) {
@@ -114,16 +117,15 @@ func (s *Server) onText(c tele.Context) {
 	// Basic validation for message length
 	if len(message) == 0 {
 		chat := s.getChat(c.Chat(), c.Sender())
-		_ = c.Send(chat.t("Please provide a message"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		_ = c.Reply(c.Message(), chat.t("Please provide a message"))
 		return
 	}
 
 	if len(message) > MaxPromptLength {
 		chat := s.getChat(c.Chat(), c.Sender())
-		_ = c.Send(
+		_ = c.Reply(
+			c.Message(),
 			chat.t("Message too long. Maximum length is {{.max}} characters", &i18n.Replacements{"max": fmt.Sprintf("%d", MaxPromptLength)}),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 		return
 	}
@@ -170,10 +172,9 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 
 	query := c.Message().Text
 	if len(query) < 1 {
-		_ = c.Send(
+		_ = c.Reply(
+			c.Message(),
 			"Please provide a longer prompt",
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 
 		return

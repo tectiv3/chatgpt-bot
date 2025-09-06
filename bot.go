@@ -114,11 +114,7 @@ func (s *Server) run() {
 	s.Unlock()
 
 	b.Handle(cmdStart, func(c tele.Context) error {
-		return c.Send(
-			l.GetWithLocale(c.Sender().LanguageCode, msgStart),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
-		)
+		return c.Reply(c.Message(), l.GetWithLocale(c.Sender().LanguageCode, msgStart))
 	})
 
 	b.Handle(cmdHelp, func(c tele.Context) error {
@@ -235,10 +231,8 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		name := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateRoleName(name); err != nil {
-			return c.Send(
+			return c.Reply(c.Message(),
 				chat.t("Invalid role name: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		role := s.findRole(chat.UserID, name)
@@ -438,19 +432,17 @@ func (s *Server) run() {
 		ageStr := strings.TrimSpace(c.Message().Payload)
 		age, err := ValidateAge(ageStr)
 		if err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				chat.t("Invalid age: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		chat.ConversationAge = int64(age)
 		s.db.Save(&chat)
 
-		return c.Send(
+		return c.Reply(
+			c.Message(),
 			fmt.Sprintf(chat.t("Conversation age set to %d days"), age),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 	})
 
@@ -458,17 +450,16 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		query := strings.TrimSpace(c.Message().Payload)
 		if err := ValidatePrompt(query); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				chat.t("Invalid prompt: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 
 		chat.MasterPrompt = query
 		s.db.Save(&chat)
 
-		return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), chat.t("Prompt set"))
 	})
 
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
@@ -477,7 +468,7 @@ func (s *Server) run() {
 		chat.RoleID = nil
 		s.db.Save(&chat)
 
-		return c.Send(chat.t("Default prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), chat.t("Default prompt set"))
 	})
 
 	b.Handle(cmdStream, func(c tele.Context) error {
@@ -490,7 +481,7 @@ func (s *Server) run() {
 		}
 		text := chat.t("Stream is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
 
-		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), text)
 	})
 
 	b.Handle(cmdQA, func(c tele.Context) error {
@@ -503,13 +494,13 @@ func (s *Server) run() {
 		}
 		text := chat.t("Questions List is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
 
-		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), text)
 	})
 
 	b.Handle(cmdVoice, func(c tele.Context) error {
 		go s.pageToSpeech(c, c.Message().Payload)
 
-		return c.Send("Downloading page", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), "Downloading page")
 	})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
@@ -532,7 +523,8 @@ func (s *Server) run() {
 		}
 
 		model := s.getModel(chat.ModelName)
-		return c.Send(
+		return c.Reply(
+			c.Message(),
 			fmt.Sprintf(
 				"Version: %s\nModel: %s (%s)\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConversation Age (days): %d\nRole: %s",
 				Version,
@@ -544,8 +536,6 @@ func (s *Server) run() {
 				chat.ConversationAge,
 				role,
 			),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 	})
 
@@ -601,18 +591,16 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		langCode := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateLanguageCode(langCode); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				chat.t("Invalid language code: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		chat.Lang = langCode
 		s.db.Save(&chat)
-		return c.Send(
+		return c.Reply(
+			c.Message(),
 			fmt.Sprintf("Language set to %s", chat.Lang),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 	})
 
@@ -748,10 +736,9 @@ func (s *Server) run() {
 		}
 		name := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateUsername(name); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				fmt.Sprintf("Invalid username: %s", err.Error()),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		s.addUser(name)
@@ -768,10 +755,9 @@ func (s *Server) run() {
 		}
 		name := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateUsername(name); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				fmt.Sprintf("Invalid username: %s", err.Error()),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		s.delUser(name)
@@ -816,10 +802,9 @@ func (s *Server) whitelist() tele.MiddlewareFunc {
 			Usernames: s.users,
 			In:        next,
 			Out: func(c tele.Context) error {
-				return c.Send(
+				return c.Reply(
+					c.Message(),
 					fmt.Sprintf("not allowed: %s", c.Sender().Username),
-					"text",
-					&tele.SendOptions{ReplyTo: c.Message()},
 				)
 			},
 		})(next)
