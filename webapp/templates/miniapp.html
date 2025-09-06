@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="format-detection" content="telephone=no">
     <title>{{.BotName}} Assistant</title>
     <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
@@ -22,6 +25,12 @@
             <!-- Sidebar -->
             <div class="sidebar" :class="{ 'sidebar-open': sidebarOpen }">
                 <div class="sidebar-header">
+                    <div class="sidebar-header-top">
+                        <h3>Threads</h3>
+                        <button @click="sidebarOpen = false" class="close-sidebar-btn" title="Close">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
                     <button @click="newThread()" class="new-thread-btn">
                         <i class="fas fa-plus"></i>
                         New Thread
@@ -32,14 +41,56 @@
                     <div 
                         v-for="thread in sortedThreads" 
                         :key="thread.id"
-                        @click="selectThread(thread.id)"
                         class="thread-item"
                         :class="{ active: currentThreadId === thread.id }"
                     >
-                        <div class="thread-title">[[ thread.title ]]</div>
-                        <div class="thread-meta">
-                            <span class="message-count">[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
-                            <span class="thread-date">[[ formatDate(thread.updated_at) ]]</span>
+                        <div @click="selectThread(thread.id)" class="thread-content">
+                            <div class="thread-title">[[ thread.title ]]</div>
+                            <div class="thread-meta">
+                                <span class="message-count">[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
+                                <span class="thread-date">[[ formatDate(thread.updated_at) ]]</span>
+                            </div>
+                        </div>
+                        <div class="thread-actions">
+                            <button v-if="!thread.id.toString().startsWith('temp_')" @click.stop="archiveThread(thread.id)" class="action-btn archive-btn" title="Archive thread">
+                                <i class="fas fa-archive"></i>
+                            </button>
+                            <button @click.stop="confirmDeleteThread(thread.id)" class="action-btn delete-btn" title="Delete thread">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Archived Threads Section -->
+                <div v-if="hasArchivedThreads" class="archived-section">
+                    <button @click="toggleArchivedSection" class="archived-header">
+                        <i :class="showArchivedSection ? 'fas fa-chevron-down' : 'fas fa-chevron-right'"></i>
+                        Archived Threads ([[ archivedThreads.length ]])
+                    </button>
+                    
+                    <div v-if="showArchivedSection" class="archived-list">
+                        <div 
+                            v-for="thread in archivedThreads" 
+                            :key="'archived-' + thread.id"
+                            class="thread-item archived"
+                            :class="{ active: currentThreadId === thread.id }"
+                        >
+                            <div @click="selectThread(thread.id)" class="thread-content">
+                                <div class="thread-title">[[ thread.title ]]</div>
+                                <div class="thread-meta">
+                                    <span class="message-count">[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
+                                    <span class="thread-date">Archived [[ formatDate(thread.archived_at) ]]</span>
+                                </div>
+                            </div>
+                            <div class="thread-actions">
+                                <button @click.stop="archiveThread(thread.id)" class="action-btn unarchive-btn" title="Unarchive thread">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                                <button @click.stop="confirmDeleteThread(thread.id)" class="action-btn delete-btn" title="Delete thread">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -52,6 +103,9 @@
                 </div>
             </div>
 
+            <!-- Mobile Sidebar Backdrop -->
+            <div class="sidebar-backdrop" :class="{ show: sidebarOpen }" @click="sidebarOpen = false"></div>
+
             <!-- Main Content -->
             <div class="main-content">
                 <!-- Header -->
@@ -61,6 +115,12 @@
                     </button>
                     
                     <div v-if="currentThreadId" class="thread-toolbar">
+                        <!-- Connection Status Indicator -->
+                        <div v-if="showConnectionStatus" class="connection-status" :class="connectionStatus">
+                            <i class="fas fa-circle"></i>
+                            [[ connectionStatusText ]]
+                        </div>
+                        
                         <!-- Show selectors for new threads with no messages -->
                         <div v-if="currentMessageCount === 0" class="thread-selectors">
                             <div class="selector-group">
@@ -125,15 +185,29 @@
                                 <i v-else-if="message.role === 'assistant'" class="fas fa-robot"></i>
                                 <i v-else class="fas fa-info-circle"></i>
                             </div>
-                            <div class="message-content">
+                            <div 
+                                class="message-content" 
+                                :class="{ 'is-complete': message.is_complete, 'is-streaming': message.isStreaming }"
+                                :style="message.isStreaming && message.estimatedHeight ? { minHeight: message.estimatedHeight + 'px' } : {}"
+                            >
                                 <div v-if="message.message_type === 'summary'" class="summary-header">
                                     <i class="fas fa-compress-alt"></i>
                                     Conversation Summary
                                 </div>
-                                <div class="message-text" v-html="formatMessage(message.content)"></div>
+                                <div 
+                                    class="message-text" 
+                                    :class="{ 'streaming-text': message.isStreaming }"
+                                    v-html="formatMessage(message.content)"
+                                ></div>
                                 <div class="message-meta">
                                     [[ formatTime(message.created_at) ]]
                                     <span v-if="!message.is_live" class="archived-badge">Archived</span>
+                                    <span v-if="message.role === 'assistant' && !message.is_complete && streaming" class="streaming-badge">
+                                        <span class="streaming-dots">
+                                            <span></span><span></span><span></span>
+                                        </span>
+                                        Streaming...
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -152,12 +226,17 @@
                             :disabled="sending"
                         ></textarea>
                         <button 
-                            @click="sendMessage"
-                            :disabled="!canSendMessage"
+                            @click="streaming ? stopStreaming() : sendMessage()"
+                            :disabled="!canSendMessage && !canStopStreaming"
                             class="send-button"
+                            :class="{
+                                'sending': sendButtonState === 'sending',
+                                'streaming': sendButtonState === 'streaming',
+                                'stop-button': streaming
+                            }"
+                            :title="streaming ? 'Stop generation (Esc)' : 'Send message (Enter)'"
                         >
-                            <i v-if="sending" class="fas fa-spinner fa-spin"></i>
-                            <i v-else class="fas fa-paper-plane"></i>
+                            <i :class="sendButtonIcon"></i>
                         </button>
                     </div>
                 </div>
@@ -315,6 +394,28 @@
                     <button @click="saveRole" class="save-btn">
                         [[ editingRole?.id ? 'Update Role' : 'Create Role' ]]
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Dialog -->
+        <div v-if="showDeleteConfirm" class="modal-overlay" @click="cancelDelete">
+            <div class="modal confirm-modal" @click.stop>
+                <div class="modal-header">
+                    <h3>Delete Thread</h3>
+                    <button @click="cancelDelete" class="close-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="warning-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <p>Are you sure you want to delete this thread? This cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button @click="cancelDelete" class="cancel-btn">Cancel</button>
+                    <button @click="deleteThread" class="delete-btn">Delete Thread</button>
                 </div>
             </div>
         </div>

@@ -10,7 +10,15 @@ body {
     background: var(--tg-bg-color, #ffffff);
     color: var(--tg-text-color, #000000);
     height: 100vh;
+    height: 100dvh; /* Use dynamic viewport height on mobile */
     overflow: hidden;
+    /* Mobile safe area support */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    /* Prevent mobile bounce scrolling */
+    position: fixed;
+    width: 100%;
+    top: 0;
+    left: 0;
 }
 
 /* CSS Variables for Telegram theme adaptation */
@@ -21,8 +29,13 @@ body {
     --success-color: #2ed573;
     --border-color: var(--tg-secondary-bg-color, #e1e1e5);
     --sidebar-width: 280px;
-    --header-height: 60px;
-    --input-height: 60px;
+    --header-height: 56px; /* Reduced for mobile */
+    --input-height: auto; /* Let it be flexible */
+    /* Mobile-first safe area variables */
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
 }
 
 /* Loading */
@@ -49,30 +62,81 @@ body {
     100% { transform: rotate(360deg); }
 }
 
-/* Layout */
+/* Performance optimizations for smooth scrolling and streaming */
+.app-container {
+    /* Enable hardware acceleration for the entire app */
+    transform: translateZ(0);
+    -webkit-transform: translate3d(0,0,0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+/* Optimize message animations */
+.message {
+    /* Composite layer for individual messages */
+    will-change: auto;
+    /* Prevent layout thrashing */
+    contain: layout style paint;
+}
+
+/* Smooth transitions for content updates */
+.message-text {
+    /* Optimize text rendering during updates */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Prevent unnecessary repaints */
+    contain: layout style;
+}
+
+/* Layout - Mobile First */
 .app-container {
     display: flex;
     height: 100vh;
+    height: 100dvh; /* Use dynamic viewport height */
+    width: 100%;
+    position: relative;
+    /* On mobile, stack vertically by default */
+    flex-direction: column;
 }
 
-/* Sidebar */
+/* Desktop layout */
+@media (min-width: 769px) {
+    .app-container {
+        flex-direction: row;
+    }
+}
+
+/* Sidebar - Mobile First */
 .sidebar {
+    /* Mobile: Fixed overlay */
+    position: fixed;
+    left: 0;
+    top: 0;
     width: var(--sidebar-width);
+    height: 100vh;
+    height: 100dvh;
     background: var(--secondary-color);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
+    z-index: 1000;
+    transform: translateX(-100%);
     transition: transform 0.3s ease;
+    /* Add safe area padding */
+    padding-top: var(--safe-area-top);
 }
 
-@media (max-width: 768px) {
+.sidebar-open {
+    transform: translateX(0);
+}
+
+/* Desktop: Static sidebar */
+@media (min-width: 769px) {
     .sidebar {
-        position: fixed;
-        left: 0;
-        top: 0;
-        height: 100vh;
-        z-index: 1000;
-        transform: translateX(-100%);
+        position: relative;
+        transform: translateX(0);
+        z-index: auto;
+        padding-top: 0;
     }
     
     .sidebar-open {
@@ -83,6 +147,63 @@ body {
 .sidebar-header {
     padding: 16px;
     border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.sidebar-header-top h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--tg-text-color, #000000);
+}
+
+.close-sidebar-btn {
+    background: none;
+    border: none;
+    color: var(--tg-text-color, #666666);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    display: none;
+}
+
+.close-sidebar-btn:hover {
+    background: var(--border-color);
+    color: var(--tg-text-color, #000000);
+}
+
+/* Mobile sidebar backdrop */
+.sidebar-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+@media (max-width: 768px) {
+    .close-sidebar-btn {
+        display: block;
+    }
+    
+    .sidebar-open ~ .sidebar-backdrop,
+    .sidebar-backdrop.show {
+        display: block;
+        opacity: 1;
+    }
 }
 
 .new-thread-btn {
@@ -113,10 +234,12 @@ body {
 }
 
 .thread-item {
-    padding: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
     margin-bottom: 4px;
     border-radius: 8px;
-    cursor: pointer;
     transition: background-color 0.2s ease;
 }
 
@@ -171,63 +294,138 @@ body {
     margin-bottom: 0;
 }
 
-/* Main Content */
+/* Main Content - Mobile First */
 .main-content {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
+    /* Mobile: Full width, full height */
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    position: relative;
 }
 
-/* Header */
+/* Desktop: Adjust for sidebar */
+@media (min-width: 769px) {
+    .main-content {
+        width: calc(100% - var(--sidebar-width));
+        height: 100vh;
+    }
+}
+
+/* Header - Mobile First */
 .header {
     height: var(--header-height);
-    padding: 0 16px;
+    min-height: var(--header-height);
+    padding: 0 12px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
+    background: var(--tg-bg-color, #ffffff);
+    position: relative;
+    z-index: 10;
+    flex-shrink: 0;
+    /* Mobile: Add safe area padding */
+    padding-top: max(8px, var(--safe-area-top));
+    padding-left: max(12px, var(--safe-area-left));
+    padding-right: max(12px, var(--safe-area-right));
 }
 
 .sidebar-toggle {
-    display: none;
+    /* Mobile: Always visible */
+    display: flex;
     background: none;
     border: none;
     font-size: 18px;
     color: var(--tg-text-color, #000000);
     cursor: pointer;
     padding: 8px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
 }
 
-@media (max-width: 768px) {
+.sidebar-toggle:hover {
+    background: var(--border-color);
+}
+
+/* Desktop: Hide sidebar toggle */
+@media (min-width: 769px) {
     .sidebar-toggle {
-        display: block;
+        display: none;
+    }
+    
+    .header {
+        padding: 0 16px;
+        padding-top: 0;
+        padding-left: 16px;
+        padding-right: 16px;
     }
 }
 
 .thread-toolbar {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .current-settings {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
     flex: 1;
+    min-width: 0;
+    align-items: center;
 }
 
 .thread-selectors {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex: 1;
+    min-width: 0;
+    /* Mobile: Stack vertically if needed */
+    flex-wrap: wrap;
 }
 
 .selector-group {
-    min-width: 140px;
+    min-width: 120px;
+    flex: 1;
+    max-width: 200px;
+}
+
+/* Mobile adjustments for thread toolbar */
+@media (max-width: 768px) {
+    .thread-toolbar {
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    
+    .thread-selectors {
+        width: 100%;
+        flex-direction: column;
+        gap: 6px;
+        align-items: stretch;
+    }
+    
+    .selector-group {
+        min-width: auto;
+        max-width: none;
+        width: 100%;
+    }
+    
+    .current-settings {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 4px;
+    }
 }
 
 .setting-select {
@@ -298,14 +496,80 @@ body {
     color: var(--tg-text-color, #000000);
 }
 
-/* Messages */
+/* Connection Status */
+.connection-status {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: auto;
+}
+
+.connection-status.disconnected {
+    background: var(--danger-color);
+    color: white;
+}
+
+.connection-status.reconnecting {
+    background: #f39c12;
+    color: white;
+}
+
+.connection-status.reconnecting i {
+    animation: blink 1s ease-in-out infinite;
+}
+
+/* Messages - Mobile First */
 .messages-container {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
+    /* Performance optimizations for smooth scrolling */
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    /* Enhanced GPU acceleration for smoother animations */
+    transform: translateZ(0);
+    will-change: scroll-position;
+    /* Reduce layout thrashing during scroll */
+    contain: layout style paint;
+    /* Better scrollbar styling */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+    /* Prevent scroll jank on iOS */
+    -webkit-transform: translate3d(0,0,0);
+    /* Optimize for frequent content changes */
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    /* Smoother text rendering during scroll */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Mobile: Ensure proper height calculation */
+    min-height: 0;
+    height: 0;
+}
+
+/* Desktop: More padding */
+@media (min-width: 769px) {
+    .messages-container {
+        padding: 16px;
+        gap: 16px;
+    }
+}
+
+/* Hide scroll sentinel */
+.scroll-sentinel {
+    visibility: hidden !important;
+    height: 1px !important;
+    width: 1px !important;
+    position: absolute !important;
+    bottom: 0 !important;
+    pointer-events: none !important;
 }
 
 .welcome-message {
@@ -369,6 +633,65 @@ body {
     border-radius: 16px;
     max-width: 100%;
     word-wrap: break-word;
+    transition: min-height 0.2s ease-out;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Streaming message improvements */
+.message-content.is-streaming {
+    /* Pre-allocated height prevents layout jumps */
+    transition: min-height 0.3s ease-out;
+    /* Optimize rendering during streaming */
+    contain: layout style;
+    /* Hardware acceleration for smooth updates */
+    transform: translateZ(0);
+    will-change: auto;
+    /* Prevent text reflow during updates */
+    word-break: break-word;
+    overflow-wrap: break-word;
+    /* Optimize for frequent content changes */
+    -webkit-transform: translate3d(0,0,0);
+    backface-visibility: hidden;
+}
+
+.streaming-text {
+    /* Smooth content updates during streaming */
+    transition: opacity 0.1s ease-in-out;
+}
+
+/* Enhanced streaming indicator */
+.streaming-dots {
+    display: inline-flex;
+    gap: 2px;
+    margin-right: 4px;
+}
+
+.streaming-dots span {
+    width: 4px;
+    height: 4px;
+    background-color: currentColor;
+    border-radius: 50%;
+    animation: streaming-dot 1.4s infinite ease-in-out;
+}
+
+.streaming-dots span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.streaming-dots span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+@keyframes streaming-dot {
+    0%, 80%, 100% {
+        opacity: 0.3;
+        transform: scale(0.8);
+    }
+    40% {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
 .summary-header {
@@ -384,6 +707,18 @@ body {
 .message-text {
     line-height: 1.5;
     white-space: pre-wrap;
+    /* GPU acceleration for smooth text updates */
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    /* Prevent text selection during streaming for smoother updates */
+    user-select: text;
+}
+
+.message-text.streaming-text {
+    /* Slightly reduce selection during streaming for better performance */
+    user-select: none;
+    /* Optimize rendering during rapid updates */
+    contain: layout style paint;
 }
 
 .message-meta {
@@ -402,11 +737,52 @@ body {
     font-size: 10px;
 }
 
-/* Input */
+.streaming-badge {
+    background: var(--primary-color);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    animation: pulse-badge 2s ease-in-out infinite;
+}
+
+@keyframes pulse-badge {
+    0%, 100% { 
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% { 
+        opacity: 0.7;
+        transform: scale(0.95);
+    }
+}
+
+/* Input - Mobile First */
 .input-container {
-    padding: 12px 16px 16px 16px;
+    padding: 8px 12px;
+    /* Mobile: Add safe area bottom padding */
+    padding-bottom: max(8px, var(--safe-area-bottom));
+    padding-left: max(12px, var(--safe-area-left));
+    padding-right: max(12px, var(--safe-area-right));
     border-top: 1px solid var(--border-color);
     background: var(--tg-bg-color, #ffffff);
+    flex-shrink: 0;
+    /* Mobile: Ensure it stays at bottom */
+    position: relative;
+    z-index: 10;
+}
+
+/* Desktop: More padding */
+@media (min-width: 769px) {
+    .input-container {
+        padding: 12px 16px 16px 16px;
+        padding-bottom: 16px;
+        padding-left: 16px;
+        padding-right: 16px;
+    }
 }
 
 .input-wrapper {
@@ -471,12 +847,112 @@ body {
     box-shadow: none;
 }
 
-/* Mobile optimizations */
+/* Send button states */
+.send-button.sending {
+    background: var(--primary-color);
+    cursor: wait;
+}
+
+.send-button.streaming {
+    background: var(--danger-color);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.send-button.streaming:hover {
+    background: #e74c3c;
+    transform: scale(1.05);
+}
+
+.send-button.stop-hover {
+    background: var(--danger-color);
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    50% {
+        transform: scale(1.02);
+        box-shadow: 0 4px 16px rgba(231, 76, 60, 0.3);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+}
+
+/* Streaming indicator */
+.message.assistant .message-content:not(.is-complete) {
+    position: relative;
+}
+
+.message.assistant .message-content:not(.is-complete)::after {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--primary-color);
+    border-radius: 50%;
+    margin-left: 8px;
+    animation: blink 1s ease-in-out infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Streaming Status Bar */
+.streaming-status {
+    background: var(--primary-color);
+    color: white;
+    padding: 8px 16px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 500;
+    animation: pulse-bg 2s ease-in-out infinite;
+}
+
+.streaming-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.streaming-indicator i {
+    animation: blink 1s ease-in-out infinite;
+}
+
+.keyboard-hint {
+    font-size: 12px;
+    opacity: 0.8;
+    font-weight: 400;
+}
+
+@keyframes pulse-bg {
+    0%, 100% { 
+        background: var(--primary-color);
+    }
+    50% { 
+        background: #0056b3;
+    }
+}
+
 @media (max-width: 768px) {
-    .input-container {
-        padding: 8px 12px 12px 12px;
+    .streaming-status {
+        padding: 6px 12px;
+        font-size: 12px;
     }
     
+    .keyboard-hint {
+        font-size: 10px;
+    }
+}
+
+/* Mobile input optimizations */
+@media (max-width: 768px) {
     .input-wrapper {
         gap: 8px;
     }
@@ -485,6 +961,8 @@ body {
         font-size: 16px; /* Prevent zoom on iOS */
         -webkit-appearance: none;
         border-radius: 20px;
+        min-height: 40px;
+        max-height: 100px;
     }
     
     .send-button {
@@ -725,39 +1203,74 @@ body {
     white-space: pre-wrap;
 }
 
-/* Responsive adjustments */
+/* Mobile responsive adjustments */
 @media (max-width: 768px) {
     .modal {
         margin: 10px;
         max-height: calc(100vh - 20px);
+        max-height: calc(100dvh - 20px);
     }
     
     .message {
         max-width: 95%;
     }
     
-    .current-settings {
-        display: none;
-    }
-    
-    .thread-toolbar {
-        gap: 8px;
-    }
-    
-    .thread-selectors {
-        flex-direction: column;
-        gap: 8px;
-        align-items: stretch;
-    }
-    
-    .selector-group {
-        min-width: auto;
-    }
-    
     .thread-settings-btn {
         width: 32px;
         height: 32px;
         font-size: 12px;
+        /* Improve touch target */
+        touch-action: manipulation;
+    }
+    
+    /* Ensure setting badges are visible but compact */
+    .setting-badge {
+        font-size: 11px;
+        padding: 3px 6px;
+    }
+    
+    /* Improve touch targets for mobile */
+    .sidebar-toggle,
+    .send-button,
+    .new-thread-btn,
+    .action-btn {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Better mobile scrolling */
+    .messages-container,
+    .threads-list {
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+    }
+    
+    /* Mobile keyboard handling */
+    .message-input:focus {
+        /* Prevent page zoom when focusing input on mobile */
+        transform: translateZ(0);
+    }
+    
+    /* Support for dynamic viewport when keyboard appears */
+    @supports (height: 100dvh) {
+        .app-container,
+        .main-content,
+        .sidebar {
+            height: 100dvh;
+        }
+    }
+    
+    /* Ensure proper layering on mobile */
+    .header {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
+    
+    .input-container {
+        position: sticky;
+        bottom: 0;
+        z-index: 100;
     }
 }
 
@@ -777,4 +1290,172 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #999;
+}
+
+/* Thread management styles */
+.thread-content {
+    flex: 1;
+    cursor: pointer;
+}
+
+.thread-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.2s ease;
+}
+
+.thread-item:hover .thread-actions {
+    opacity: 1;
+    visibility: visible;
+}
+
+.thread-item.active .thread-actions {
+    opacity: 1;
+    visibility: visible;
+}
+
+.action-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    background: rgba(0, 0, 0, 0.1);
+    color: var(--tg-text-color, #000000);
+}
+
+.action-btn:hover {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.archive-btn:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.unarchive-btn:hover {
+    background: var(--success-color);
+    color: white;
+}
+
+.delete-btn:hover {
+    background: var(--danger-color);
+    color: white;
+}
+
+/* Archived threads section */
+.archived-section {
+    margin-top: 16px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 16px;
+}
+
+.archived-header {
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--tg-text-color, #000000);
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+}
+
+.archived-header:hover {
+    background: var(--border-color);
+}
+
+.archived-list {
+    margin-top: 8px;
+}
+
+.thread-item.archived {
+    opacity: 0.7;
+}
+
+.thread-item.archived .thread-title {
+    font-style: italic;
+}
+
+/* Confirmation modal styles */
+.confirm-modal {
+    max-width: 400px;
+}
+
+.warning-icon {
+    text-align: center;
+    font-size: 48px;
+    color: var(--danger-color);
+    margin-bottom: 16px;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.cancel-btn {
+    padding: 10px 20px;
+    border: 1px solid var(--border-color);
+    background: var(--secondary-color);
+    color: var(--tg-text-color, #000000);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cancel-btn:hover {
+    background: var(--border-color);
+}
+
+.delete-btn {
+    padding: 10px 20px;
+    border: none;
+    background: var(--danger-color);
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+.delete-btn:hover {
+    background: #e74c3c;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+    /* On mobile, make buttons slightly larger but still hidden by default */
+    .action-btn {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+    
+    /* On mobile, show thread actions on tap/touch */
+    .thread-item:active .thread-actions {
+        opacity: 1;
+        visibility: visible;
+    }
+    
+    .archived-header {
+        font-size: 16px;
+        padding: 12px;
+    }
 }

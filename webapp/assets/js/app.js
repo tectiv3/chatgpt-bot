@@ -1,4 +1,4 @@
-const { createApp } = Vue;
+const { createApp } = Vue
 
 createApp({
     delimiters: ['[[', ']]'],
@@ -6,22 +6,36 @@ createApp({
         return {
             loading: true,
             sidebarOpen: false,
-            
+
             // Current state
             currentThreadId: null,
             currentThread: null,
             messages: [],
             threads: [],
+            archivedThreads: [],
             models: [],
             roles: [],
-            
+
             // UI state
             messageInput: '',
             sending: false,
+            streaming: false,
+            currentStreamController: null,
+            
+            // Streaming UX improvements
+            streamingBuffer: '',
+            streamingUpdateTimer: null,
+            streamingThrottleMs: 50, // Throttle streaming updates to 20 FPS
             showSettings: false,
             showRoleManager: false,
             showRoleEditor: false,
-            
+            showDeleteConfirm: false,
+            deleteThreadId: null,
+            showArchivedSection: false,
+            showConnectionStatus: false,
+            connectionStatus: 'connected',
+            connectionStatusText: 'Connected',
+
             // Settings
             threadSettings: {
                 model_name: 'gpt-4o',
@@ -32,173 +46,266 @@ createApp({
                 voice: false,
                 lang: 'en',
                 master_prompt: '',
-                context_limit: 4000
+                context_limit: 4000,
             },
-            
+
             // Role editing
             editingRole: {
                 id: null,
                 name: '',
-                prompt: ''
-            }
+                prompt: '',
+            },
         }
     },
-    
+
     computed: {
         // Use computed property for message count instead of manual updates
         currentMessageCount() {
-            return this.messages.length;
+            return this.messages.length
         },
-        
+
         // Computed property for getting current role name
         currentRoleName() {
-            if (!this.threadSettings.role_id) return '';
-            const role = this.roles.find(r => r.id === this.threadSettings.role_id);
-            return role ? role.name : 'Unknown Role';
+            if (!this.threadSettings.role_id) return ''
+            const role = this.roles.find(r => r.id === this.threadSettings.role_id)
+            return role ? role.name : 'Unknown Role'
         },
-        
+
         // Computed property for sorted threads (most recent first)
         sortedThreads() {
             return [...this.threads].sort((a, b) => {
-                const dateA = new Date(a.updated_at || a.created_at);
-                const dateB = new Date(b.updated_at || b.created_at);
-                return dateB - dateA; // Most recent first
-            });
+                const dateA = new Date(a.updated_at || a.created_at)
+                const dateB = new Date(b.updated_at || b.created_at)
+                return dateB - dateA // Most recent first
+            })
         },
-        
+
         // Computed property to determine if message can be sent
         canSendMessage() {
-            return !this.sending && 
-                   this.messageInput.trim().length > 0 && 
-                   this.currentThreadId !== null;
+            return (
+                !this.sending &&
+                !this.streaming &&
+                this.messageInput.trim().length > 0 &&
+                this.currentThreadId !== null
+            )
         },
-        
+
+        // Computed property for send button state
+        sendButtonState() {
+            if (this.sending) return 'sending'
+            if (this.streaming) return 'streaming'
+            return 'idle'
+        },
+
+        // Computed property for send button icon
+        sendButtonIcon() {
+            switch (this.sendButtonState) {
+                case 'sending':
+                    return 'fas fa-spinner fa-spin'
+                case 'streaming':
+                    return 'fas fa-spinner fa-spin'
+                default:
+                    return 'fas fa-paper-plane'
+            }
+        },
+
+        // Computed property for send button text
+        sendButtonText() {
+            switch (this.sendButtonState) {
+                case 'sending':
+                    return 'Sending...'
+                case 'streaming':
+                    return 'Streaming...'
+                default:
+                    return 'Send'
+            }
+        },
+
+        // Check if streaming can be stopped
+        canStopStreaming() {
+            return this.streaming && this.currentStreamController
+        },
+
         // Computed property for message count display in threads list
         messageCount() {
-            return this.messages.length;
-        }
+            return this.messages.length
+        },
+
+        // Check if there are archived threads to show section
+        hasArchivedThreads() {
+            return this.archivedThreads.length > 0
+        },
     },
-    
+
     watch: {
         // Watch message count and update thread accordingly
         currentMessageCount(newCount) {
             if (this.currentThread) {
-                this.currentThread.message_count = newCount;
-            }
-        }
-    },
-    
-    async mounted() {
-        console.log('Vue app mounted, Telegram WebApp available:', !!window.Telegram?.WebApp);
-        
-        // Initialize Telegram Web App
-        if (window.Telegram?.WebApp) {
-            window.Telegram.WebApp.ready();
-            console.log('Telegram WebApp initialized', {
-                initData: window.Telegram.WebApp.initData,
-                user: window.Telegram.WebApp.initDataUnsafe?.user
-            });
-        } else {
-            console.warn('Telegram WebApp not available - running in development mode?');
-        }
-        
-        // Adapt to Telegram theme
-        this.adaptToTelegramTheme();
-        
-        // Load initial data
-        await this.loadInitialData();
-        
-        this.loading = false;
-        
-        // Handle Telegram events
-        if (window.Telegram?.WebApp) {
-            window.Telegram.WebApp.onEvent('themeChanged', this.adaptToTelegramTheme);
-        }
-    },
-    
-    methods: {
-        adaptToTelegramTheme() {
-            const webApp = window.Telegram?.WebApp;
-            if (webApp?.themeParams) {
-                document.documentElement.style.setProperty('--tg-bg-color', webApp.themeParams.bg_color);
-                document.documentElement.style.setProperty('--tg-text-color', webApp.themeParams.text_color);
-                document.documentElement.style.setProperty('--tg-accent-text-color', webApp.themeParams.accent_text_color);
-                document.documentElement.style.setProperty('--tg-secondary-bg-color', webApp.themeParams.secondary_bg_color);
-            }
-            
-            // Set viewport height correctly
-            if (webApp?.viewportHeight) {
-                document.body.style.height = `${webApp.viewportHeight}px`;
-            } else {
-                // Fallback for development
-                document.body.style.height = '100vh';
+                this.currentThread.message_count = newCount
             }
         },
-        
+    },
+
+    async mounted() {
+        console.log('Vue app mounted, Telegram WebApp available:', !!window.Telegram?.WebApp)
+
+        // Initialize Telegram Web App
+        if (window.Telegram?.WebApp) {
+            window.Telegram.WebApp.ready()
+            console.log('Telegram WebApp initialized', {
+                initData: window.Telegram.WebApp.initData,
+                user: window.Telegram.WebApp.initDataUnsafe?.user,
+            })
+        } else {
+            console.warn('Telegram WebApp not available - running in development mode?')
+        }
+
+        // Adapt to Telegram theme
+        this.adaptToTelegramTheme()
+
+        // Load initial data
+        await this.loadInitialData()
+
+        this.loading = false
+
+        // Handle Telegram events
+        if (window.Telegram?.WebApp) {
+            window.Telegram.WebApp.onEvent('themeChanged', this.adaptToTelegramTheme)
+        }
+
+        // Add global keyboard event listener
+        document.addEventListener('keydown', this.handleGlobalKeyDown)
+
+        // Focus the message input if a thread is selected
+        this.$nextTick(() => {
+            const input = this.$refs.messageInput
+            if (input && this.currentThreadId) input.focus()
+        })
+    },
+
+    beforeUnmount() {
+        // Clean up event listeners
+        document.removeEventListener('keydown', this.handleGlobalKeyDown)
+
+        // Clean up any active streaming and timers
+        if (this.streamingUpdateTimer) {
+            clearTimeout(this.streamingUpdateTimer)
+        }
+        this.stopStreaming()
+    },
+
+    methods: {
+        adaptToTelegramTheme() {
+            const webApp = window.Telegram?.WebApp
+            if (webApp?.themeParams) {
+                document.documentElement.style.setProperty(
+                    '--tg-bg-color',
+                    webApp.themeParams.bg_color
+                )
+                document.documentElement.style.setProperty(
+                    '--tg-text-color',
+                    webApp.themeParams.text_color
+                )
+                document.documentElement.style.setProperty(
+                    '--tg-accent-text-color',
+                    webApp.themeParams.accent_text_color
+                )
+                document.documentElement.style.setProperty(
+                    '--tg-secondary-bg-color',
+                    webApp.themeParams.secondary_bg_color
+                )
+            }
+
+            // Set viewport height correctly
+            if (webApp?.viewportHeight) {
+                document.body.style.height = `${webApp.viewportHeight}px`
+            } else {
+                // Fallback for development
+                document.body.style.height = '100vh'
+            }
+        },
+
         async loadInitialData() {
             try {
-                const [threadsResponse, modelsResponse, rolesResponse] = await Promise.all([
-                    this.apiCall('/api/threads'),
-                    this.apiCall('/api/models'),
-                    this.apiCall('/api/roles')
-                ]);
-                
-                console.log('API Responses:', { threadsResponse, modelsResponse, rolesResponse });
-                
-                this.threads = threadsResponse.threads || [];
-                this.models = modelsResponse.models || [];
-                this.roles = rolesResponse.roles || [];
-                
+                const [threadsResponse, modelsResponse, rolesResponse, archivedResponse] =
+                    await Promise.all([
+                        this.apiCall('/api/threads'),
+                        this.apiCall('/api/models'),
+                        this.apiCall('/api/roles'),
+                        this.apiCall('/api/threads/archived'),
+                    ])
+
+                console.log('API Responses:', {
+                    threadsResponse,
+                    modelsResponse,
+                    rolesResponse,
+                    archivedResponse,
+                })
+
+                this.threads = threadsResponse.threads || []
+                this.models = modelsResponse.models || []
+                this.roles = rolesResponse.roles || []
+                this.archivedThreads = archivedResponse.threads || []
+
                 console.log('Loaded data:', {
                     threads: this.threads.length,
                     models: this.models.length,
-                    roles: this.roles.length
-                });
-                
+                    roles: this.roles.length,
+                    archived: this.archivedThreads.length,
+                })
+
                 // Auto-select most recent thread
                 if (this.threads.length > 0) {
-                    await this.selectThread(this.threads[0].id);
+                    await this.selectThread(this.threads[0].id)
                 }
-                
             } catch (error) {
-                console.error('Failed to load initial data:', error);
-                this.showError('Failed to load data. Check console for details.');
+                console.error('Failed to load initial data:', error)
+                this.showError('Failed to load data. Check console for details.')
             }
         },
-        
+
         async apiCall(endpoint, options = {}) {
-            const initData = window.Telegram?.WebApp?.initData || '';
+            const initData = window.Telegram?.WebApp?.initData || ''
             const defaultOptions = {
                 headers: {
                     'Content-Type': 'application/json',
-                    'Telegram-Init-Data': initData
-                }
-            };
-            
-            console.log(`Making API call to ${endpoint}`, { 
-                options, 
-                initData: initData ? '[PRESENT]' : '[MISSING]',
-                initDataLength: initData.length 
-            });
-            
-            const response = await fetch(endpoint, { ...defaultOptions, ...options });
-            
-            console.log(`API response for ${endpoint}:`, { status: response.status, statusText: response.statusText });
-            
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`API call failed for ${endpoint}:`, { status: response.status, error: errorText });
-                throw new Error(`API call failed: ${response.status} - ${errorText}`);
+                    'Telegram-Init-Data': initData,
+                },
             }
-            
-            const data = await response.json();
-            console.log(`API data for ${endpoint}:`, data);
-            return data;
+
+            console.log(`Making API call to ${endpoint}`, {
+                options,
+                initData: initData ? '[PRESENT]' : '[MISSING]',
+                initDataLength: initData.length,
+            })
+
+            const response = await fetch(endpoint, { ...defaultOptions, ...options })
+
+            console.log(`API response for ${endpoint}:`, {
+                status: response.status,
+                statusText: response.statusText,
+            })
+
+            if (!response.ok) {
+                const errorText = await response.text()
+                console.error(`API call failed for ${endpoint}:`, {
+                    status: response.status,
+                    error: errorText,
+                })
+                throw new Error(`API call failed: ${response.status} - ${errorText}`)
+            }
+
+            const data = await response.json()
+            console.log(`API data for ${endpoint}:`, data)
+            return data
         },
-        
+
         newThread() {
-            console.log('🆕 Creating new thread locally...');
-            
+            console.log('🆕 Creating new thread locally...')
+
+            // Close sidebar
+            this.sidebarOpen = false
+
             // Reset thread settings to defaults
             this.threadSettings = {
                 model_name: 'gpt-4o',
@@ -209,96 +316,122 @@ createApp({
                 voice: false,
                 lang: 'en',
                 master_prompt: '',
-                context_limit: 4000
-            };
-            
+                context_limit: 4000,
+            }
+
             // Create a temporary local thread
-            const tempThreadId = 'temp_' + Date.now();
+            const tempThreadId = 'temp_' + Date.now()
             const newThread = {
                 id: tempThreadId,
                 title: 'New Conversation',
                 message_count: 0,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
-                settings: { ...this.threadSettings }
-            };
-            
+                settings: { ...this.threadSettings },
+            }
+
             // Add to threads list at the top
-            this.threads.unshift(newThread);
-            
+            this.threads.unshift(newThread)
+
             // Select this thread
-            this.currentThreadId = tempThreadId;
-            this.currentThread = newThread;
-            this.messages = [];
-            
-            console.log('✅ Local thread created:', tempThreadId);
-            
+            this.currentThreadId = tempThreadId
+            this.currentThread = newThread
+            this.messages = []
+
+            console.log('✅ Local thread created:', tempThreadId)
+
             // Focus the message input
             this.$nextTick(() => {
-                const input = this.$refs.messageInput;
-                if (input) input.focus();
-            });
+                const input = this.$refs.messageInput
+                if (input) input.focus()
+            })
         },
-        
+
         async selectThread(threadId) {
-            if (this.currentThreadId === threadId) return;
-            
-            this.currentThreadId = threadId;
-            this.currentThread = this.threads.find(t => t.id === threadId);
-            this.sidebarOpen = false; // Close sidebar on mobile
-            
+            if (this.currentThreadId === threadId) return
+
+            // Stop any active streaming when switching threads
+            if (this.streaming) {
+                this.stopStreaming()
+            }
+
+            this.currentThreadId = threadId
+            this.currentThread =
+                this.threads.find(t => t.id === threadId) ||
+                this.archivedThreads.find(t => t.id === threadId)
+            this.sidebarOpen = false // Close sidebar on mobile
+
             if (this.currentThread) {
-                this.threadSettings = { ...this.currentThread.settings };
-                await this.loadMessages();
+                this.threadSettings = { ...this.currentThread.settings }
+                await this.loadMessages()
+
+                // Focus the message input after thread is selected
+                this.$nextTick(() => {
+                    const input = this.$refs.messageInput
+                    if (input) input.focus()
+                })
             }
         },
-        
+
         async loadThreads() {
             try {
-                const response = await this.apiCall('/api/threads');
-                this.threads = response.threads || [];
+                const response = await this.apiCall('/api/threads')
+                this.threads = response.threads || []
             } catch (error) {
-                console.error('Failed to load threads:', error);
+                console.error('Failed to load threads:', error)
             }
         },
-        
+
         async loadMessages() {
-            if (!this.currentThreadId) return;
-            
+            if (!this.currentThreadId) return
+
             // Skip loading for temp threads
             if (this.currentThreadId.startsWith('temp_')) {
-                console.log('⏭️ Skipping message load for temp thread');
-                return;
+                console.log('⏭️ Skipping message load for temp thread')
+                return
             }
-            
+
             try {
-                console.log('📥 Loading messages for thread:', this.currentThreadId);
-                const response = await this.apiCall(`/api/threads/${this.currentThreadId}/messages`);
-                const newMessages = response.messages || [];
-                
-                console.log('✅ Loaded messages:', newMessages.length);
-                
+                console.log('📥 Loading messages for thread:', this.currentThreadId)
+                const response = await this.apiCall(
+                    `/api/threads/${this.currentThreadId}/messages`
+                )
+                const newMessages = response.messages || []
+
+                console.log('✅ Loaded messages:', newMessages.length)
+
+                // Ensure all loaded messages have proper completion status
+                // Messages from database without explicit is_complete should be marked as complete
+                const processedMessages = newMessages.map(message => ({
+                    ...message,
+                    is_complete: message.is_complete !== false, // Default to true if not explicitly false
+                }))
+
                 // Direct assignment for reactivity
-                this.messages = newMessages;
-                
+                this.messages = processedMessages
+
+                // Use auto-scroll for long message history
+                this.autoScrollToBottom()
+
+                // Focus the message input after messages are loaded
                 this.$nextTick(() => {
-                    this.scrollToBottom();
-                });
-                
+                    const input = this.$refs.messageInput
+                    if (input) input.focus()
+                })
             } catch (error) {
-                console.error('Failed to load messages:', error);
-                this.showError('Failed to load messages');
+                console.error('Failed to load messages:', error)
+                this.showError('Failed to load messages')
             }
         },
-        
+
         async sendMessage() {
-            if (!this.messageInput.trim() || this.sending || !this.currentThreadId) return;
-            
-            const message = this.messageInput.trim();
-            this.messageInput = '';
-            this.sending = true;
-            
-            // Add user message to UI immediately
+            if (!this.messageInput.trim() || this.sending || !this.currentThreadId) return
+
+            const message = this.messageInput.trim()
+            this.messageInput = ''
+            this.sending = true
+
+            // Add user message to UI immediately - users expect instant feedback
             this.messages.push({
                 id: Date.now(),
                 role: 'user',
@@ -306,150 +439,345 @@ createApp({
                 created_at: new Date().toISOString(),
                 is_live: true,
                 message_type: 'normal'
-            });
-            
+            })
+
             this.$nextTick(() => {
-                this.scrollToBottom();
-            });
-            
+                this.scrollToBottom()
+            })
+
             try {
-                let apiThreadId = this.currentThreadId;
-                
+                let apiThreadId = this.currentThreadId
+
                 // If this is a temporary thread, create it on the backend first
                 if (this.currentThreadId.startsWith('temp_')) {
-                    console.log('🔄 Converting temp thread to real thread...');
-                    console.log('Current threadSettings before conversion:', this.threadSettings);
-                    
+                    console.log('🔄 Converting temp thread to real thread...')
+
                     const createResponse = await this.apiCall('/api/threads', {
                         method: 'POST',
                         body: JSON.stringify({
                             initial_message: message,
-                            settings: this.threadSettings  // Use current settings from dropdowns
-                        })
-                    });
-                    
-                    apiThreadId = createResponse.thread_id;
-                    
-                    // Update the local thread with real ID and preserve settings
-                    const threadIndex = this.threads.findIndex(t => t.id === this.currentThreadId);
+                            settings: this.threadSettings,
+                        }),
+                    })
+
+                    apiThreadId = createResponse.thread_id
+
+                    // Update the local thread with real ID
+                    const threadIndex = this.threads.findIndex(
+                        t => t.id === this.currentThreadId
+                    )
                     if (threadIndex !== -1) {
-                        this.threads[threadIndex].id = apiThreadId;
-                        this.threads[threadIndex].title = message.substring(0, 50) + (message.length > 50 ? '...' : '');
-                        this.threads[threadIndex].settings = { ...this.threadSettings }; // Preserve current settings
+                        this.threads[threadIndex].id = apiThreadId
+                        this.threads[threadIndex].title =
+                            message.substring(0, 50) + (message.length > 50 ? '...' : '')
+                        this.threads[threadIndex].settings = { ...this.threadSettings }
                     }
-                    
-                    this.currentThreadId = apiThreadId;
-                    this.currentThread.id = apiThreadId;
-                    // DON'T overwrite settings here - keep what user selected
-                    
-                    console.log('✅ Thread converted to real ID:', apiThreadId);
-                    console.log('Settings preserved:', this.threadSettings);
+
+                    this.currentThreadId = apiThreadId
+                    this.currentThread.id = apiThreadId
+
+                    console.log('✅ Thread converted to real ID:', apiThreadId)
+                }
+
+                // Send message and wait for response synchronously
+                if (this.threadSettings.stream) {
+                    await this.sendMessageWithStreaming(apiThreadId, message)
                 } else {
-                    // Regular message to existing thread
-                    await this.apiCall(`/api/threads/${apiThreadId}/chat`, {
-                        method: 'POST',
-                        body: JSON.stringify({ message })
-                    });
+                    await this.sendMessageSynchronously(apiThreadId, message)
+                }
+            } catch (error) {
+                console.error('Failed to send message:', error)
+                this.showError('Failed to send message')
+                // Reload messages to show any partial state
+                await this.loadMessages()
+            } finally {
+                this.sending = false
+                this.streaming = false
+            }
+        },
+
+        // Method to stop streaming
+        stopStreaming() {
+            console.log('🛑 Stopping streaming...')
+
+            if (this.currentStreamController) {
+                this.currentStreamController.abort()
+                this.currentStreamController = null
+            }
+
+            this.streaming = false
+        },
+
+        // Send message with Server-Sent Events streaming
+        async sendMessageWithStreaming(threadId, message) {
+            this.streaming = true
+            this.currentStreamController = new AbortController()
+            this.streamingBuffer = ''
+            
+            // User message already added in sendMessage() - don't duplicate
+            
+            let streamingMessageId = null
+            let lastUpdateTime = 0
+            
+            try {
+                console.log('📨 Starting streaming for thread:', threadId)
+                
+                const response = await fetch(`/api/threads/${threadId}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Telegram-Init-Data': window.Telegram?.WebApp?.initData || '',
+                    },
+                    body: JSON.stringify({ message }),
+                    signal: this.currentStreamController.signal
+                })
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
                 }
                 
-                // Reload messages to get AI response - with retries
-                this.reloadMessagesWithRetry();
+                const reader = response.body.getReader()
+                const decoder = new TextDecoder()
                 
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+                    
+                    const chunk = decoder.decode(value, { stream: true })
+                    const lines = chunk.split('\n')
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const jsonData = line.substring(6).trim()
+                            if (jsonData) {
+                                try {
+                                    const data = JSON.parse(jsonData)
+                                    
+                                    if (data.type === 'complete') {
+                                        console.log('✅ Streaming completed')
+                                        this.streaming = false
+                                        
+                                        // Mark the streaming message as complete to stop indicator
+                                        if (streamingMessageId) {
+                                            const message = this.messages.find(m => m.id === streamingMessageId)
+                                            if (message) {
+                                                message.is_complete = true
+                                                message.isStreaming = false
+                                            }
+                                        }
+                                        
+                                        return
+                                    }
+                                    
+                                    // Handle streaming message updates
+                                    if (data.role === 'assistant' && data.content !== undefined) {
+                                        // Find or create the streaming message
+                                        if (!streamingMessageId) {
+                                            // First update - create assistant message with estimated height
+                                            const assistantMessage = {
+                                                id: data.id,
+                                                role: 'assistant',
+                                                content: data.content || '',
+                                                created_at: data.created_at || new Date().toISOString(),
+                                                is_live: true,
+                                                message_type: 'normal',
+                                                is_complete: false,
+                                                isStreaming: true,
+                                                estimatedHeight: this.estimateMessageHeight(data.content || '')
+                                            }
+                                            this.messages.push(assistantMessage)
+                                            streamingMessageId = data.id
+                                            
+                                            // Pre-expand container and scroll immediately without smooth animation
+                                            this.$nextTick(() => {
+                                                this.scrollToBottom(false, true)
+                                            })
+                                        } else {
+                                            // Buffer the content and throttle updates
+                                            this.streamingBuffer = data.content || ''
+                                            
+                                            const now = Date.now()
+                                            if (now - lastUpdateTime >= this.streamingThrottleMs) {
+                                                this.updateStreamingMessage(streamingMessageId, this.streamingBuffer)
+                                                lastUpdateTime = now
+                                            } else {
+                                                // Clear any pending update and schedule new one
+                                                if (this.streamingUpdateTimer) {
+                                                    clearTimeout(this.streamingUpdateTimer)
+                                                }
+                                                this.streamingUpdateTimer = setTimeout(() => {
+                                                    this.updateStreamingMessage(streamingMessageId, this.streamingBuffer)
+                                                    lastUpdateTime = Date.now()
+                                                }, this.streamingThrottleMs - (now - lastUpdateTime))
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing streaming data:', e)
+                                }
+                            }
+                        }
+                    }
+                }
             } catch (error) {
-                console.error('Failed to send message:', error);
-                this.showError('Failed to send message');
+                console.error('Streaming failed:', error)
+                
+                // Handle cancellation gracefully
+                if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('canceled')) {
+                    // Add interruption message to the streaming response
+                    if (streamingMessageId) {
+                        const message = this.messages.find(m => m.id === streamingMessageId)
+                        if (message && message.content) {
+                            message.content += '\n\n_[Streaming was interrupted by user]_'
+                            message.is_complete = true
+                            message.isStreaming = false
+                        }
+                    }
+                } else {
+                    throw error
+                }
             } finally {
-                this.sending = false;
+                this.streaming = false
+                this.currentStreamController = null
+                
+                // Clean up streaming state and ensure final update
+                if (this.streamingUpdateTimer) {
+                    clearTimeout(this.streamingUpdateTimer)
+                    this.streamingUpdateTimer = null
+                }
+                
+                if (streamingMessageId && this.streamingBuffer) {
+                    // Final update with any remaining buffer content
+                    this.updateStreamingMessage(streamingMessageId, this.streamingBuffer)
+                }
+                
+                if (streamingMessageId) {
+                    const message = this.messages.find(m => m.id === streamingMessageId)
+                    if (message) {
+                        message.isStreaming = false
+                    }
+                }
+                
+                this.streamingBuffer = ''
             }
         },
-        
-        async reloadMessagesWithRetry(attempt = 1, maxAttempts = 5) {
-            console.log(`🔄 Reloading messages attempt ${attempt}/${maxAttempts}`);
-            
-            // Wait a bit before each attempt
-            await new Promise(resolve => setTimeout(resolve, attempt * 500));
-            
-            const initialMessageCount = this.messages.length;
-            await this.loadMessages();
-            
-            // Check if we got new messages
-            if (this.messages.length > initialMessageCount) {
-                console.log('✅ New messages detected, stopping retry');
-                return;
-            }
-            
-            // Retry if we haven't reached max attempts
-            if (attempt < maxAttempts) {
-                console.log(`⏳ No new messages yet, retrying in ${(attempt + 1) * 500}ms...`);
-                this.reloadMessagesWithRetry(attempt + 1, maxAttempts);
-            } else {
-                console.log('❌ Max retry attempts reached');
+
+        // Send message synchronously (non-streaming mode)
+        async sendMessageSynchronously(threadId, message) {
+            try {
+                console.log(
+                    '📨 Sending message synchronously for thread:',
+                    threadId,
+                    'message:',
+                    message
+                )
+
+                // Send message to backend and wait for complete response
+                const response = await this.apiCall(`/api/threads/${threadId}/messages`, {
+                    method: 'POST',
+                    body: JSON.stringify({ message }),
+                })
+
+                console.log('✅ Synchronous response received:', response)
+
+                // Reload messages to get the complete conversation from database
+                await this.loadMessages()
+            } catch (error) {
+                console.error('Send message synchronously failed:', error)
+                throw error
             }
         },
-        
+
+        // Remove all polling logic as we now use synchronous requests with SSE streaming
+
         handleKeyDown(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                this.sendMessage();
+                event.preventDefault()
+                this.sendMessage()
             }
         },
-        
+
+        // Global keyboard shortcuts
+        handleGlobalKeyDown(event) {
+            // Cmd+N (Mac) or Ctrl+N (Windows/Linux) to create new thread
+            if ((event.metaKey || event.ctrlKey) && event.key === 'n') {
+                event.preventDefault()
+                this.newThread()
+            }
+        },
+
         // Update current thread settings when dropdowns change (for temp threads)
         updateThreadSettings() {
             if (this.currentThread) {
-                this.currentThread.settings = { ...this.threadSettings };
-                console.log('Thread settings updated locally:', this.threadSettings);
+                this.currentThread.settings = { ...this.threadSettings }
+                console.log('Thread settings updated locally:', this.threadSettings)
             }
-        },
-        
-        async saveSettings() {
-            if (!this.currentThreadId) return;
             
+            // Focus the message input after changing settings
+            this.$nextTick(() => {
+                const input = this.$refs.messageInput
+                if (input) input.focus()
+            })
+        },
+
+        async saveSettings() {
+            console.log('saveSettings called, currentThreadId:', this.currentThreadId)
+            console.log('threadSettings:', this.threadSettings)
+
+            if (!this.currentThreadId) {
+                console.log('No currentThreadId, returning')
+                return
+            }
+
             // Don't save for temp threads - they'll be saved with first message
             if (this.currentThreadId.startsWith('temp_')) {
-                this.updateThreadSettings();
-                return;
+                console.log('Temp thread, calling updateThreadSettings')
+                this.updateThreadSettings()
+                this.showSettings = false
+                return
             }
-            
+
             try {
+                console.log('Making API call to update settings')
                 await this.apiCall(`/api/threads/${this.currentThreadId}/settings`, {
                     method: 'PUT',
-                    body: JSON.stringify(this.threadSettings)
-                });
-                
+                    body: JSON.stringify(this.threadSettings),
+                })
+
+                console.log('Settings saved successfully')
+
                 // Update current thread settings
                 if (this.currentThread) {
-                    this.currentThread.settings = { ...this.threadSettings };
+                    this.currentThread.settings = { ...this.threadSettings }
                 }
-                
-                this.showSettings = false;
-                
+
+                this.showSettings = false
             } catch (error) {
-                console.error('Failed to save settings:', error);
-                this.showError('Failed to save settings');
+                console.error('Failed to save settings:', error)
+                this.showError('Failed to save settings')
             }
         },
-        
+
         newRole() {
             this.editingRole = {
                 id: null,
                 name: '',
-                prompt: ''
-            };
-            this.showRoleEditor = true;
+                prompt: '',
+            }
+            this.showRoleEditor = true
         },
-        
+
         editRole(role) {
-            this.editingRole = { ...role };
-            this.showRoleEditor = true;
+            this.editingRole = { ...role }
+            this.showRoleEditor = true
         },
-        
+
         async saveRole() {
             if (!this.editingRole.name.trim() || !this.editingRole.prompt.trim()) {
-                this.showError('Please fill in both name and prompt');
-                return;
+                this.showError('Please fill in both name and prompt')
+                return
             }
-            
+
             try {
                 if (this.editingRole.id) {
                     // Update existing role
@@ -457,129 +785,331 @@ createApp({
                         method: 'PUT',
                         body: JSON.stringify({
                             name: this.editingRole.name,
-                            prompt: this.editingRole.prompt
-                        })
-                    });
+                            prompt: this.editingRole.prompt,
+                        }),
+                    })
                 } else {
                     // Create new role
                     await this.apiCall('/api/roles', {
                         method: 'POST',
                         body: JSON.stringify({
                             name: this.editingRole.name,
-                            prompt: this.editingRole.prompt
-                        })
-                    });
+                            prompt: this.editingRole.prompt,
+                        }),
+                    })
                 }
-                
+
                 // Reload roles
-                const response = await this.apiCall('/api/roles');
-                console.log('Reloaded roles response:', response);
-                this.roles = response.roles || [];
-                console.log('Updated roles array:', this.roles);
-                
-                this.showRoleEditor = false;
-                
+                const response = await this.apiCall('/api/roles')
+                console.log('Reloaded roles response:', response)
+                this.roles = response.roles || []
+                console.log('Updated roles array:', this.roles)
+
+                this.showRoleEditor = false
             } catch (error) {
-                console.error('Failed to save role:', error);
-                this.showError('Failed to save role');
+                console.error('Failed to save role:', error)
+                this.showError('Failed to save role')
             }
         },
-        
+
         async deleteRole(roleId) {
-            if (!confirm('Are you sure you want to delete this role?')) return;
-            
+            if (!confirm('Are you sure you want to delete this role?')) return
+
             try {
                 await this.apiCall(`/api/roles/${roleId}`, {
-                    method: 'DELETE'
-                });
-                
+                    method: 'DELETE',
+                })
+
                 // Remove from local array
-                this.roles = this.roles.filter(r => r.id !== roleId);
-                
+                this.roles = this.roles.filter(r => r.id !== roleId)
+
                 // If this role was selected in current thread, clear it
                 if (this.threadSettings.role_id === roleId) {
-                    this.threadSettings.role_id = null;
-                    await this.saveSettings();
+                    this.threadSettings.role_id = null
+                    await this.saveSettings()
                 }
-                
             } catch (error) {
-                console.error('Failed to delete role:', error);
-                this.showError('Failed to delete role');
+                console.error('Failed to delete role:', error)
+                this.showError('Failed to delete role')
             }
         },
-        
+
         getCurrentRoleName() {
-            if (!this.currentThread?.settings?.role_id) return '';
-            const role = this.roles.find(r => r.id === this.currentThread.settings.role_id);
-            return role ? role.name : 'Unknown Role';
+            if (!this.currentThread?.settings?.role_id) return ''
+            const role = this.roles.find(r => r.id === this.currentThread.settings.role_id)
+            return role ? role.name : 'Unknown Role'
         },
-        
+
         formatDate(dateStr) {
-            const date = new Date(dateStr);
-            const now = new Date();
-            const diffMs = now - date;
-            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-            
+            const date = new Date(dateStr)
+            const now = new Date()
+            const diffMs = now - date
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
             if (diffDays === 0) {
-                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return date.toLocaleTimeString('en-GB', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false,
+                })
             } else if (diffDays === 1) {
-                return 'Yesterday';
+                return 'Yesterday'
             } else if (diffDays < 7) {
-                return `${diffDays} days ago`;
+                return `${diffDays} days ago`
             } else {
-                return date.toLocaleDateString();
+                return date.toLocaleDateString()
             }
         },
-        
+
         formatTime(dateStr) {
-            return new Date(dateStr).toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
+            return new Date(dateStr).toLocaleTimeString('en-GB', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            })
         },
-        
+
         formatMessage(content) {
-            if (!content) return '';
-            
+            if (!content) return ''
+
             // Simple markdown-like formatting
             return content
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/`(.*?)`/g, '<code>$1</code>')
-                .replace(/\n/g, '<br>');
+                .replace(/\n/g, '<br>')
         },
-        
-        scrollToBottom() {
-            const container = this.$refs.messagesContainer;
-            if (container) {
-                container.scrollTop = container.scrollHeight;
-            }
-        },
-        
+
         showError(message) {
             // You can integrate with Telegram's showAlert or implement your own notification system
             if (window.Telegram?.WebApp?.showAlert) {
-                window.Telegram.WebApp.showAlert(message);
+                window.Telegram.WebApp.showAlert(message)
             } else {
-                alert(message);
+                alert(message)
             }
-        }
-    }
-}).mount('#app');
+        },
+
+        // Thread management functions
+        confirmDeleteThread(threadId) {
+            // For temp threads, delete immediately without confirmation
+            if (threadId.toString().startsWith('temp_')) {
+                this.deleteThreadId = threadId
+                this.deleteThread()
+                return
+            }
+
+            // For real threads, show confirmation dialog
+            this.deleteThreadId = threadId
+            this.showDeleteConfirm = true
+        },
+
+        cancelDelete() {
+            this.showDeleteConfirm = false
+            this.deleteThreadId = null
+        },
+
+        async deleteThread() {
+            if (!this.deleteThreadId) return
+
+            try {
+                // Check if it's a temp thread
+                const isTemp = this.deleteThreadId.toString().startsWith('temp_')
+
+                if (!isTemp) {
+                    // Only make API call for real threads
+                    await this.apiCall(`/api/threads/${this.deleteThreadId}`, {
+                        method: 'DELETE',
+                    })
+                }
+
+                // Remove from local arrays
+                this.threads = this.threads.filter(t => t.id !== this.deleteThreadId)
+                this.archivedThreads = this.archivedThreads.filter(
+                    t => t.id !== this.deleteThreadId
+                )
+
+                // If currently selected thread was deleted, clear selection
+                if (this.currentThreadId === this.deleteThreadId) {
+                    this.currentThreadId = null
+                    this.currentThread = null
+                    this.messages = []
+
+                    // Auto-select next available thread
+                    if (this.threads.length > 0) {
+                        await this.selectThread(this.threads[0].id)
+                    }
+                }
+
+                this.showDeleteConfirm = false
+                this.deleteThreadId = null
+
+                console.log(
+                    isTemp
+                        ? '✅ Temp thread deleted locally'
+                        : '✅ Thread deleted from backend'
+                )
+            } catch (error) {
+                console.error('Failed to delete thread:', error)
+                this.showError('Failed to delete thread')
+            }
+        },
+
+        async archiveThread(threadId) {
+            try {
+                await this.apiCall(`/api/threads/${threadId}/archive`, {
+                    method: 'PUT',
+                })
+
+                // Find the thread in either active or archived list
+                let thread = this.threads.find(t => t.id === threadId)
+                let wasActive = true
+
+                if (!thread) {
+                    thread = this.archivedThreads.find(t => t.id === threadId)
+                    wasActive = false
+                }
+
+                if (thread) {
+                    // Toggle archive status
+                    if (wasActive) {
+                        // Move from active to archived
+                        this.threads = this.threads.filter(t => t.id !== threadId)
+                        thread.archived_at = new Date().toISOString()
+                        this.archivedThreads.unshift(thread)
+
+                        // If currently selected thread was archived, clear selection and select next
+                        if (this.currentThreadId === threadId) {
+                            this.currentThreadId = null
+                            this.currentThread = null
+                            this.messages = []
+
+                            if (this.threads.length > 0) {
+                                await this.selectThread(this.threads[0].id)
+                            }
+                        }
+                    } else {
+                        // Move from archived to active
+                        this.archivedThreads = this.archivedThreads.filter(
+                            t => t.id !== threadId
+                        )
+                        thread.archived_at = null
+                        this.threads.unshift(thread)
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to archive thread:', error)
+                this.showError('Failed to archive thread')
+            }
+        },
+
+        toggleArchivedSection() {
+            this.showArchivedSection = !this.showArchivedSection
+        },
+
+        // Enhanced scroll to bottom with auto-scroll for long chats
+        scrollToBottom(smooth = true) {
+            const container = this.$refs.messagesContainer
+            if (container) {
+                const scrollOptions = {
+                    top: container.scrollHeight,
+                    behavior: smooth ? 'smooth' : 'auto',
+                }
+                container.scrollTo(scrollOptions)
+            }
+        },
+
+        // Auto-scroll when messages are loaded (for long chat history)
+        autoScrollToBottom() {
+            // Use a small delay to ensure DOM is fully rendered for large message lists
+            this.$nextTick(() => {
+                setTimeout(() => {
+                    // For long message history, scroll immediately without smooth animation
+                    this.scrollToBottom(false)
+                }, 100)
+            })
+        },
+
+        // Update streaming message content with smooth transitions
+        updateStreamingMessage(messageId, content) {
+            const message = this.messages.find(m => m.id === messageId)
+            if (message) {
+                // Use requestAnimationFrame for smooth DOM updates
+                requestAnimationFrame(() => {
+                    message.content = content
+                    
+                    // Update estimated height for better layout stability
+                    message.estimatedHeight = this.estimateMessageHeight(content)
+                    
+                    // Maintain scroll position at bottom during streaming
+                    this.$nextTick(() => {
+                        const container = this.$refs.messagesContainer
+                        if (container) {
+                            const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
+                            if (isNearBottom) {
+                                this.scrollToBottom(true)
+                            }
+                        }
+                    })
+                })
+            }
+        },
+
+        // Estimate message height to pre-allocate space
+        estimateMessageHeight(content) {
+            if (!content) return 60 // Minimum height
+            
+            // Rough estimation: ~20px per line, ~80 chars per line
+            const lines = content.split('\n').length + Math.floor(content.length / 80)
+            return Math.max(60, lines * 24 + 40) // Base padding + line height
+        },
+
+        // Enhanced typewriter effect for streaming (optional)
+        enableTypewriterEffect(messageId, fullContent) {
+            const message = this.messages.find(m => m.id === messageId)
+            if (!message) return
+            
+            let currentIndex = 0
+            const speed = 30 // milliseconds per character
+            
+            const typeNext = () => {
+                if (currentIndex < fullContent.length && message.isStreaming) {
+                    message.content = fullContent.substring(0, currentIndex + 1)
+                    currentIndex++
+                    setTimeout(typeNext, speed)
+                } else {
+                    message.content = fullContent
+                }
+            }
+            
+            typeNext()
+        },
+
+        // Mark any previous incomplete assistant messages as complete
+        markPreviousMessagesComplete() {
+            this.messages.forEach((message, index) => {
+                if (message.role === 'assistant' && !message.is_complete) {
+                    // Create a new message object to trigger reactivity
+                    const updatedMessage = { ...message, is_complete: true }
+                    this.messages.splice(index, 1, updatedMessage)
+                }
+            })
+        },
+    },
+}).mount('#app')
 
 // Global error handlers
-window.addEventListener('error', function(e) {
-    console.error('🚨 JavaScript Error:', e.error);
+window.addEventListener('error', function (e) {
+    console.error('🚨 JavaScript Error:', e.error)
     console.error('📍 Error details:', {
         message: e.message,
         filename: e.filename,
         lineno: e.lineno,
         colno: e.colno,
-        stack: e.error?.stack
-    });
-});
+        stack: e.error?.stack,
+    })
+})
 
-window.addEventListener('unhandledrejection', function(e) {
-    console.error('🚨 Unhandled Promise Rejection:', e.reason);
-    console.error('📍 Promise rejection details:', e);
-});
+window.addEventListener('unhandledrejection', function (e) {
+    console.error('🚨 Unhandled Promise Rejection:', e.reason)
+    console.error('📍 Promise rejection details:', e)
+})

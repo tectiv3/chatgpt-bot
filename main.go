@@ -108,6 +108,10 @@ func main() {
 				AccessKeyID:     conf.AWSAccessKeyID,
 				SecretAccessKey: conf.AWSSecretAccessKey,
 			}),
+			// Initialize rate limiter: 20 requests per minute per user
+			rateLimiter: NewRateLimiter(20, time.Minute),
+			// Allow max 3 concurrent polling connections per user
+			connectionManager: NewConnectionManager(3),
 		}
 		if conf.AnthropicEnabled {
 			server.anthropic = anthropic.New(anthropic.WithAPIKey(conf.AnthropicAPIKey))

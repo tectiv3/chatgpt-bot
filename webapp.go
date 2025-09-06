@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +53,7 @@ type ThreadResponse struct {
 	Title        string         `json:"title"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
+	ArchivedAt   *time.Time     `json:"archived_at"`
 	Settings     ThreadSettings `json:"settings"`
 	MessageCount int            `json:"message_count"`
 }
@@ -92,6 +94,7 @@ func (s *Server) setupWebServer() *http.ServeMux {
 
 	// API endpoints with CORS and authentication middleware
 	mux.HandleFunc("/api/threads", s.corsMiddleware(s.authMiddleware(s.handleThreads)))
+	mux.HandleFunc("/api/threads/archived", s.corsMiddleware(s.authMiddleware(s.getArchivedThreads)))
 	mux.HandleFunc("/api/threads/", s.corsMiddleware(s.authMiddleware(s.handleThreadsWithID)))
 	mux.HandleFunc("/api/models", s.corsMiddleware(s.authMiddleware(s.getAvailableModels)))
 	mux.HandleFunc("/api/roles", s.corsMiddleware(s.authMiddleware(s.handleRoles)))
@@ -236,8 +239,6 @@ func (s *Server) serveMiniApp(w http.ResponseWriter, r *http.Request) {
 		"BotName": botName,
 	}
 
-	Log.WithField("botName", botName).Info("Executing template with data")
-
 	w.Header().Set("Content-Type", "text/html")
 	if err := tmpl.Execute(w, data); err != nil {
 		Log.WithField("error", err).Error("Failed to execute template")
@@ -265,7 +266,7 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var chats []Chat
-	err := s.db.Where("user_id = ? AND thread_id IS NOT NULL", user.ID).
+	err := s.db.Where("user_id = ? AND thread_id IS NOT NULL AND archived_at IS NULL", user.ID).
 		Order("updated_at DESC").
 		Preload("Role").
 		Find(&chats).Error
@@ -296,6 +297,55 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 			Title:        *chat.ThreadTitle,
 			CreatedAt:    chat.CreatedAt,
 			UpdatedAt:    chat.UpdatedAt,
+			ArchivedAt:   chat.ArchivedAt,
+			Settings:     settings,
+			MessageCount: int(messageCount),
+		}
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string][]ThreadResponse{"threads": threads})
+}
+
+func (s *Server) getArchivedThreads(w http.ResponseWriter, r *http.Request) {
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	var chats []Chat
+	err := s.db.Where("user_id = ? AND thread_id IS NOT NULL AND archived_at IS NOT NULL", user.ID).
+		Order("archived_at DESC").
+		Preload("Role").
+		Find(&chats).Error
+	if err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to fetch archived threads")
+		return
+	}
+
+	threads := make([]ThreadResponse, len(chats))
+	for i, chat := range chats {
+		var messageCount int64
+		s.db.Model(&ChatMessage{}).Where("chat_id = ?", chat.ChatID).Count(&messageCount)
+
+		settings := ThreadSettings{
+			ModelName:    chat.ModelName,
+			Temperature:  chat.Temperature,
+			RoleID:       chat.RoleID,
+			Stream:       chat.Stream,
+			QA:           chat.QA,
+			Voice:        chat.Voice,
+			Lang:         chat.Lang,
+			MasterPrompt: chat.MasterPrompt,
+			ContextLimit: chat.ContextLimit,
+		}
+
+		threads[i] = ThreadResponse{
+			ID:           *chat.ThreadID,
+			Title:        *chat.ThreadTitle,
+			CreatedAt:    chat.CreatedAt,
+			UpdatedAt:    chat.UpdatedAt,
+			ArchivedAt:   chat.ArchivedAt,
 			Settings:     settings,
 			MessageCount: int(messageCount),
 		}
@@ -406,20 +456,23 @@ func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getThreadMessages(w, r, threadID)
-		default:
-			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		}
-	case subPath == "/chat":
-		switch r.Method {
 		case http.MethodPost:
 			s.chatInThread(w, r, threadID)
 		default:
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
+	// Remove polling endpoint as it's no longer needed
 	case subPath == "/settings":
 		switch r.Method {
 		case http.MethodPut:
 			s.updateThreadSettings(w, r, threadID)
+		default:
+			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		}
+	case subPath == "/archive":
+		switch r.Method {
+		case http.MethodPut:
+			s.archiveThread(w, r, threadID)
 		default:
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
@@ -515,13 +568,18 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 
 	// Check if context limit is exceeded and summarize if needed
 	if err := s.checkAndSummarizeContext(&chat); err != nil {
-		fmt.Printf("Warning: Failed to summarize context: %v\n", err)
+		Log.WithField("error", err).Warn("Failed to summarize context")
 	}
 
-	// Process message asynchronously
-	go s.processThreadMessage(&chat, req.Message)
+	// Process message synchronously with streaming response
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"message": "Message sent successfully"})
+	if chat.Stream {
+		// Use Server-Sent Events for streaming response
+		s.handleStreamingResponse(w, r, &chat, req.Message)
+	} else {
+		// Process synchronously and return complete response
+		s.handleSynchronousResponse(w, &chat, req.Message)
+	}
 }
 
 func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, threadID string) {
@@ -564,6 +622,49 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"message": "Settings updated successfully"})
+}
+
+func (s *Server) archiveThread(w http.ResponseWriter, r *http.Request, threadID string) {
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	// Find chat and verify ownership
+	var chat Chat
+	err := s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).First(&chat).Error
+	if err != nil {
+		s.writeJSONError(w, http.StatusNotFound, "Thread not found")
+		return
+	}
+
+	// Check if thread is currently archived
+	var updates map[string]interface{}
+	if chat.ArchivedAt != nil {
+		// Unarchive: set archived_at to NULL
+		updates = map[string]interface{}{
+			"archived_at": nil,
+		}
+	} else {
+		// Archive: set archived_at to current time
+		now := time.Now()
+		updates = map[string]interface{}{
+			"archived_at": &now,
+		}
+	}
+
+	if err := s.db.Model(&chat).Updates(updates).Error; err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to update archive status")
+		return
+	}
+
+	action := "archived"
+	if chat.ArchivedAt != nil {
+		action = "unarchived"
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Thread %s successfully", action)})
 }
 
 func (s *Server) deleteThread(w http.ResponseWriter, r *http.Request, threadID string) {
@@ -786,7 +887,7 @@ func (s *Server) generateThreadTitle(initialMessage string) (string, error) {
 func (s *Server) processThreadMessage(chat *Chat, message string) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("Panic in processThreadMessage: %v\n", r)
+			Log.WithField("panic", r).Error("Panic in processThreadMessage")
 		}
 	}()
 
@@ -799,20 +900,13 @@ func (s *Server) processThreadMessage(chat *Chat, message string) {
 		Order("created_at ASC").
 		Find(&messages)
 
-	// Convert to OpenAI format
+	// Convert to OpenAI format - this already includes the user message from DB
 	history := s.convertMessagesToOpenAI(messages, chat)
-
-	// Add the new user message to history
-	userMsg := openai.ChatMessage{
-		Role:    "user",
-		Content: message,
-	}
-	history = append(history, userMsg)
 
 	// Generate AI response
 	response, err := s.generateResponseForThread(chat, history)
 	if err != nil {
-		fmt.Printf("Error generating response for thread %s: %v\n", *chat.ThreadID, err)
+		Log.WithFields(map[string]interface{}{"thread_id": *chat.ThreadID, "error": err}).Error("Failed to generate response for thread")
 		// Save error message
 		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
 		errorMsg := ChatMessage{
@@ -836,7 +930,190 @@ func (s *Server) processThreadMessage(chat *Chat, message string) {
 	}
 
 	if err := s.db.Create(&assistantMsg).Error; err != nil {
-		fmt.Printf("Error saving assistant message: %v\n", err)
+		Log.WithField("error", err).Error("Failed to save assistant message")
+	}
+}
+
+// New function that builds response incrementally for polling
+func (s *Server) processThreadMessageWithUpdates(chat *Chat, message string) {
+	// Create context with timeout for the entire processing
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	defer func() {
+		if r := recover(); r != nil {
+			Log.WithField("panic", r).Error("Panic in processThreadMessageWithUpdates")
+			debug.PrintStack()
+		}
+	}()
+
+	// Load chat with full relationships
+	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
+
+	// Get live messages for context
+	var messages []ChatMessage
+	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
+		Order("created_at ASC").
+		Find(&messages)
+
+	// Convert to OpenAI format - this should include the new user message from DB
+	history := s.convertMessagesToOpenAI(messages, chat)
+
+	// Create placeholder assistant message that we'll update as we build the response
+	assistantMsg := ChatMessage{
+		ChatID:      chat.ChatID,
+		Role:        "assistant",
+		Content:     new(string), // Start with empty content
+		IsLive:      true,
+		MessageType: "normal",
+	}
+
+	if err := s.db.Create(&assistantMsg).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to create assistant message")
+		return
+	}
+
+	// Generate AI response and update the message as we build it
+	response, err := s.generateResponseWithStreamingUpdates(ctx, chat, history, &assistantMsg, nil, nil)
+	if err != nil {
+		Log.WithFields(map[string]interface{}{"thread_id": *chat.ThreadID, "error": err}).Error("Failed to generate response for thread")
+		// Update with error message
+		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
+		assistantMsg.Content = &errorContent
+		if updateErr := s.db.Save(&assistantMsg).Error; updateErr != nil {
+			Log.WithField("error", updateErr).Error("Failed to save error message")
+		}
+		return
+	}
+
+	// Final update with complete response
+	assistantMsg.Content = &response
+	if err := s.db.Save(&assistantMsg).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to save final assistant message")
+	}
+}
+
+// Generate response with streaming updates to SSE
+// Generate response with streaming updates to SSE (following Telegram bot pattern)
+func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, history []openai.ChatMessage, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, error) {
+	model := s.getModel(chat.ModelName)
+	if model == nil {
+		return "", fmt.Errorf("model %s not found", chat.ModelName)
+	}
+
+	switch model.Provider {
+	case "openai":
+		// Use the exact same pattern as getStreamAnswer in llm.go
+		type completion struct {
+			response openai.ChatCompletion
+			done     bool
+			err      error
+		}
+		ch := make(chan completion, 1)
+
+		var result strings.Builder
+		tokenCount := 0
+
+		options := openai.ChatCompletionOptions{}.
+			SetTemperature(chat.Temperature).
+			SetStream(func(r openai.ChatCompletion, done bool, err error) {
+				ch <- completion{response: r, done: done, err: err}
+				if done {
+					close(ch)
+				}
+			})
+
+		// Start the streaming request
+		if _, err := s.openAI.CreateChatCompletionWithContext(ctx, model.ModelID, history, options); err != nil {
+			return "", fmt.Errorf("failed to start OpenAI stream: %v", err)
+		}
+
+		// Process streaming responses (exact pattern from Telegram bot)
+		for comp := range ch {
+			if comp.err != nil {
+				return result.String(), nil
+			}
+
+			if !comp.done {
+				// Extract token from delta (same as Telegram bot)
+				if len(comp.response.Choices) > 0 && comp.response.Choices[0].Delta.Content != nil {
+					if deltaStr, err := comp.response.Choices[0].Delta.ContentString(); err == nil && deltaStr != "" {
+						result.WriteString(deltaStr)
+						tokenCount++
+
+						// Send SSE update immediately for every token
+						if w != nil && flusher != nil {
+							currentContent := result.String()
+							updatedResponse := MessageResponse{
+								ID:          assistantMsg.ID,
+								Role:        "assistant",
+								Content:     &currentContent,
+								CreatedAt:   assistantMsg.CreatedAt,
+								IsLive:      true,
+								MessageType: "normal",
+							}
+
+							jsonData, _ := json.Marshal(updatedResponse)
+							fmt.Fprintf(w, "data: %s\n\n", jsonData)
+							flusher.Flush()
+						}
+					}
+				}
+			}
+		}
+
+		return result.String(), nil
+
+	case "anthropic":
+		// For Anthropic, fall back to non-streaming for now
+		response, err := s.generateResponseForThread(chat, history)
+		if err != nil {
+			return "", err
+		}
+
+		// Send complete response via SSE
+		if w != nil && flusher != nil {
+			updatedResponse := MessageResponse{
+				ID:          assistantMsg.ID,
+				Role:        "assistant",
+				Content:     &response,
+				CreatedAt:   assistantMsg.CreatedAt,
+				IsLive:      true,
+				MessageType: "normal",
+			}
+			jsonData, _ := json.Marshal(updatedResponse)
+			fmt.Fprintf(w, "data: %s\n\n", jsonData)
+			flusher.Flush()
+		}
+
+		return response, nil
+
+	case "gemini":
+		// For Gemini, fall back to non-streaming for now
+		response, err := s.generateResponseForThread(chat, history)
+		if err != nil {
+			return "", err
+		}
+
+		// Send complete response via SSE
+		if w != nil && flusher != nil {
+			updatedResponse := MessageResponse{
+				ID:          assistantMsg.ID,
+				Role:        "assistant",
+				Content:     &response,
+				CreatedAt:   assistantMsg.CreatedAt,
+				IsLive:      true,
+				MessageType: "normal",
+			}
+			jsonData, _ := json.Marshal(updatedResponse)
+			fmt.Fprintf(w, "data: %s\n\n", jsonData)
+			flusher.Flush()
+		}
+
+		return response, nil
+
+	default:
+		return "", fmt.Errorf("unsupported provider: %s", model.Provider)
 	}
 }
 
@@ -957,6 +1234,162 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 	return history
 }
 
+// Handle streaming response with Server-Sent Events
+func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, message string) {
+	// Set up Server-Sent Events headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.writeJSONError(w, http.StatusInternalServerError, "Streaming unsupported")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	// Load chat with full relationships
+	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
+
+	// Get live messages for context
+	var messages []ChatMessage
+	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
+		Order("created_at ASC").
+		Find(&messages)
+
+	// Convert to OpenAI format (this should already include the user message that was just saved)
+	history := s.convertMessagesToOpenAI(messages, chat)
+
+	// Create assistant message in database
+	assistantMsg := ChatMessage{
+		ChatID:      chat.ChatID,
+		Role:        "assistant",
+		Content:     new(string), // Start with empty content
+		IsLive:      true,
+		MessageType: "normal",
+	}
+
+	if err := s.db.Create(&assistantMsg).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to create assistant message")
+		return
+	}
+
+	// Send initial empty assistant message to frontend
+	initialResponse := MessageResponse{
+		ID:          assistantMsg.ID,
+		Role:        "assistant",
+		Content:     assistantMsg.Content, // Empty string initially
+		CreatedAt:   assistantMsg.CreatedAt,
+		IsLive:      true,
+		MessageType: "normal",
+	}
+	jsonData, _ := json.Marshal(initialResponse)
+	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	flusher.Flush()
+
+	response, err := s.generateResponseWithStreamingUpdates(ctx, chat, history, &assistantMsg, w, flusher)
+	if err != nil {
+		Log.WithField("error", err).Error("Failed to generate response")
+		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
+		assistantMsg.Content = &errorContent
+		s.db.Save(&assistantMsg)
+
+		// Send error response
+		errorResponse := MessageResponse{
+			ID:          assistantMsg.ID,
+			Role:        "assistant",
+			Content:     &errorContent,
+			CreatedAt:   assistantMsg.CreatedAt,
+			IsLive:      true,
+			MessageType: "normal",
+		}
+		jsonData, _ := json.Marshal(errorResponse)
+		fmt.Fprintf(w, "data: %s\n\n", jsonData)
+		flusher.Flush()
+		return
+	}
+
+	// Final update with complete response - ONLY database update during streaming
+	assistantMsg.Content = &response
+	if err := s.db.Save(&assistantMsg).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to save final response to database")
+	}
+
+	// Send completion signal
+	fmt.Fprintf(w, "data: {\"type\": \"complete\"}\n\n")
+	flusher.Flush()
+}
+
+// Handle synchronous response without streaming
+func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, message string) {
+	// Load chat with full relationships
+	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
+
+	// Get live messages for context
+	var messages []ChatMessage
+	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
+		Order("created_at ASC").
+		Find(&messages)
+
+	// Convert to OpenAI format
+	history := s.convertMessagesToOpenAI(messages, chat)
+
+	// Generate AI response
+	response, err := s.generateResponseForThread(chat, history)
+	if err != nil {
+		Log.WithFields(map[string]interface{}{"thread_id": *chat.ThreadID, "error": err}).Error("Failed to generate response for thread")
+		s.writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to generate response: %v", err))
+		return
+	}
+
+	// Save AI response to database
+	assistantMsg := ChatMessage{
+		ChatID:      chat.ChatID,
+		Role:        "assistant",
+		Content:     &response,
+		IsLive:      true,
+		MessageType: "normal",
+	}
+
+	if err := s.db.Create(&assistantMsg).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to save assistant message")
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save response")
+		return
+	}
+
+	// Return the complete response
+	msgResponse := MessageResponse{
+		ID:          assistantMsg.ID,
+		Role:        "assistant",
+		Content:     &response,
+		CreatedAt:   assistantMsg.CreatedAt,
+		IsLive:      true,
+		MessageType: "normal",
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":  "Response generated successfully",
+		"response": msgResponse,
+	})
+}
+
+// Helper functions for different AI providers
+func (s *Server) callAnthropic(ctx context.Context, modelID string, history []openai.ChatMessage, temperature float64) (string, error) {
+	// For now, return error since we need to integrate with existing anthropic logic
+	// TODO: Integrate with existing getAnthropicAnswer function
+	return "", fmt.Errorf("anthropic integration not yet implemented for webapp")
+}
+
+func (s *Server) callGemini(ctx context.Context, modelID string, history []openai.ChatMessage, temperature float64) (string, error) {
+	// For now, return error since we need to integrate with existing gemini logic
+	// TODO: Integrate with existing gemini functions
+	return "", fmt.Errorf("gemini integration not yet implemented for webapp")
+}
+
 func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMessage) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -970,7 +1403,7 @@ func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMess
 
 	switch model.Provider {
 	case "openai":
-		response, err := s.openAI.CreateChatCompletionWithContext(ctx, chat.ModelName, history, options)
+		response, err := s.openAI.CreateChatCompletionWithContext(ctx, model.ModelID, history, options)
 		if err != nil {
 			return "", err
 		}
@@ -985,23 +1418,23 @@ func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMess
 		if s.anthropic == nil {
 			return "", fmt.Errorf("anthropic client not initialized")
 		}
-		// For now, return a simple message - you'll need to integrate with your existing anthropic logic
-		return "", fmt.Errorf("anthropic integration not implemented in webapp yet")
+		// Convert OpenAI messages to Anthropic format and make the call
+		response, err := s.callAnthropic(ctx, model.ModelID, history, chat.Temperature)
+		if err != nil {
+			return "", err
+		}
+		return response, nil
 
 	case "gemini":
 		if s.gemini == nil {
 			return "", fmt.Errorf("gemini client not initialized")
 		}
-		response, err := s.gemini.CreateChatCompletionWithContext(ctx, chat.ModelName, history, options)
+		// Convert OpenAI messages to Gemini format and make the call
+		response, err := s.callGemini(ctx, model.ModelID, history, chat.Temperature)
 		if err != nil {
 			return "", err
 		}
-		if len(response.Choices) > 0 {
-			if content, ok := response.Choices[0].Message.Content.(string); ok {
-				return content, nil
-			}
-		}
-		return "", fmt.Errorf("no response generated")
+		return response, nil
 
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", model.Provider)
