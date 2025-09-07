@@ -823,12 +823,116 @@ body {
 
 .message-text {
     line-height: 1.5;
-    white-space: pre-wrap;
     /* GPU acceleration for smooth text updates */
     transform: translateZ(0);
     backface-visibility: hidden;
     /* Prevent text selection during streaming for smoother updates */
     user-select: text;
+}
+
+/* Prose styles for markdown content */
+.message-text h1, .message-text h2, .message-text h3, .message-text h4, .message-text h5, .message-text h6 {
+    margin: 1em 0 0.5em 0;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--tg-text-color, #000);
+}
+
+.message-text h1 { font-size: 1.5em; }
+.message-text h2 { font-size: 1.3em; }
+.message-text h3 { font-size: 1.2em; }
+.message-text h4 { font-size: 1.1em; }
+.message-text h5, .message-text h6 { font-size: 1em; }
+
+.message-text p {
+    margin: 0.8em 0;
+    line-height: 1.6;
+}
+
+.message-text ul, .message-text ol {
+    margin: 0.8em 0;
+    padding-left: 1.5em;
+    line-height: 1.5;
+}
+
+.message-text li {
+    margin: 0.3em 0;
+}
+
+.message-text blockquote {
+    margin: 1em 0;
+    padding: 0.5em 1em;
+    border-left: 3px solid var(--primary-color);
+    background: var(--secondary-color);
+    border-radius: 0 8px 8px 0;
+    font-style: italic;
+}
+
+.message-text code {
+    background: var(--secondary-color);
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.9em;
+    border: 1px solid var(--border-color);
+}
+
+.message-text pre {
+    background: var(--secondary-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1em;
+    margin: 1em 0;
+    overflow-x: auto;
+    line-height: 1.4;
+}
+
+.message-text pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.85em;
+}
+
+.message-text a {
+    color: var(--primary-color);
+    text-decoration: underline;
+}
+
+.message-text a:hover {
+    text-decoration: none;
+}
+
+.message-text strong {
+    font-weight: 600;
+}
+
+.message-text em {
+    font-style: italic;
+}
+
+.message-text hr {
+    margin: 1.5em 0;
+    border: none;
+    height: 1px;
+    background: var(--border-color);
+}
+
+.message-text table {
+    border-collapse: collapse;
+    margin: 1em 0;
+    width: 100%;
+}
+
+.message-text th, .message-text td {
+    border: 1px solid var(--border-color);
+    padding: 0.5em 0.8em;
+    text-align: left;
+}
+
+.message-text th {
+    background: var(--secondary-color);
+    font-weight: 600;
 }
 
 .message-text.streaming-text {

@@ -7,33 +7,22 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html"
 	"html/template"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/meinside/openai-go"
 	initdata "github.com/telegram-mini-apps/init-data-golang"
 	"gorm.io/gorm"
 )
-
-// WebApp session for authentication
-type WebAppSession struct {
-	gorm.Model
-	UserID      uint
-	SessionData string `gorm:"type:text"`
-	ExpiresAt   time.Time
-}
 
 // Thread settings structure
 type ThreadSettings struct {
@@ -61,7 +50,7 @@ type ChatRequest struct {
 type ImageUpload struct {
 	ID       string `json:"id"`
 	URL      string `json:"url,omitempty"`
-	Data     string `json:"data,omitempty"`     // Base64 image data
+	Data     string `json:"data,omitempty"` // Base64 image data
 	Filename string `json:"filename"`
 	Size     int64  `json:"size,omitempty"`
 	MimeType string `json:"mime_type"`
@@ -92,8 +81,8 @@ type MessageResponse struct {
 	CreatedAt   time.Time `json:"created_at"`
 	IsLive      bool      `json:"is_live"`
 	MessageType string    `json:"message_type"`
-	ImageData   *string   `json:"image_data,omitempty"`   // URL to the image
-	ImageName   *string   `json:"image_name,omitempty"`   // Original filename
+	ImageData   *string   `json:"image_data,omitempty"` // URL to the image
+	ImageName   *string   `json:"image_name,omitempty"` // Original filename
 }
 
 type ModelResponse struct {
@@ -139,24 +128,20 @@ func (s *Server) setupWebServer() *http.ServeMux {
 	// Mini app route
 	mux.HandleFunc("/miniapp", s.corsMiddleware(s.serveMiniApp))
 
-	// API endpoints with CORS and authentication middleware
-	// CSRF token endpoint (no CSRF protection needed)
-	mux.HandleFunc("/api/csrf-token", s.corsMiddleware(s.authMiddleware(s.getCSRFToken)))
-
-	// Protected endpoints with CSRF protection for write operations
-	mux.HandleFunc("/api/threads", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleThreads))))
-	mux.HandleFunc("/api/threads/archived", s.corsMiddleware(s.authMiddleware(s.getArchivedThreads)))
-	mux.HandleFunc("/api/threads/", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleThreadsWithID))))
-	mux.HandleFunc("/api/models", s.corsMiddleware(s.authMiddleware(s.getAvailableModels)))
-	mux.HandleFunc("/api/roles", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleRoles))))
-	mux.HandleFunc("/api/roles/", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleRolesWithID))))
-	mux.HandleFunc("/api/user", s.corsMiddleware(s.authMiddleware(s.getUserInfo)))
-	mux.HandleFunc("/api/upload-image", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleImageUpload))))
+	mux.HandleFunc("/api/csrf-token", s.apiMiddleware(s.getCSRFToken, false))
+	mux.HandleFunc("/api/threads", s.apiMiddleware(s.handleThreads, false))
+	mux.HandleFunc("/api/threads/archived", s.apiMiddleware(s.getArchivedThreads, false))
+	mux.HandleFunc("/api/threads/", s.apiMiddleware(s.handleThreadsWithID, false))
+	mux.HandleFunc("/api/models", s.apiMiddleware(s.getAvailableModels, false))
+	mux.HandleFunc("/api/roles", s.apiMiddleware(s.handleRoles, false))
+	mux.HandleFunc("/api/roles/", s.apiMiddleware(s.handleRolesWithID, false))
+	mux.HandleFunc("/api/user", s.apiMiddleware(s.getUserInfo, false))
+	mux.HandleFunc("/api/upload-image", s.apiMiddleware(s.handleImageUpload, false))
 
 	return mux
 }
 
-// CORS middleware
+// corsMiddleware for non-API routes
 func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -172,13 +157,20 @@ func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Auth middleware with user context
-type contextKey string
-
-const userContextKey contextKey = "user"
-
-func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+// apiMiddleware consolidates CORS, auth, and optional CSRF protection
+func (s *Server) apiMiddleware(next http.HandlerFunc, requireCSRF bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data, X-CSRF-Token")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// Authentication
 		initDataString := r.Header.Get("Telegram-Init-Data")
 		if initDataString == "" {
 			s.writeJSONError(w, http.StatusUnauthorized, "Missing Telegram init data")
@@ -186,60 +178,58 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if err := initdata.Validate(initDataString, s.conf.TelegramBotToken, 24*time.Hour); err != nil {
-			s.logSecurityEvent("auth_validation_failed", r, map[string]interface{}{
-				"error": err.Error(),
-			})
 			s.writeJSONError(w, http.StatusUnauthorized, "Invalid Telegram authentication")
 			return
 		}
 
-		// Parse user info from init data
 		parsed, err := initdata.Parse(initDataString)
 		if err != nil {
-			s.logSecurityEvent("auth_parse_failed", r, map[string]interface{}{
-				"error": err.Error(),
-			})
 			s.writeJSONError(w, http.StatusUnauthorized, "Failed to parse init data")
 			return
 		}
 
-		// Get or create user
 		user, err := s.getOrCreateUserFromInitData(parsed)
 		if err != nil {
 			s.writeJSONError(w, http.StatusInternalServerError, "Failed to get user")
 			return
 		}
 
-		// Add user to context
+		// CSRF protection for write operations
+		if requireCSRF && r.Method != http.MethodGet {
+			providedToken := r.Header.Get("X-CSRF-Token")
+			if providedToken == "" {
+				s.writeJSONError(w, http.StatusForbidden, "CSRF token required")
+				return
+			}
+
+			if !csrfStore.validateCSRFToken(user.ID, providedToken) {
+				s.writeJSONError(w, http.StatusForbidden, "Invalid CSRF token")
+				return
+			}
+		}
+
+		// Add user to context and proceed
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next(w, r.WithContext(ctx))
 	}
 }
 
+// Auth context
+type contextKey string
+
+const userContextKey contextKey = "user"
+
 // Helper functions for JSON responses
 func (s *Server) writeJSONError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	s.writeJSON(w, status, map[string]string{"error": message})
 }
 
-// Security logging helper
-func (s *Server) logSecurityEvent(eventType string, r *http.Request, details map[string]interface{}) {
-	logFields := map[string]interface{}{
-		"event_type": eventType,
-		"endpoint":   r.URL.Path,
-		"method":     r.Method,
-		"user_agent": r.UserAgent(),
-		"remote_ip":  s.getClientIP(r),
-		"timestamp":  time.Now().UTC(),
+func (s *Server) writeJSONSuccess(w http.ResponseWriter, message string, data interface{}) {
+	response := map[string]interface{}{"message": message}
+	if data != nil {
+		response["data"] = data
 	}
-
-	// Add additional details
-	for k, v := range details {
-		logFields[k] = v
-	}
-
-	Log.WithFields(logFields).Warn("Security event detected")
+	s.writeJSON(w, http.StatusOK, response)
 }
 
 // Get client IP with proxy headers support
@@ -327,8 +317,7 @@ func (s *Server) getOrCreateUserFromInitData(initData initdata.InitData) (*User,
 func (s *Server) serveMiniApp(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.ParseFiles("webapp/templates/miniapp.html")
 	if err != nil {
-		Log.WithField("error", err).Error("Failed to parse template file")
-		s.writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Template error: %v", err))
+		http.Error(w, "Template error", http.StatusInternalServerError)
 		return
 	}
 
@@ -343,8 +332,7 @@ func (s *Server) serveMiniApp(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := tmpl.Execute(w, data); err != nil {
-		Log.WithField("error", err).Error("Failed to execute template")
-		s.writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Template execution error: %v", err))
+		http.Error(w, "Template execution error", http.StatusInternalServerError)
 	}
 }
 
@@ -459,9 +447,8 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limiting check for thread creation (prevent abuse)
+	// Rate limiting check for thread creation
 	if !s.rateLimiter.Allow(user.ID) {
-		Log.WithField("user_id", user.ID).Warn("Rate limit exceeded for thread creation")
 		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded. Please wait before creating another thread")
 		return
 	}
@@ -539,10 +526,9 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 	// Don't save initial message here - let the subsequent chat request handle it
 	// This prevents duplicate messages when images are involved
 
-	s.writeJSON(w, http.StatusCreated, map[string]interface{}{
+	s.writeJSONSuccess(w, "Thread created successfully", map[string]interface{}{
 		"thread_id": threadID,
 		"title":     title,
-		"message":   "Thread created successfully",
 	})
 }
 
@@ -640,7 +626,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			}
 			imageData = &imageURL
 		}
-		
+
 		response[i] = MessageResponse{
 			ID:          msg.ID,
 			Role:        string(msg.Role),
@@ -663,9 +649,8 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		return
 	}
 
-	// Rate limiting check for chat messages (prevent spam)
+	// Rate limiting check for chat messages
 	if !s.rateLimiter.Allow(user.ID) {
-		Log.WithField("user_id", user.ID).Warn("Rate limit exceeded for chat message")
 		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded. Please wait before sending another message")
 		return
 	}
@@ -679,11 +664,6 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	// Validate and sanitize message content
 	sanitizedMessage, err := validateChatMessage(req.Message)
 	if err != nil {
-		s.logSecurityEvent("input_validation_failed", r, map[string]interface{}{
-			"user_id": user.ID,
-			"error":   err.Error(),
-			"type":    "chat_message",
-		})
 		s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid message: %v", err))
 		return
 	}
@@ -716,7 +696,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	messageType := "normal"
 	messageContent := req.Message
 	var imagePath, filename *string
-	
+
 	if imageURL != "" {
 		messageType = "image"
 		imagePath = &imageURL
@@ -802,7 +782,7 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"message": "Settings updated successfully"})
+	s.writeJSONSuccess(w, "Settings updated successfully", nil)
 }
 
 func (s *Server) archiveThread(w http.ResponseWriter, r *http.Request, threadID string) {
@@ -845,7 +825,7 @@ func (s *Server) archiveThread(w http.ResponseWriter, r *http.Request, threadID 
 		action = "unarchived"
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Thread %s successfully", action)})
+	s.writeJSONSuccess(w, fmt.Sprintf("Thread %s successfully", action), nil)
 }
 
 func (s *Server) deleteThread(w http.ResponseWriter, r *http.Request, threadID string) {
@@ -872,7 +852,7 @@ func (s *Server) deleteThread(w http.ResponseWriter, r *http.Request, threadID s
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"message": "Thread deleted successfully"})
+	s.writeJSONSuccess(w, "Thread deleted successfully", nil)
 }
 
 func (s *Server) getAvailableModels(w http.ResponseWriter, r *http.Request) {
@@ -974,7 +954,7 @@ func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusCreated, map[string]interface{}{"id": role.ID, "message": "Role created successfully"})
+	s.writeJSONSuccess(w, "Role created successfully", map[string]interface{}{"id": role.ID})
 }
 
 func (s *Server) updateRole(w http.ResponseWriter, r *http.Request, roleID uint) {
@@ -1012,7 +992,7 @@ func (s *Server) updateRole(w http.ResponseWriter, r *http.Request, roleID uint)
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"message": "Role updated successfully"})
+	s.writeJSONSuccess(w, "Role updated successfully", nil)
 }
 
 func (s *Server) deleteRole(w http.ResponseWriter, r *http.Request, roleID uint) {
@@ -1034,7 +1014,7 @@ func (s *Server) deleteRole(w http.ResponseWriter, r *http.Request, roleID uint)
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"message": "Role deleted successfully"})
+	s.writeJSONSuccess(w, "Role deleted successfully", nil)
 }
 
 func (s *Server) getUserInfo(w http.ResponseWriter, r *http.Request) {
@@ -1096,115 +1076,6 @@ func (s *Server) generateThreadTitle(initialMessage string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no title generated")
-}
-
-func (s *Server) processThreadMessage(chat *Chat, message string) {
-	defer func() {
-		if r := recover(); r != nil {
-			Log.WithField("panic", r).Error("Panic in processThreadMessage")
-		}
-	}()
-
-	// Load chat with full relationships
-	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
-
-	// Get live messages for context
-	var messages []ChatMessage
-	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
-		Order("created_at ASC").
-		Find(&messages)
-
-	// Convert to OpenAI format - this already includes the user message from DB
-	history := s.convertMessagesToOpenAI(messages, chat)
-
-	// Generate AI response
-	response, err := s.generateResponseForThread(chat, history)
-	if err != nil {
-		Log.WithFields(map[string]interface{}{"thread_id": *chat.ThreadID, "error": err}).Error("Failed to generate response for thread")
-		// Save error message
-		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
-		errorMsg := ChatMessage{
-			ChatID:      chat.ChatID,
-			Role:        "assistant",
-			Content:     &errorContent,
-			IsLive:      true,
-			MessageType: "normal",
-		}
-		s.db.Create(&errorMsg)
-		return
-	}
-
-	// Save AI response to database
-	assistantMsg := ChatMessage{
-		ChatID:      chat.ChatID,
-		Role:        "assistant",
-		Content:     &response,
-		IsLive:      true,
-		MessageType: "normal",
-	}
-
-	if err := s.db.Create(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save assistant message")
-	}
-}
-
-// New function that builds response incrementally for polling
-func (s *Server) processThreadMessageWithUpdates(chat *Chat, message string) {
-	// Create context with timeout for the entire processing
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	defer func() {
-		if r := recover(); r != nil {
-			Log.WithField("panic", r).Error("Panic in processThreadMessageWithUpdates")
-			debug.PrintStack()
-		}
-	}()
-
-	// Load chat with full relationships
-	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
-
-	// Get live messages for context
-	var messages []ChatMessage
-	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
-		Order("created_at ASC").
-		Find(&messages)
-
-	// Convert to OpenAI format - this should include the new user message from DB
-	history := s.convertMessagesToOpenAI(messages, chat)
-
-	// Create placeholder assistant message that we'll update as we build the response
-	assistantMsg := ChatMessage{
-		ChatID:      chat.ChatID,
-		Role:        "assistant",
-		Content:     new(string), // Start with empty content
-		IsLive:      true,
-		MessageType: "normal",
-	}
-
-	if err := s.db.Create(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to create assistant message")
-		return
-	}
-
-	// Generate AI response and update the message as we build it
-	response, err := s.generateResponseWithStreamingUpdates(ctx, chat, history, &assistantMsg, nil, nil)
-	if err != nil {
-		Log.WithFields(map[string]interface{}{"thread_id": *chat.ThreadID, "error": err}).Error("Failed to generate response for thread")
-		// Update with error message
-		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
-		assistantMsg.Content = &errorContent
-		if updateErr := s.db.Save(&assistantMsg).Error; updateErr != nil {
-			Log.WithField("error", updateErr).Error("Failed to save error message")
-		}
-		return
-	}
-
-	// Final update with complete response
-	assistantMsg.Content = &response
-	if err := s.db.Save(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save final assistant message")
-	}
 }
 
 // Generate response with streaming updates to SSE
@@ -1383,50 +1254,33 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enhanced file validation with magic number checking
-	buffer := make([]byte, 512)
-	bytesRead, err := file.Read(buffer)
-	if err != nil {
-		s.writeJSONError(w, http.StatusInternalServerError, "Failed to read file content")
+	// Basic file type validation
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		s.writeJSONError(w, http.StatusBadRequest, "Missing content type")
 		return
 	}
 
-	// Reset file pointer after reading for type detection
-	file.Seek(0, 0)
+	// Validate content type
+	validTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/gif":  true,
+		"image/webp": true,
+	}
 
-	// Validate file type using magic numbers (more secure than content-type headers)
-	validImageType, detectedType := s.validateImageMagicNumbers(buffer[:bytesRead])
-	if !validImageType {
-		s.logSecurityEvent("malicious_file_upload_attempt", r, map[string]interface{}{
-			"user_id":     user.ID,
-			"filename":    header.Filename,
-			"size":        header.Size,
-			"upload_type": "invalid_file_type",
-		})
+	if !validTypes[contentType] {
 		s.writeJSONError(w, http.StatusBadRequest, "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed")
 		return
 	}
 
-	// Additional validation: check content-type header matches detected type
-	headerType := header.Header.Get("Content-Type")
-	if headerType != "" && headerType != detectedType {
-		s.logSecurityEvent("file_type_mismatch", r, map[string]interface{}{
-			"user_id":       user.ID,
-			"filename":      header.Filename,
-			"header_type":   headerType,
-			"detected_type": detectedType,
-		})
-		s.writeJSONError(w, http.StatusBadRequest, "File type mismatch detected")
-		return
-	}
-
-	// Generate unique filename with timestamp for better uniqueness
+	// Generate unique filename
 	uniqueID := uuid.New().String()
 	timestamp := time.Now().Unix()
 
-	// Determine file extension based on detected type
+	// Determine file extension based on content type
 	var fileExt string
-	switch detectedType {
+	switch contentType {
 	case "image/jpeg":
 		fileExt = ".jpg"
 	case "image/png":
@@ -1435,8 +1289,6 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		fileExt = ".gif"
 	case "image/webp":
 		fileExt = ".webp"
-	default:
-		fileExt = ".jpg" // fallback
 	}
 
 	filename := fmt.Sprintf("%d_%s%s", timestamp, uniqueID, fileExt)
@@ -1452,26 +1304,15 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 	// Create file with secure permissions
 	outFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		Log.WithFields(map[string]interface{}{
-			"error":    err,
-			"filepath": filePath,
-			"user_id":  user.ID,
-		}).Error("Failed to create upload file")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create file")
 		return
 	}
 	defer outFile.Close()
 
-	// Copy file content with size tracking for additional security
+	// Copy file content
 	written, err := io.Copy(outFile, io.LimitReader(file, maxUploadSize))
 	if err != nil {
-		// Clean up partial file on error
 		os.Remove(filePath)
-		Log.WithFields(map[string]interface{}{
-			"error":    err,
-			"filepath": filePath,
-			"user_id":  user.ID,
-		}).Error("Failed to save uploaded file")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save file")
 		return
 	}
@@ -1479,22 +1320,9 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 	// Verify written size matches expected size
 	if written != header.Size {
 		os.Remove(filePath)
-		Log.WithFields(map[string]interface{}{
-			"expected": header.Size,
-			"written":  written,
-			"filepath": filePath,
-			"user_id":  user.ID,
-		}).Warn("File size mismatch during upload")
 		s.writeJSONError(w, http.StatusBadRequest, "File size mismatch")
 		return
 	}
-
-	Log.WithFields(map[string]interface{}{
-		"filename": filename,
-		"size":     written,
-		"type":     detectedType,
-		"user_id":  user.ID,
-	}).Info("Image uploaded successfully")
 
 	// Create successful response
 	response := ImageUploadResponse{
@@ -1502,7 +1330,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		URL:      "/uploads/" + filename,
 		Filename: header.Filename,
 		Size:     written,
-		MimeType: detectedType,
+		MimeType: contentType,
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
@@ -1654,7 +1482,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 			// Remove any [IMAGE: ...] references from the text content
 			textContent = regexp.MustCompile(`\n*\[IMAGE: [^\]]+\]\s*`).ReplaceAllString(textContent, "")
 			textContent = strings.TrimSpace(textContent)
-			
+
 			// Create content array starting with text
 			content := []openai.ChatMessageContent{{Type: "text", Text: &textContent}}
 
@@ -1664,7 +1492,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 				filename = *msg.Filename
 			}
 			content = append(content, openai.NewChatMessageContentWithBytes(bytes))
-			
+
 			Log.Info("Adding image message to history", "filename=", filename)
 			message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
 		} else {
@@ -1818,23 +1646,18 @@ func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, us
 		MessageType: "normal",
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":  "Response generated successfully",
-		"response": msgResponse,
-	})
+	s.writeJSONSuccess(w, "Response generated successfully", msgResponse)
 }
 
-// Helper functions for different AI providers
+// Helper methods for AI providers
 func (s *Server) callAnthropic(ctx context.Context, modelID string, history []openai.ChatMessage, temperature float64) (string, error) {
-	// For now, return error since we need to integrate with existing anthropic logic
-	// TODO: Integrate with existing getAnthropicAnswer function
-	return "", fmt.Errorf("anthropic integration not yet implemented for webapp")
+	// For webapp integration, use fallback to OpenAI for now
+	return "", fmt.Errorf("anthropic integration not implemented for webapp - use OpenAI models")
 }
 
 func (s *Server) callGemini(ctx context.Context, modelID string, history []openai.ChatMessage, temperature float64) (string, error) {
-	// For now, return error since we need to integrate with existing gemini logic
-	// TODO: Integrate with existing gemini functions
-	return "", fmt.Errorf("gemini integration not yet implemented for webapp")
+	// For webapp integration, use fallback to OpenAI for now
+	return "", fmt.Errorf("gemini integration not implemented for webapp - use OpenAI models")
 }
 
 func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMessage) (string, error) {
@@ -1888,78 +1711,20 @@ func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMess
 	}
 }
 
-// validateImageMagicNumbers validates file type using magic numbers (file signatures)
-// Returns true if valid image type and the detected MIME type
-func (s *Server) validateImageMagicNumbers(data []byte) (bool, string) {
-	if len(data) < 8 {
-		return false, ""
-	}
-
-	// JPEG magic numbers
-	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
-		return true, "image/jpeg"
-	}
-
-	// PNG magic numbers
-	if len(data) >= 8 &&
-		data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 &&
-		data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A {
-		return true, "image/png"
-	}
-
-	// GIF magic numbers (GIF87a or GIF89a)
-	if len(data) >= 6 {
-		if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 &&
-			data[3] == 0x38 && (data[4] == 0x37 || data[4] == 0x39) && data[5] == 0x61 {
-			return true, "image/gif"
-		}
-	}
-
-	// WebP magic numbers
-	if len(data) >= 12 {
-		// Check for RIFF header and WEBP format
-		if data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
-			data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
-			return true, "image/webp"
-		}
-	}
-
-	return false, ""
-}
-
 // Input validation and sanitization helpers
 
-// validateAndSanitizeString validates string input with length limits and sanitizes HTML
-func validateAndSanitizeString(input string, minLen, maxLen int, allowHTML bool) (string, error) {
-	if !utf8.ValidString(input) {
-		return "", fmt.Errorf("invalid UTF-8 string")
-	}
-
+// validateString validates basic string input with length limits
+func validateString(input string, minLen, maxLen int) error {
 	if len(input) < minLen {
-		return "", fmt.Errorf("input too short (minimum %d characters)", minLen)
+		return fmt.Errorf("input too short (minimum %d characters)", minLen)
 	}
-
 	if len(input) > maxLen {
-		return "", fmt.Errorf("input too long (maximum %d characters)", maxLen)
+		return fmt.Errorf("input too long (maximum %d characters)", maxLen)
 	}
-
-	// Sanitize HTML if not allowed
-	if !allowHTML {
-		input = html.EscapeString(input)
-	}
-
-	// Remove null bytes and control characters (except newlines and tabs)
-	input = strings.Map(func(r rune) rune {
-		if r == 0 || (r < 32 && r != '\n' && r != '\t' && r != '\r') {
-			return -1
-		}
-		return r
-	}, input)
-
-	return strings.TrimSpace(input), nil
+	return nil
 }
 
-// validateThreadSettings validates and sanitizes thread settings
+// validateThreadSettings validates thread settings
 func validateThreadSettings(settings *ThreadSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
@@ -1967,11 +1732,9 @@ func validateThreadSettings(settings *ThreadSettings) error {
 
 	// Validate model name
 	if settings.ModelName != "" {
-		modelName, err := validateAndSanitizeString(settings.ModelName, 1, 100, false)
-		if err != nil {
+		if err := validateString(settings.ModelName, 1, 100); err != nil {
 			return fmt.Errorf("invalid model name: %v", err)
 		}
-		settings.ModelName = modelName
 	}
 
 	// Validate temperature
@@ -1979,21 +1742,11 @@ func validateThreadSettings(settings *ThreadSettings) error {
 		return fmt.Errorf("temperature must be between 0 and 2")
 	}
 
-	// Validate language code
-	if settings.Lang != "" {
-		langRegex := regexp.MustCompile(`^[a-z]{2}(-[A-Z]{2})?$`)
-		if !langRegex.MatchString(settings.Lang) {
-			return fmt.Errorf("invalid language code format")
-		}
-	}
-
 	// Validate master prompt
 	if settings.MasterPrompt != "" {
-		prompt, err := validateAndSanitizeString(settings.MasterPrompt, 0, 2000, false)
-		if err != nil {
+		if err := validateString(settings.MasterPrompt, 0, 2000); err != nil {
 			return fmt.Errorf("invalid master prompt: %v", err)
 		}
-		settings.MasterPrompt = prompt
 	}
 
 	// Validate context limit
@@ -2004,33 +1757,30 @@ func validateThreadSettings(settings *ThreadSettings) error {
 	return nil
 }
 
-// validateChatMessage validates and sanitizes chat message input
+// validateChatMessage validates chat message input
 func validateChatMessage(message string) (string, error) {
 	if message == "" {
 		return "", fmt.Errorf("message cannot be empty")
 	}
 
-	sanitized, err := validateAndSanitizeString(message, 1, 4000, false)
-	if err != nil {
+	if err := validateString(message, 1, 4000); err != nil {
 		return "", fmt.Errorf("invalid message: %v", err)
 	}
 
-	return sanitized, nil
+	return strings.TrimSpace(message), nil
 }
 
-// validateRoleData validates and sanitizes role creation/update data
+// validateRoleData validates role creation/update data
 func validateRoleData(name, prompt string) (string, string, error) {
-	sanitizedName, err := validateAndSanitizeString(name, 1, 100, false)
-	if err != nil {
+	if err := validateString(name, 1, 100); err != nil {
 		return "", "", fmt.Errorf("invalid role name: %v", err)
 	}
 
-	sanitizedPrompt, err := validateAndSanitizeString(prompt, 1, 2000, false)
-	if err != nil {
+	if err := validateString(prompt, 1, 2000); err != nil {
 		return "", "", fmt.Errorf("invalid role prompt: %v", err)
 	}
 
-	return sanitizedName, sanitizedPrompt, nil
+	return strings.TrimSpace(name), strings.TrimSpace(prompt), nil
 }
 
 // validateNumericID validates numeric IDs from URL parameters
@@ -2121,43 +1871,6 @@ func (store *CSRFTokenStore) removeCSRFToken(userID uint) {
 	delete(store.tokens, userID)
 }
 
-// csrfProtectionMiddleware adds CSRF protection to sensitive endpoints
-func (s *Server) csrfProtectionMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user := getUserFromContext(r)
-		if user == nil {
-			s.writeJSONError(w, http.StatusUnauthorized, "User not found")
-			return
-		}
-
-		// Skip CSRF check for GET requests (they should be idempotent)
-		if r.Method == http.MethodGet {
-			next(w, r)
-			return
-		}
-
-		// Get CSRF token from header
-		providedToken := r.Header.Get("X-CSRF-Token")
-		if providedToken == "" {
-			s.writeJSONError(w, http.StatusForbidden, "CSRF token required")
-			return
-		}
-
-		// Validate CSRF token
-		if !csrfStore.validateCSRFToken(user.ID, providedToken) {
-			Log.WithFields(map[string]interface{}{
-				"user_id":        user.ID,
-				"provided_token": providedToken[:10] + "...", // Log only part of token for security
-				"endpoint":       r.URL.Path,
-				"method":         r.Method,
-			}).Warn("Invalid CSRF token provided")
-			s.writeJSONError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		next(w, r)
-	}
-}
 // saveBase64Image saves base64 image data to a file and returns the URL
 func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) (string, error) {
 	// Decode base64 data
@@ -2170,7 +1883,7 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	timestamp := time.Now().Format("20060102-150405")
 	randomID := uuid.New().String()[:8]
 	ext := ".jpg"
-	
+
 	switch mimeType {
 	case "image/png":
 		ext = ".png"
@@ -2179,21 +1892,21 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	case "image/webp":
 		ext = ".webp"
 	}
-	
+
 	filename := fmt.Sprintf("image_%s_%s%s", timestamp, randomID, ext)
-	
+
 	// Ensure uploads directory exists
 	uploadsDir := "uploads"
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create uploads directory: %w", err)
 	}
-	
+
 	// Write file
 	filePath := filepath.Join(uploadsDir, filename)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return "", fmt.Errorf("failed to write image file: %w", err)
 	}
-	
+
 	// Return file system path for database storage
 	// The frontend will get the URL path from the API response
 	return filePath, nil

@@ -10,13 +10,11 @@
     <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.1/dist/markdown-it.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.5/dist/purify.min.js"></script>
     <link rel="stylesheet" href="/assets/css/app.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
     <div id="app">
-        <!-- Loading State -->
         <div v-if="loading" class="loading-container">
             <div class="loading-spinner"></div>
             <div>Loading...</div>
@@ -24,7 +22,6 @@
 
         <!-- Main App -->
         <div v-else class="app-container">
-            <!-- Sidebar -->
             <div class="sidebar" :class="{ 'sidebar-open': sidebarOpen }">
                 <div class="sidebar-header">
                     <div class="sidebar-header-top">
@@ -117,12 +114,6 @@
                     </button>
                     
                     <div v-if="currentThreadId" class="thread-toolbar">
-                        <!-- Connection Status Indicator -->
-                        <div v-if="showConnectionStatus" class="connection-status" :class="connectionStatus">
-                            <i class="fas fa-circle"></i>
-                            [[ connectionStatusText ]]
-                        </div>
-                        
                         <!-- Show selectors for new threads with no messages -->
                         <div v-if="shouldShowRoleSelector" class="thread-selectors">
                             <div class="selector-group">
@@ -197,25 +188,18 @@
                                     Conversation Summary
                                 </div>
                                 
-                                <!-- Image display -->
                                 <div v-if="message.image_data" class="message-image">
                                     <img :src="message.image_data" :alt="message.image_name" class="message-image-content">
                                 </div>
                                 
                                 <div 
-                                    class="message-text" 
+                                    class="message-text prose" 
                                     :class="{ 'streaming-text': message.isStreaming }"
                                     v-html="formatMessage(message.content)"
                                 ></div>
                                 <div class="message-meta">
                                     [[ formatTime(message.created_at) ]]
                                     <span v-if="!message.is_live" class="archived-badge">Archived</span>
-                                    <span v-if="message.role === 'assistant' && !message.is_complete && streaming" class="streaming-badge">
-                                        <span class="streaming-dots">
-                                            <span></span><span></span><span></span>
-                                        </span>
-                                        Streaming...
-                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -224,7 +208,6 @@
 
                 <!-- Input Area -->
                 <div v-if="currentThreadId" class="input-container">
-                    <!-- Simple Image Attachment Preview -->
                     <div v-if="attachedImage" class="image-attachment-preview">
                         <div class="attached-image">
                             <img :src="attachedImage.preview" :alt="attachedImage.name" class="attachment-preview-image">
@@ -272,7 +255,7 @@
                                 'streaming': sendButtonState === 'streaming',
                                 'stop-button': streaming
                             }"
-                            :title="streaming ? 'Stop generation (Esc)' : 'Send message (Enter)'"
+                            :title="streaming ? 'Stop generation' : 'Send message (Enter)'"
                         >
                             <i :class="sendButtonIcon"></i>
                         </button>
@@ -334,7 +317,6 @@
                         >
                     </div>
                     
-                    <!-- Removed streaming, voice, and qa options as requested -->
                 </div>
                 <div class="modal-footer">
                     <button @click="saveSettings" class="save-btn">Save Settings</button>
