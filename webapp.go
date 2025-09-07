@@ -2,14 +2,24 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"html/template"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/meinside/openai-go"
@@ -30,9 +40,6 @@ type ThreadSettings struct {
 	ModelName    string  `json:"model_name"`
 	Temperature  float64 `json:"temperature"`
 	RoleID       *uint   `json:"role_id"`
-	Stream       bool    `json:"stream"`
-	QA           bool    `json:"qa"`
-	Voice        bool    `json:"voice"`
 	Lang         string  `json:"lang"`
 	MasterPrompt string  `json:"master_prompt"`
 	ContextLimit int     `json:"context_limit"`
@@ -42,10 +49,30 @@ type ThreadSettings struct {
 type CreateThreadRequest struct {
 	InitialMessage string          `json:"initial_message"`
 	Settings       *ThreadSettings `json:"settings,omitempty"`
+	Images         []ImageUpload   `json:"images,omitempty"`
 }
 
 type ChatRequest struct {
-	Message string `json:"message"`
+	Message string       `json:"message"`
+	Image   *ImageUpload `json:"image,omitempty"`
+}
+
+// Image upload structure
+type ImageUpload struct {
+	ID       string `json:"id"`
+	URL      string `json:"url,omitempty"`
+	Data     string `json:"data,omitempty"`     // Base64 image data
+	Filename string `json:"filename"`
+	Size     int64  `json:"size,omitempty"`
+	MimeType string `json:"mime_type"`
+}
+
+type ImageUploadResponse struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mime_type"`
 }
 
 type ThreadResponse struct {
@@ -65,6 +92,8 @@ type MessageResponse struct {
 	CreatedAt   time.Time `json:"created_at"`
 	IsLive      bool      `json:"is_live"`
 	MessageType string    `json:"message_type"`
+	ImageData   *string   `json:"image_data,omitempty"`   // URL to the image
+	ImageName   *string   `json:"image_name,omitempty"`   // Original filename
 }
 
 type ModelResponse struct {
@@ -79,6 +108,22 @@ type RoleResponse struct {
 	Prompt string `json:"prompt"`
 }
 
+// ChatWithCount struct for optimized database queries
+type ChatWithCount struct {
+	Chat
+	MessageCount int64
+}
+
+// CSRF token store for session-based CSRF protection
+type CSRFTokenStore struct {
+	tokens map[uint]string // userId -> token
+	mutex  sync.RWMutex
+}
+
+var csrfStore = &CSRFTokenStore{
+	tokens: make(map[uint]string),
+}
+
 func (s *Server) setupWebServer() *http.ServeMux {
 	if !s.conf.MiniAppEnabled {
 		return nil
@@ -88,18 +133,25 @@ func (s *Server) setupWebServer() *http.ServeMux {
 
 	// Serve static files
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("webapp/assets"))))
+	// Serve uploaded images
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
 
 	// Mini app route
 	mux.HandleFunc("/miniapp", s.corsMiddleware(s.serveMiniApp))
 
 	// API endpoints with CORS and authentication middleware
-	mux.HandleFunc("/api/threads", s.corsMiddleware(s.authMiddleware(s.handleThreads)))
+	// CSRF token endpoint (no CSRF protection needed)
+	mux.HandleFunc("/api/csrf-token", s.corsMiddleware(s.authMiddleware(s.getCSRFToken)))
+
+	// Protected endpoints with CSRF protection for write operations
+	mux.HandleFunc("/api/threads", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleThreads))))
 	mux.HandleFunc("/api/threads/archived", s.corsMiddleware(s.authMiddleware(s.getArchivedThreads)))
-	mux.HandleFunc("/api/threads/", s.corsMiddleware(s.authMiddleware(s.handleThreadsWithID)))
+	mux.HandleFunc("/api/threads/", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleThreadsWithID))))
 	mux.HandleFunc("/api/models", s.corsMiddleware(s.authMiddleware(s.getAvailableModels)))
-	mux.HandleFunc("/api/roles", s.corsMiddleware(s.authMiddleware(s.handleRoles)))
-	mux.HandleFunc("/api/roles/", s.corsMiddleware(s.authMiddleware(s.handleRolesWithID)))
+	mux.HandleFunc("/api/roles", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleRoles))))
+	mux.HandleFunc("/api/roles/", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleRolesWithID))))
 	mux.HandleFunc("/api/user", s.corsMiddleware(s.authMiddleware(s.getUserInfo)))
+	mux.HandleFunc("/api/upload-image", s.corsMiddleware(s.authMiddleware(s.csrfProtectionMiddleware(s.handleImageUpload))))
 
 	return mux
 }
@@ -109,7 +161,7 @@ func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data, X-CSRF-Token")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
@@ -134,6 +186,9 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if err := initdata.Validate(initDataString, s.conf.TelegramBotToken, 24*time.Hour); err != nil {
+			s.logSecurityEvent("auth_validation_failed", r, map[string]interface{}{
+				"error": err.Error(),
+			})
 			s.writeJSONError(w, http.StatusUnauthorized, "Invalid Telegram authentication")
 			return
 		}
@@ -141,6 +196,9 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Parse user info from init data
 		parsed, err := initdata.Parse(initDataString)
 		if err != nil {
+			s.logSecurityEvent("auth_parse_failed", r, map[string]interface{}{
+				"error": err.Error(),
+			})
 			s.writeJSONError(w, http.StatusUnauthorized, "Failed to parse init data")
 			return
 		}
@@ -163,6 +221,50 @@ func (s *Server) writeJSONError(w http.ResponseWriter, status int, message strin
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// Security logging helper
+func (s *Server) logSecurityEvent(eventType string, r *http.Request, details map[string]interface{}) {
+	logFields := map[string]interface{}{
+		"event_type": eventType,
+		"endpoint":   r.URL.Path,
+		"method":     r.Method,
+		"user_agent": r.UserAgent(),
+		"remote_ip":  s.getClientIP(r),
+		"timestamp":  time.Now().UTC(),
+	}
+
+	// Add additional details
+	for k, v := range details {
+		logFields[k] = v
+	}
+
+	Log.WithFields(logFields).Warn("Security event detected")
+}
+
+// Get client IP with proxy headers support
+func (s *Server) getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header (for proxies)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first IP in the chain
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fallback to remote address
+	ip := r.RemoteAddr
+	// Remove port if present
+	if colon := strings.LastIndex(ip, ":"); colon != -1 {
+		ip = ip[:colon]
+	}
+	return ip
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -265,41 +367,39 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var chats []Chat
-	err := s.db.Where("user_id = ? AND thread_id IS NOT NULL AND archived_at IS NULL", user.ID).
-		Order("updated_at DESC").
+	// Optimized query to get chats with message counts in a single query
+	var chatCounts []ChatWithCount
+	err := s.db.Table("chats").
+		Select("chats.*, COALESCE(msg_count.count, 0) as message_count").
+		Joins("LEFT JOIN (SELECT chat_id, COUNT(*) as count FROM chat_messages GROUP BY chat_id) msg_count ON chats.chat_id = msg_count.chat_id").
+		Where("chats.user_id = ? AND chats.thread_id IS NOT NULL AND chats.archived_at IS NULL", user.ID).
 		Preload("Role").
-		Find(&chats).Error
+		Order("chats.updated_at DESC").
+		Find(&chatCounts).Error
 	if err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to fetch threads")
 		return
 	}
 
-	threads := make([]ThreadResponse, len(chats))
-	for i, chat := range chats {
-		var messageCount int64
-		s.db.Model(&ChatMessage{}).Where("chat_id = ?", chat.ChatID).Count(&messageCount)
-
+	threads := make([]ThreadResponse, len(chatCounts))
+	for i, chatCount := range chatCounts {
 		settings := ThreadSettings{
-			ModelName:    chat.ModelName,
-			Temperature:  chat.Temperature,
-			RoleID:       chat.RoleID,
-			Stream:       chat.Stream,
-			QA:           chat.QA,
-			Voice:        chat.Voice,
-			Lang:         chat.Lang,
-			MasterPrompt: chat.MasterPrompt,
-			ContextLimit: chat.ContextLimit,
+			ModelName:    chatCount.Chat.ModelName,
+			Temperature:  chatCount.Chat.Temperature,
+			RoleID:       chatCount.Chat.RoleID,
+			Lang:         chatCount.Chat.Lang,
+			MasterPrompt: chatCount.Chat.MasterPrompt,
+			ContextLimit: chatCount.Chat.ContextLimit,
 		}
 
 		threads[i] = ThreadResponse{
-			ID:           *chat.ThreadID,
-			Title:        *chat.ThreadTitle,
-			CreatedAt:    chat.CreatedAt,
-			UpdatedAt:    chat.UpdatedAt,
-			ArchivedAt:   chat.ArchivedAt,
+			ID:           *chatCount.Chat.ThreadID,
+			Title:        *chatCount.Chat.ThreadTitle,
+			CreatedAt:    chatCount.Chat.CreatedAt,
+			UpdatedAt:    chatCount.Chat.UpdatedAt,
+			ArchivedAt:   chatCount.Chat.ArchivedAt,
 			Settings:     settings,
-			MessageCount: int(messageCount),
+			MessageCount: int(chatCount.MessageCount),
 		}
 	}
 
@@ -313,41 +413,39 @@ func (s *Server) getArchivedThreads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var chats []Chat
-	err := s.db.Where("user_id = ? AND thread_id IS NOT NULL AND archived_at IS NOT NULL", user.ID).
-		Order("archived_at DESC").
+	// Optimized query to get archived chats with message counts in a single query
+	var chatCounts []ChatWithCount
+	err := s.db.Table("chats").
+		Select("chats.*, COALESCE(msg_count.count, 0) as message_count").
+		Joins("LEFT JOIN (SELECT chat_id, COUNT(*) as count FROM chat_messages GROUP BY chat_id) msg_count ON chats.chat_id = msg_count.chat_id").
+		Where("chats.user_id = ? AND chats.thread_id IS NOT NULL AND chats.archived_at IS NOT NULL", user.ID).
 		Preload("Role").
-		Find(&chats).Error
+		Order("chats.archived_at DESC").
+		Find(&chatCounts).Error
 	if err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to fetch archived threads")
 		return
 	}
 
-	threads := make([]ThreadResponse, len(chats))
-	for i, chat := range chats {
-		var messageCount int64
-		s.db.Model(&ChatMessage{}).Where("chat_id = ?", chat.ChatID).Count(&messageCount)
-
+	threads := make([]ThreadResponse, len(chatCounts))
+	for i, chatCount := range chatCounts {
 		settings := ThreadSettings{
-			ModelName:    chat.ModelName,
-			Temperature:  chat.Temperature,
-			RoleID:       chat.RoleID,
-			Stream:       chat.Stream,
-			QA:           chat.QA,
-			Voice:        chat.Voice,
-			Lang:         chat.Lang,
-			MasterPrompt: chat.MasterPrompt,
-			ContextLimit: chat.ContextLimit,
+			ModelName:    chatCount.Chat.ModelName,
+			Temperature:  chatCount.Chat.Temperature,
+			RoleID:       chatCount.Chat.RoleID,
+			Lang:         chatCount.Chat.Lang,
+			MasterPrompt: chatCount.Chat.MasterPrompt,
+			ContextLimit: chatCount.Chat.ContextLimit,
 		}
 
 		threads[i] = ThreadResponse{
-			ID:           *chat.ThreadID,
-			Title:        *chat.ThreadTitle,
-			CreatedAt:    chat.CreatedAt,
-			UpdatedAt:    chat.UpdatedAt,
-			ArchivedAt:   chat.ArchivedAt,
+			ID:           *chatCount.Chat.ThreadID,
+			Title:        *chatCount.Chat.ThreadTitle,
+			CreatedAt:    chatCount.Chat.CreatedAt,
+			UpdatedAt:    chatCount.Chat.UpdatedAt,
+			ArchivedAt:   chatCount.Chat.ArchivedAt,
 			Settings:     settings,
-			MessageCount: int(messageCount),
+			MessageCount: int(chatCount.MessageCount),
 		}
 	}
 
@@ -361,10 +459,33 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limiting check for thread creation (prevent abuse)
+	if !s.rateLimiter.Allow(user.ID) {
+		Log.WithField("user_id", user.ID).Warn("Rate limit exceeded for thread creation")
+		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded. Please wait before creating another thread")
+		return
+	}
+
 	var req CreateThreadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "Invalid request format")
 		return
+	}
+
+	// Validate and sanitize initial message
+	sanitizedMessage, err := validateChatMessage(req.InitialMessage)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid initial message: %v", err))
+		return
+	}
+	req.InitialMessage = sanitizedMessage
+
+	// Validate thread settings if provided
+	if req.Settings != nil {
+		if err := validateThreadSettings(req.Settings); err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid settings: %v", err))
+			return
+		}
 	}
 
 	// Generate thread ID and title using miniModel
@@ -397,9 +518,8 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		if req.Settings.RoleID != nil {
 			chat.RoleID = req.Settings.RoleID
 		}
-		chat.Stream = req.Settings.Stream
-		chat.QA = req.Settings.QA
-		chat.Voice = req.Settings.Voice
+		// Deprecated settings fields removed - maintain default values
+		// Stream, QA, and Voice settings are no longer configurable via API
 		if req.Settings.Lang != "" {
 			chat.Lang = req.Settings.Lang
 		}
@@ -416,22 +536,8 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add initial message
-	message := ChatMessage{
-		ChatID:      chat.ChatID,
-		Role:        "user",
-		Content:     &req.InitialMessage,
-		IsLive:      true,
-		MessageType: "normal",
-	}
-
-	if err := s.db.Create(&message).Error; err != nil {
-		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create initial message")
-		return
-	}
-
-	// Generate AI response
-	go s.processThreadMessage(&chat, req.InitialMessage)
+	// Don't save initial message here - let the subsequent chat request handle it
+	// This prevents duplicate messages when images are involved
 
 	s.writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"thread_id": threadID,
@@ -446,6 +552,14 @@ func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 	if threadID == "" {
 		s.writeJSONError(w, http.StatusBadRequest, "Thread ID required")
 		return
+	}
+
+	// Validate thread ID format (UUID)
+	if !strings.HasPrefix(threadID, "temp_") { // Allow temp thread IDs
+		if err := validateUUID(threadID); err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
+			return
+		}
 	}
 
 	// Check if it's a sub-resource or main thread operation
@@ -516,6 +630,17 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 
 	response := make([]MessageResponse, len(messages))
 	for i, msg := range messages {
+		var imageData *string
+		if msg.ImagePath != nil && *msg.ImagePath != "" {
+			// Convert file path to URL path for frontend display
+			imageURL := *msg.ImagePath
+			// Ensure it starts with /uploads/ for proper serving
+			if !strings.HasPrefix(imageURL, "/uploads/") && strings.HasPrefix(imageURL, "uploads/") {
+				imageURL = "/" + imageURL
+			}
+			imageData = &imageURL
+		}
+		
 		response[i] = MessageResponse{
 			ID:          msg.ID,
 			Role:        string(msg.Role),
@@ -523,6 +648,8 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			CreatedAt:   msg.CreatedAt,
 			IsLive:      msg.IsLive,
 			MessageType: msg.MessageType,
+			ImageData:   imageData,
+			ImageName:   msg.Filename,
 		}
 	}
 
@@ -536,15 +663,35 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		return
 	}
 
+	// Rate limiting check for chat messages (prevent spam)
+	if !s.rateLimiter.Allow(user.ID) {
+		Log.WithField("user_id", user.ID).Warn("Rate limit exceeded for chat message")
+		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded. Please wait before sending another message")
+		return
+	}
+
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
+	// Validate and sanitize message content
+	sanitizedMessage, err := validateChatMessage(req.Message)
+	if err != nil {
+		s.logSecurityEvent("input_validation_failed", r, map[string]interface{}{
+			"user_id": user.ID,
+			"error":   err.Error(),
+			"type":    "chat_message",
+		})
+		s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid message: %v", err))
+		return
+	}
+	req.Message = sanitizedMessage
+
 	// Find chat by thread ID
 	var chat Chat
-	err := s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).
+	err = s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).
 		Preload("Role").
 		First(&chat).Error
 	if err != nil {
@@ -552,16 +699,47 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		return
 	}
 
-	// Add user message
-	message := ChatMessage{
-		ChatID:      chat.ChatID,
-		Role:        "user",
-		Content:     &req.Message,
-		IsLive:      true,
-		MessageType: "normal",
+	// Process image if present
+	var imageURL string
+	if req.Image != nil && req.Image.Data != "" {
+		// Save base64 image data to file
+		url, err := s.saveBase64Image(req.Image.Data, req.Image.Filename, req.Image.MimeType)
+		if err != nil {
+			Log.WithError(err).Error("Failed to save image")
+			s.writeJSONError(w, http.StatusInternalServerError, "Failed to save image")
+			return
+		}
+		imageURL = url
 	}
 
-	if err := s.db.Create(&message).Error; err != nil {
+	// Create temporary user message for AI context (not saved to DB - frontend shows it)
+	messageType := "normal"
+	messageContent := req.Message
+	var imagePath, filename *string
+	
+	if imageURL != "" {
+		messageType = "image"
+		imagePath = &imageURL
+		if req.Image != nil {
+			filename = &req.Image.Filename
+		}
+	}
+
+	// Create and save user message to database (like Telegram bot)
+	userMessage := ChatMessage{
+		ChatID:      chat.ChatID,
+		Role:        "user",
+		Content:     &messageContent,
+		ImagePath:   imagePath,
+		Filename:    filename,
+		IsLive:      true,
+		MessageType: messageType,
+		CreatedAt:   time.Now(),
+	}
+
+	// Save user message to database immediately
+	if err := s.db.Create(&userMessage).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to save user message")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save message")
 		return
 	}
@@ -575,10 +753,10 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 
 	if chat.Stream {
 		// Use Server-Sent Events for streaming response
-		s.handleStreamingResponse(w, r, &chat, req.Message)
+		s.handleStreamingResponse(w, r, &chat, &userMessage)
 	} else {
 		// Process synchronously and return complete response
-		s.handleSynchronousResponse(w, &chat, req.Message)
+		s.handleSynchronousResponse(w, &chat, &userMessage)
 	}
 }
 
@@ -595,6 +773,12 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 		return
 	}
 
+	// Validate thread settings
+	if err := validateThreadSettings(&settings); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid settings: %v", err))
+		return
+	}
+
 	// Find and update chat
 	var chat Chat
 	err := s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).First(&chat).Error
@@ -603,14 +787,11 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 		return
 	}
 
-	// Update settings
+	// Update settings (deprecated fields removed for security/simplification)
 	updates := map[string]interface{}{
 		"model_name":    settings.ModelName,
 		"temperature":   settings.Temperature,
 		"role_id":       settings.RoleID,
-		"stream":        settings.Stream,
-		"qa":            settings.QA,
-		"voice":         settings.Voice,
 		"lang":          settings.Lang,
 		"master_prompt": settings.MasterPrompt,
 		"context_limit": settings.ContextLimit,
@@ -727,17 +908,17 @@ func (s *Server) handleRolesWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roleID, err := strconv.ParseUint(roleIDStr, 10, 32)
+	roleID, err := validateNumericID(roleIDStr, "role ID")
 	if err != nil {
-		s.writeJSONError(w, http.StatusBadRequest, "Invalid role ID")
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	switch r.Method {
 	case http.MethodPut:
-		s.updateRole(w, r, uint(roleID))
+		s.updateRole(w, r, roleID)
 	case http.MethodDelete:
-		s.deleteRole(w, r, uint(roleID))
+		s.deleteRole(w, r, roleID)
 	default:
 		s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
@@ -775,10 +956,17 @@ func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate and sanitize role data
+	sanitizedName, sanitizedPrompt, err := validateRoleData(req.Name, req.Prompt)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	role := Role{
 		UserID: user.ID,
-		Name:   req.Name,
-		Prompt: req.Prompt,
+		Name:   sanitizedName,
+		Prompt: sanitizedPrompt,
 	}
 
 	if err := s.db.Create(&role).Error; err != nil {
@@ -802,15 +990,22 @@ func (s *Server) updateRole(w http.ResponseWriter, r *http.Request, roleID uint)
 		return
 	}
 
+	// Validate and sanitize role data
+	sanitizedName, sanitizedPrompt, err := validateRoleData(req.Name, req.Prompt)
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	var role Role
-	err := s.db.Where("id = ? AND user_id = ?", roleID, user.ID).First(&role).Error
+	err = s.db.Where("id = ? AND user_id = ?", roleID, user.ID).First(&role).Error
 	if err != nil {
 		s.writeJSONError(w, http.StatusNotFound, "Role not found")
 		return
 	}
 
-	role.Name = req.Name
-	role.Prompt = req.Prompt
+	role.Name = sanitizedName
+	role.Prompt = sanitizedPrompt
 
 	if err := s.db.Save(&role).Error; err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to update role")
@@ -852,6 +1047,25 @@ func (s *Server) getUserInfo(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":       user.ID,
 		"username": user.Username,
+	})
+}
+
+func (s *Server) getCSRFToken(w http.ResponseWriter, r *http.Request) {
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	token, err := csrfStore.getOrCreateCSRFToken(user.ID)
+	if err != nil {
+		Log.WithField("error", err).Error("Failed to generate CSRF token")
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to generate CSRF token")
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"csrf_token": token,
 	})
 }
 
@@ -1117,6 +1331,183 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	}
 }
 
+// Handle image upload with enhanced security and validation
+func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Get user from context (authentication already validated by middleware)
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	// Rate limiting check
+	if !s.rateLimiter.Allow(user.ID) {
+		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded")
+		return
+	}
+
+	// Parse multipart form data with size limit (10MB per image)
+	const maxUploadSize = 10 << 20 // 10MB
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, "Failed to parse form data or file too large")
+		return
+	}
+
+	// Get the uploaded file
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, "No image file found in request")
+		return
+	}
+	defer file.Close()
+
+	// Enhanced file validation
+	if header.Filename == "" {
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid filename")
+		return
+	}
+
+	// Validate file size (double-check after form parsing)
+	if header.Size > maxUploadSize {
+		s.writeJSONError(w, http.StatusBadRequest, "File size too large. Maximum 10MB allowed")
+		return
+	}
+
+	if header.Size == 0 {
+		s.writeJSONError(w, http.StatusBadRequest, "Empty file not allowed")
+		return
+	}
+
+	// Enhanced file validation with magic number checking
+	buffer := make([]byte, 512)
+	bytesRead, err := file.Read(buffer)
+	if err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to read file content")
+		return
+	}
+
+	// Reset file pointer after reading for type detection
+	file.Seek(0, 0)
+
+	// Validate file type using magic numbers (more secure than content-type headers)
+	validImageType, detectedType := s.validateImageMagicNumbers(buffer[:bytesRead])
+	if !validImageType {
+		s.logSecurityEvent("malicious_file_upload_attempt", r, map[string]interface{}{
+			"user_id":     user.ID,
+			"filename":    header.Filename,
+			"size":        header.Size,
+			"upload_type": "invalid_file_type",
+		})
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed")
+		return
+	}
+
+	// Additional validation: check content-type header matches detected type
+	headerType := header.Header.Get("Content-Type")
+	if headerType != "" && headerType != detectedType {
+		s.logSecurityEvent("file_type_mismatch", r, map[string]interface{}{
+			"user_id":       user.ID,
+			"filename":      header.Filename,
+			"header_type":   headerType,
+			"detected_type": detectedType,
+		})
+		s.writeJSONError(w, http.StatusBadRequest, "File type mismatch detected")
+		return
+	}
+
+	// Generate unique filename with timestamp for better uniqueness
+	uniqueID := uuid.New().String()
+	timestamp := time.Now().Unix()
+
+	// Determine file extension based on detected type
+	var fileExt string
+	switch detectedType {
+	case "image/jpeg":
+		fileExt = ".jpg"
+	case "image/png":
+		fileExt = ".png"
+	case "image/gif":
+		fileExt = ".gif"
+	case "image/webp":
+		fileExt = ".webp"
+	default:
+		fileExt = ".jpg" // fallback
+	}
+
+	filename := fmt.Sprintf("%d_%s%s", timestamp, uniqueID, fileExt)
+	filePath := fmt.Sprintf("uploads/%s", filename)
+
+	// Create uploads directory with proper permissions
+	if err := os.MkdirAll("uploads", 0755); err != nil {
+		Log.WithField("error", err).Error("Failed to create uploads directory")
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create upload directory")
+		return
+	}
+
+	// Create file with secure permissions
+	outFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		Log.WithFields(map[string]interface{}{
+			"error":    err,
+			"filepath": filePath,
+			"user_id":  user.ID,
+		}).Error("Failed to create upload file")
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create file")
+		return
+	}
+	defer outFile.Close()
+
+	// Copy file content with size tracking for additional security
+	written, err := io.Copy(outFile, io.LimitReader(file, maxUploadSize))
+	if err != nil {
+		// Clean up partial file on error
+		os.Remove(filePath)
+		Log.WithFields(map[string]interface{}{
+			"error":    err,
+			"filepath": filePath,
+			"user_id":  user.ID,
+		}).Error("Failed to save uploaded file")
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save file")
+		return
+	}
+
+	// Verify written size matches expected size
+	if written != header.Size {
+		os.Remove(filePath)
+		Log.WithFields(map[string]interface{}{
+			"expected": header.Size,
+			"written":  written,
+			"filepath": filePath,
+			"user_id":  user.ID,
+		}).Warn("File size mismatch during upload")
+		s.writeJSONError(w, http.StatusBadRequest, "File size mismatch")
+		return
+	}
+
+	Log.WithFields(map[string]interface{}{
+		"filename": filename,
+		"size":     written,
+		"type":     detectedType,
+		"user_id":  user.ID,
+	}).Info("Image uploaded successfully")
+
+	// Create successful response
+	response := ImageUploadResponse{
+		ID:       uniqueID,
+		URL:      "/uploads/" + filename,
+		Filename: header.Filename,
+		Size:     written,
+		MimeType: detectedType,
+	}
+
+	s.writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) checkAndSummarizeContext(chat *Chat) error {
 	// Count live messages
 	var liveCount int64
@@ -1223,19 +1614,75 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 
 	// Convert chat messages
 	for _, msg := range messages {
-		if msg.Content != nil {
-			history = append(history, openai.ChatMessage{
+		if msg.Content == nil {
+			continue
+		}
+
+		var message openai.ChatMessage
+
+		// Handle image attachments like Telegram bot
+		if msg.ImagePath != nil {
+			reader, err := os.Open(*msg.ImagePath)
+			if err != nil {
+				Log.Warn("Error opening image file", "error=", err)
+				// Still add text content if available
+				if *msg.Content != "" {
+					history = append(history, openai.ChatMessage{
+						Role:    openai.ChatMessageRole(msg.Role),
+						Content: *msg.Content,
+					})
+				}
+				continue
+			}
+			defer reader.Close()
+
+			bytes, err := io.ReadAll(reader)
+			if err != nil {
+				Log.Warn("Error reading image file", "error=", err)
+				// Still add text content if available
+				if *msg.Content != "" {
+					history = append(history, openai.ChatMessage{
+						Role:    openai.ChatMessageRole(msg.Role),
+						Content: *msg.Content,
+					})
+				}
+				continue
+			}
+
+			// Add text content first (without the [IMAGE: ...] reference)
+			textContent := strings.TrimSpace(*msg.Content)
+			// Remove any [IMAGE: ...] references from the text content
+			textContent = regexp.MustCompile(`\n*\[IMAGE: [^\]]+\]\s*`).ReplaceAllString(textContent, "")
+			textContent = strings.TrimSpace(textContent)
+			
+			// Create content array starting with text
+			content := []openai.ChatMessageContent{{Type: "text", Text: &textContent}}
+
+			// Add image content
+			filename := "image.jpg"
+			if msg.Filename != nil {
+				filename = *msg.Filename
+			}
+			content = append(content, openai.NewChatMessageContentWithBytes(bytes))
+			
+			Log.Info("Adding image message to history", "filename=", filename)
+			message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
+		} else {
+			// Regular text message
+			message = openai.ChatMessage{
 				Role:    openai.ChatMessageRole(msg.Role),
 				Content: *msg.Content,
-			})
+			}
 		}
+
+		history = append(history, message)
 	}
 
 	return history
 }
 
 // Handle streaming response with Server-Sent Events
-func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, message string) {
+func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, userMessage *ChatMessage) {
 	// Set up Server-Sent Events headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1255,13 +1702,13 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	// Load chat with full relationships
 	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
 
-	// Get live messages for context
+	// Get live messages for context (now includes the saved user message)
 	var messages []ChatMessage
 	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
 		Order("created_at ASC").
 		Find(&messages)
 
-	// Convert to OpenAI format (this should already include the user message that was just saved)
+	// Convert to OpenAI format (user message is now in DB, no need to append)
 	history := s.convertMessagesToOpenAI(messages, chat)
 
 	// Create assistant message in database
@@ -1325,17 +1772,17 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 }
 
 // Handle synchronous response without streaming
-func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, message string) {
+func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, userMessage *ChatMessage) {
 	// Load chat with full relationships
 	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
 
-	// Get live messages for context
+	// Get live messages for context (now includes the saved user message)
 	var messages []ChatMessage
 	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
 		Order("created_at ASC").
 		Find(&messages)
 
-	// Convert to OpenAI format
+	// Convert to OpenAI format (user message is now in DB, no need to append)
 	history := s.convertMessagesToOpenAI(messages, chat)
 
 	// Generate AI response
@@ -1439,4 +1886,315 @@ func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMess
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", model.Provider)
 	}
+}
+
+// validateImageMagicNumbers validates file type using magic numbers (file signatures)
+// Returns true if valid image type and the detected MIME type
+func (s *Server) validateImageMagicNumbers(data []byte) (bool, string) {
+	if len(data) < 8 {
+		return false, ""
+	}
+
+	// JPEG magic numbers
+	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return true, "image/jpeg"
+	}
+
+	// PNG magic numbers
+	if len(data) >= 8 &&
+		data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 &&
+		data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A {
+		return true, "image/png"
+	}
+
+	// GIF magic numbers (GIF87a or GIF89a)
+	if len(data) >= 6 {
+		if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 &&
+			data[3] == 0x38 && (data[4] == 0x37 || data[4] == 0x39) && data[5] == 0x61 {
+			return true, "image/gif"
+		}
+	}
+
+	// WebP magic numbers
+	if len(data) >= 12 {
+		// Check for RIFF header and WEBP format
+		if data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+			data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
+			return true, "image/webp"
+		}
+	}
+
+	return false, ""
+}
+
+// Input validation and sanitization helpers
+
+// validateAndSanitizeString validates string input with length limits and sanitizes HTML
+func validateAndSanitizeString(input string, minLen, maxLen int, allowHTML bool) (string, error) {
+	if !utf8.ValidString(input) {
+		return "", fmt.Errorf("invalid UTF-8 string")
+	}
+
+	if len(input) < minLen {
+		return "", fmt.Errorf("input too short (minimum %d characters)", minLen)
+	}
+
+	if len(input) > maxLen {
+		return "", fmt.Errorf("input too long (maximum %d characters)", maxLen)
+	}
+
+	// Sanitize HTML if not allowed
+	if !allowHTML {
+		input = html.EscapeString(input)
+	}
+
+	// Remove null bytes and control characters (except newlines and tabs)
+	input = strings.Map(func(r rune) rune {
+		if r == 0 || (r < 32 && r != '\n' && r != '\t' && r != '\r') {
+			return -1
+		}
+		return r
+	}, input)
+
+	return strings.TrimSpace(input), nil
+}
+
+// validateThreadSettings validates and sanitizes thread settings
+func validateThreadSettings(settings *ThreadSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings cannot be nil")
+	}
+
+	// Validate model name
+	if settings.ModelName != "" {
+		modelName, err := validateAndSanitizeString(settings.ModelName, 1, 100, false)
+		if err != nil {
+			return fmt.Errorf("invalid model name: %v", err)
+		}
+		settings.ModelName = modelName
+	}
+
+	// Validate temperature
+	if settings.Temperature < 0 || settings.Temperature > 2 {
+		return fmt.Errorf("temperature must be between 0 and 2")
+	}
+
+	// Validate language code
+	if settings.Lang != "" {
+		langRegex := regexp.MustCompile(`^[a-z]{2}(-[A-Z]{2})?$`)
+		if !langRegex.MatchString(settings.Lang) {
+			return fmt.Errorf("invalid language code format")
+		}
+	}
+
+	// Validate master prompt
+	if settings.MasterPrompt != "" {
+		prompt, err := validateAndSanitizeString(settings.MasterPrompt, 0, 2000, false)
+		if err != nil {
+			return fmt.Errorf("invalid master prompt: %v", err)
+		}
+		settings.MasterPrompt = prompt
+	}
+
+	// Validate context limit
+	if settings.ContextLimit < 100 || settings.ContextLimit > 10000 {
+		return fmt.Errorf("context limit must be between 100 and 10000")
+	}
+
+	return nil
+}
+
+// validateChatMessage validates and sanitizes chat message input
+func validateChatMessage(message string) (string, error) {
+	if message == "" {
+		return "", fmt.Errorf("message cannot be empty")
+	}
+
+	sanitized, err := validateAndSanitizeString(message, 1, 4000, false)
+	if err != nil {
+		return "", fmt.Errorf("invalid message: %v", err)
+	}
+
+	return sanitized, nil
+}
+
+// validateRoleData validates and sanitizes role creation/update data
+func validateRoleData(name, prompt string) (string, string, error) {
+	sanitizedName, err := validateAndSanitizeString(name, 1, 100, false)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid role name: %v", err)
+	}
+
+	sanitizedPrompt, err := validateAndSanitizeString(prompt, 1, 2000, false)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid role prompt: %v", err)
+	}
+
+	return sanitizedName, sanitizedPrompt, nil
+}
+
+// validateNumericID validates numeric IDs from URL parameters
+func validateNumericID(idStr string, fieldName string) (uint, error) {
+	if idStr == "" {
+		return 0, fmt.Errorf("%s cannot be empty", fieldName)
+	}
+
+	// Check for valid numeric characters only
+	numericRegex := regexp.MustCompile(`^\d+$`)
+	if !numericRegex.MatchString(idStr) {
+		return 0, fmt.Errorf("invalid %s format", fieldName)
+	}
+
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %v", fieldName, err)
+	}
+
+	if id == 0 {
+		return 0, fmt.Errorf("%s must be greater than 0", fieldName)
+	}
+
+	return uint(id), nil
+}
+
+// validateUUID validates UUID format for thread IDs
+func validateUUID(uuidStr string) error {
+	if uuidStr == "" {
+		return fmt.Errorf("UUID cannot be empty")
+	}
+
+	_, err := uuid.Parse(uuidStr)
+	if err != nil {
+		return fmt.Errorf("invalid UUID format")
+	}
+
+	return nil
+}
+
+// CSRF token management functions
+
+// generateCSRFToken generates a cryptographically secure random token
+func generateCSRFToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes), nil
+}
+
+// getOrCreateCSRFToken gets or creates a CSRF token for the user
+func (store *CSRFTokenStore) getOrCreateCSRFToken(userID uint) (string, error) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+
+	if token, exists := store.tokens[userID]; exists {
+		return token, nil
+	}
+
+	token, err := generateCSRFToken()
+	if err != nil {
+		return "", err
+	}
+
+	store.tokens[userID] = token
+	return token, nil
+}
+
+// validateCSRFToken validates a CSRF token for the user
+func (store *CSRFTokenStore) validateCSRFToken(userID uint, token string) bool {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+
+	expectedToken, exists := store.tokens[userID]
+	if !exists {
+		return false
+	}
+
+	// Use constant-time comparison to prevent timing attacks
+	return subtle.ConstantTimeCompare([]byte(expectedToken), []byte(token)) == 1
+}
+
+// removeCSRFToken removes a CSRF token (useful for cleanup)
+func (store *CSRFTokenStore) removeCSRFToken(userID uint) {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	delete(store.tokens, userID)
+}
+
+// csrfProtectionMiddleware adds CSRF protection to sensitive endpoints
+func (s *Server) csrfProtectionMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := getUserFromContext(r)
+		if user == nil {
+			s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+			return
+		}
+
+		// Skip CSRF check for GET requests (they should be idempotent)
+		if r.Method == http.MethodGet {
+			next(w, r)
+			return
+		}
+
+		// Get CSRF token from header
+		providedToken := r.Header.Get("X-CSRF-Token")
+		if providedToken == "" {
+			s.writeJSONError(w, http.StatusForbidden, "CSRF token required")
+			return
+		}
+
+		// Validate CSRF token
+		if !csrfStore.validateCSRFToken(user.ID, providedToken) {
+			Log.WithFields(map[string]interface{}{
+				"user_id":        user.ID,
+				"provided_token": providedToken[:10] + "...", // Log only part of token for security
+				"endpoint":       r.URL.Path,
+				"method":         r.Method,
+			}).Warn("Invalid CSRF token provided")
+			s.writeJSONError(w, http.StatusForbidden, "Invalid CSRF token")
+			return
+		}
+
+		next(w, r)
+	}
+}
+// saveBase64Image saves base64 image data to a file and returns the URL
+func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) (string, error) {
+	// Decode base64 data
+	data, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64 data: %w", err)
+	}
+
+	// Generate unique filename
+	timestamp := time.Now().Format("20060102-150405")
+	randomID := uuid.New().String()[:8]
+	ext := ".jpg"
+	
+	switch mimeType {
+	case "image/png":
+		ext = ".png"
+	case "image/gif":
+		ext = ".gif"
+	case "image/webp":
+		ext = ".webp"
+	}
+	
+	filename := fmt.Sprintf("image_%s_%s%s", timestamp, randomID, ext)
+	
+	// Ensure uploads directory exists
+	uploadsDir := "uploads"
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create uploads directory: %w", err)
+	}
+	
+	// Write file
+	filePath := filepath.Join(uploadsDir, filename)
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write image file: %w", err)
+	}
+	
+	// Return file system path for database storage
+	// The frontend will get the URL path from the API response
+	return filePath, nil
 }

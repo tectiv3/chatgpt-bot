@@ -48,6 +48,123 @@ body {
     gap: 16px;
 }
 
+/* Simple Image Attachment Styles */
+.image-attachment-preview {
+    padding: 12px;
+    background: var(--secondary-color);
+    border-radius: 12px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.attached-image {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+}
+
+.attachment-preview-image {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.attachment-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.attachment-name {
+    display: block;
+    font-weight: 500;
+    color: var(--tg-text-color, #000);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.attachment-size {
+    display: block;
+    font-size: 12px;
+    color: var(--tg-hint-color, #999);
+    margin-top: 2px;
+}
+
+.clear-attachment-btn {
+    background: var(--danger-color);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+}
+
+.clear-attachment-btn:hover {
+    background: #ff3742;
+    transform: scale(1.05);
+}
+
+.image-attach-btn {
+    background: transparent;
+    border: none;
+    color: var(--tg-hint-color, #999);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-attach-btn:hover {
+    background: var(--secondary-color);
+    color: var(--primary-color);
+}
+
+.image-attach-btn.active {
+    color: var(--primary-color);
+    background: var(--secondary-color);
+}
+
+/* Message image display */
+.message-image {
+    margin-bottom: 8px;
+}
+
+.message-image-content {
+    max-width: 300px;
+    max-height: 300px;
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    object-fit: contain;
+}
+
+/* Mobile responsiveness for images */
+@media (max-width: 768px) {
+    .message-image-content {
+        max-width: 250px;
+        max-height: 250px;
+    }
+    
+    .attachment-preview-image {
+        width: 50px;
+        height: 50px;
+    }
+}
+
 .loading-spinner {
     width: 32px;
     height: 32px;
@@ -788,7 +905,7 @@ body {
 .input-wrapper {
     display: flex;
     gap: 12px;
-    align-items: center;
+    align-items: flex-end;
     max-width: 100%;
 }
 
@@ -955,6 +1072,7 @@ body {
 @media (max-width: 768px) {
     .input-wrapper {
         gap: 8px;
+        align-items: flex-end;
     }
     
     .message-input {
@@ -1457,5 +1575,132 @@ body {
     .archived-header {
         font-size: 16px;
         padding: 12px;
+    }
+}
+
+/* Enhanced mobile keyboard and touch support */
+@media (max-width: 768px), (hover: none) {
+    /* Improve mobile text input experience */
+    .message-input {
+        /* Prevent iOS zoom on focus */
+        font-size: 16px !important;
+        -webkit-text-size-adjust: 100%;
+        /* Improve touch target size */
+        min-height: 48px;
+        touch-action: manipulation;
+        /* Better visual feedback */
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .message-input:focus {
+        /* Enhanced focus state for better visibility */
+        box-shadow: 0 0 0 2px var(--primary-color);
+        border-color: var(--primary-color);
+        /* Prevent zoom and maintain position */
+        transform: translateZ(0);
+        -webkit-transform: translateZ(0);
+    }
+    
+    /* Optimize input container for virtual keyboards */
+    .input-container {
+        /* Ensure input stays accessible when keyboard appears */
+        position: sticky;
+        bottom: 0;
+        z-index: 1000;
+        /* Add background to prevent content from showing through */
+        background: var(--tg-bg-color, #ffffff);
+        /* Smooth transitions for keyboard animations */
+        transition: padding-bottom 0.2s ease;
+    }
+    
+    /* Handle keyboard appearance gracefully */
+    .input-wrapper {
+        /* Ensure good spacing around input elements */
+        align-items: flex-end;
+        gap: 8px;
+    }
+    
+    .send-button {
+        /* Ensure button remains accessible */
+        flex-shrink: 0;
+        /* Better touch target */
+        min-width: 48px;
+        min-height: 48px;
+        /* Prevent accidental taps */
+        touch-action: manipulation;
+    }
+}
+
+/* iOS specific fixes */
+@supports (-webkit-touch-callout: none) {
+    /* iOS Safari specific styles */
+    .message-input {
+        /* Fix iOS rendering issues */
+        -webkit-appearance: none;
+        -webkit-border-radius: 22px;
+        /* Prevent rubber band scrolling within textarea */
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    /* Fix for iOS viewport height issues */
+    .app-container {
+        min-height: -webkit-fill-available;
+    }
+    
+    /* Prevent iOS from adding blue highlight */
+    .message-input:focus,
+    .send-button:focus {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-user-select: text; /* Allow text selection in input */
+    }
+    
+    .send-button {
+        -webkit-user-select: none;
+    }
+}
+
+/* Android specific fixes */
+@media (max-width: 768px) {
+    /* Android Chrome keyboard handling */
+    @supports (height: 100dvh) {
+        .app-container {
+            height: 100dvh;
+        }
+    }
+    
+    /* Fix for Android input focus issues */
+    .message-input:focus {
+        /* Ensure proper scrolling behavior */
+        scroll-margin-bottom: 10px;
+    }
+}
+
+/* Visual keyboard resize handling */
+@media (max-width: 768px) {
+    /* When virtual keyboard might be present */
+    .input-container.keyboard-active {
+        padding-bottom: 10px;
+    }
+    
+    /* Smooth transitions for keyboard animations */
+    .messages-container {
+        transition: max-height 0.2s ease;
+    }
+}
+
+/* High contrast and accessibility improvements */
+@media (prefers-contrast: high) {
+    .message-input:focus {
+        box-shadow: 0 0 0 3px var(--primary-color);
+        border-width: 2px;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .message-input,
+    .input-container,
+    .messages-container {
+        transition: none;
     }
 }

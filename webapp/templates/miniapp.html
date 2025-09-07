@@ -9,6 +9,8 @@
     <title>{{.BotName}} Assistant</title>
     <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.1/dist/markdown-it.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.5/dist/purify.min.js"></script>
     <link rel="stylesheet" href="/assets/css/app.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
@@ -122,7 +124,7 @@
                         </div>
                         
                         <!-- Show selectors for new threads with no messages -->
-                        <div v-if="currentMessageCount === 0" class="thread-selectors">
+                        <div v-if="shouldShowRoleSelector" class="thread-selectors">
                             <div class="selector-group">
                                 <select v-model="threadSettings.model_name" @change="updateThreadSettings" class="setting-select">
                                     <option v-for="model in models" :key="model.id" :value="model.id">
@@ -131,7 +133,7 @@
                                 </select>
                             </div>
                             
-                            <div v-if="roles.length > 0" class="selector-group">
+                            <div v-if="roles.length > 0 && shouldShowRoleSelector" class="selector-group">
                                 <select v-model="threadSettings.role_id" @change="updateThreadSettings" class="setting-select">
                                     <option :value="null">Default Role</option>
                                     <option v-for="role in roles" :key="role.id" :value="role.id">
@@ -194,6 +196,12 @@
                                     <i class="fas fa-compress-alt"></i>
                                     Conversation Summary
                                 </div>
+                                
+                                <!-- Image display -->
+                                <div v-if="message.image_data" class="message-image">
+                                    <img :src="message.image_data" :alt="message.image_name" class="message-image-content">
+                                </div>
+                                
                                 <div 
                                     class="message-text" 
                                     :class="{ 'streaming-text': message.isStreaming }"
@@ -216,14 +224,44 @@
 
                 <!-- Input Area -->
                 <div v-if="currentThreadId" class="input-container">
+                    <!-- Simple Image Attachment Preview -->
+                    <div v-if="attachedImage" class="image-attachment-preview">
+                        <div class="attached-image">
+                            <img :src="attachedImage.preview" :alt="attachedImage.name" class="attachment-preview-image">
+                            <div class="attachment-info">
+                                <span class="attachment-name">[[ attachedImage.name ]]</span>
+                                <span class="attachment-size">[[ formatFileSize(attachedImage.size) ]]</span>
+                            </div>
+                            <button @click="clearAttachedImage" class="clear-attachment-btn" title="Remove image">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
                     <div class="input-wrapper">
+                        <button 
+                            @click="selectImage"
+                            class="image-attach-btn"
+                            :class="{ active: !!attachedImage }"
+                            title="Attach image"
+                        >
+                            <i class="fas fa-image"></i>
+                        </button>
+                        
                         <textarea
                             ref="messageInput"
                             v-model="messageInput"
                             @keydown="handleKeyDown"
+                            @focus="onInputFocus"
+                            @blur="onInputBlur"
+                            @touchstart.passive="onInputTouch"
                             placeholder="Type your message..."
                             class="message-input"
                             :disabled="sending"
+                            autocomplete="off"
+                            autocorrect="off"
+                            autocapitalize="sentences"
+                            spellcheck="true"
                         ></textarea>
                         <button 
                             @click="streaming ? stopStreaming() : sendMessage()"
@@ -274,7 +312,7 @@
                         >
                     </div>
                     
-                    <div class="setting-group">
+                    <div class="setting-group" v-if="shouldShowRoleSelector">
                         <label>Role ([[ roles.length ]] available)</label>
                         <select v-model="threadSettings.role_id">
                             <option :value="null">No role</option>
@@ -296,26 +334,7 @@
                         >
                     </div>
                     
-                    <div class="setting-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" v-model="threadSettings.stream">
-                            Enable streaming
-                        </label>
-                    </div>
-                    
-                    <div class="setting-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" v-model="threadSettings.qa">
-                            Q&A mode
-                        </label>
-                    </div>
-                    
-                    <div class="setting-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" v-model="threadSettings.voice">
-                            Voice responses
-                        </label>
-                    </div>
+                    <!-- Removed streaming, voice, and qa options as requested -->
                 </div>
                 <div class="modal-footer">
                     <button @click="saveSettings" class="save-btn">Save Settings</button>
