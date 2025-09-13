@@ -295,10 +295,8 @@ func getUserFromContext(r *http.Request) *User {
 func (s *Server) getOrCreateUserFromInitData(initData initdata.InitData) (*User, error) {
 	var user User
 
-	// Try to find existing user by Telegram ID
 	if initData.User.ID != 0 {
-		telegramID := int64(initData.User.ID)
-		err := s.db.Preload("Roles").Where("telegram_id = ?", telegramID).First(&user).Error
+		err := s.db.Preload("Roles").Where("username = ?", initData.User.Username).First(&user).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return nil, err
 		}
@@ -306,6 +304,7 @@ func (s *Server) getOrCreateUserFromInitData(initData initdata.InitData) (*User,
 			return &user, nil
 		}
 
+		telegramID := int64(initData.User.ID)
 		// Create new user
 		user = User{
 			TelegramID: &telegramID,
