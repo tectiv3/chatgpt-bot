@@ -266,22 +266,56 @@ body {
   border: none;
 }
 
-/* Enhanced mobile viewport handling */
+/*/* Enhanced mobile viewport handling */
 @media (max-width: 1023px) {
   /* Prevent scroll when sidebar is open on mobile */
   body.sidebar-open {
     overflow: hidden;
   }
   
-  /* Ensure full height on mobile with proper viewport handling */
-  #app {
-    height: var(--tg-viewport-height, 100vh);
-    height: var(--tg-stable-height, var(--tg-viewport-height, 100vh));
+  /* Fix viewport for mobile keyboards */
+  html, body {
+    height: 100%;
+    overflow: hidden;
   }
   
-  /* Mobile-specific input adjustments */
-  .input-tg:focus {
-    transform: translateZ(0); /* Force hardware acceleration on iOS */
+  #app {
+    height: 100%;
+    height: -webkit-fill-available;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  
+  /* Keep input area at bottom when keyboard opens */
+  .main-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  /* Ensure messages scroll but input stays fixed */
+  .messages-container {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Fix input area position */
+  .input-area {
+    position: sticky;
+    bottom: 0;
+    background-color: var(--tg-theme-bg-color);
+    z-index: 10;
+  }
+  
+  /* Prevent iOS rubber band scrolling */
+  .fixed-bottom {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
   }
 }
 
