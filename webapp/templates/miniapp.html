@@ -79,7 +79,15 @@
                              @click="selectThread(thread.id)">
                             <div class="flex items-start gap-3">
                                 <div class="flex-1 min-w-0">
-                                    <div class="font-medium text-sm text-tg-text truncate mb-1">[[ thread.title ]]</div>
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <div class="font-medium text-sm text-tg-text truncate flex-1">[[ thread.title ]]</div>
+                                        <button v-if="thread.id" 
+                                                @click.stop="editThreadTitle(thread.id, thread.title)" 
+                                                class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-tg-hint/20 text-tg-hint hover:text-tg-text transition-all"
+                                                title="Edit title">
+                                            <i class="fas fa-edit text-xs"></i>
+                                        </button>
+                                    </div>
                                     <div class="flex items-center gap-2 text-xs text-tg-hint">
                                         <span>[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
                                         <span>•</span>
@@ -119,7 +127,15 @@
                                      @click="selectThread(thread.id)">
                                     <div class="flex items-start gap-3">
                                         <div class="flex-1 min-w-0">
-                                            <div class="font-medium text-sm text-tg-text truncate mb-1">[[ thread.title ]]</div>
+                                            <div class="flex items-center gap-2 mb-1">
+                                                <div class="font-medium text-sm text-tg-text truncate flex-1">[[ thread.title ]]</div>
+                                                <button v-if="thread.id" 
+                                                        @click.stop="editThreadTitle(thread.id, thread.title)" 
+                                                        class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-tg-hint/20 text-tg-hint hover:text-tg-text transition-all"
+                                                        title="Edit title">
+                                                    <i class="fas fa-edit text-xs"></i>
+                                                </button>
+                                            </div>
                                             <div class="flex items-center gap-2 text-xs text-tg-hint">
                                                 <span>[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
                                                 <span>•</span>
@@ -249,7 +265,7 @@
                             </div>
                             
                             <!-- Message Content -->
-                            <div class="max-w-[80%] lg:max-w-[70%]"
+                            <div class="max-w-[80%] lg:max-w-[70%] group"
                                  :class="message.role === 'user' ? 'order-first' : ''">
                                 
                                 <!-- Summary Header -->
@@ -259,12 +275,22 @@
                                     <span>Conversation Summary</span>
                                 </div>
                                 
-                                <!-- Message bubble -->
-                                <div class="rounded-2xl px-4 py-3"
+                                <!-- Message bubble with copy button -->
+                                <div class="relative rounded-2xl px-4 py-3"
                                      :class="message.role === 'user' 
                                        ? 'bg-tg-link text-white ml-auto' 
                                        : 'bg-tg-secondary text-tg-text'"
                                      :style="message.isStreaming && message.estimatedHeight ? { minHeight: message.estimatedHeight + 'px' } : {}">
+                                    
+                                    <!-- Copy button -->
+                                    <button @click="copyMessage(message.content)" 
+                                            class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs"
+                                            :class="message.role === 'user' 
+                                              ? 'bg-white/20 hover:bg-white/30 text-white' 
+                                              : 'bg-tg-hint/20 hover:bg-tg-hint/30 text-tg-hint hover:text-tg-text'"
+                                            title="Copy message">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
                                     
                                     <!-- Image attachment -->
                                     <div v-if="message.image_data" class="mb-3">
@@ -274,7 +300,7 @@
                                     </div>
                                     
                                     <!-- Message text -->
-                                    <div class="prose prose-sm"
+                                    <div class="prose prose-sm pr-8"
                                          :class="{ 
                                            'streaming-text': message.isStreaming,
                                            'text-white': message.role === 'user'
@@ -510,6 +536,47 @@
                     <button @click="saveRole" 
                             class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">
                         [[ editingRole?.id ? 'Update Role' : 'Create Role' ]]
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Thread Title Modal -->
+        <div v-if="showEditTitle" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click="showEditTitle = false">
+            <div class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col" @click.stop>
+                <div class="flex-shrink-0 flex items-center justify-between p-6 border-b border-white/10 dark:border-white/10">
+                    <h3 class="text-xl font-semibold text-tg-text">Edit Thread Title</h3>
+                    <button @click="showEditTitle = false" 
+                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="p-6">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">Thread Title</label>
+                            <input type="text" 
+                                   v-model="editingTitle.title"
+                                   placeholder="Enter thread title"
+                                   class="w-full py-2.5 px-3 rounded-lg bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20"
+                                   @keydown.enter="saveThreadTitle"
+                                   @keydown.escape="showEditTitle = false"
+                                   ref="editTitleInput">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex-shrink-0 p-6 flex gap-3 border-t border-white/10 dark:border-white/10">
+                    <button @click="showEditTitle = false" 
+                            class="flex-1 py-2.5 px-4 rounded-lg bg-tg-secondary text-tg-text hover:bg-tg-hint/20 transition-colors font-medium">
+                        Cancel
+                    </button>
+                    <button @click="saveThreadTitle" 
+                            :disabled="!editingTitle.title.trim() || savingTitle"
+                            class="flex-1 py-2.5 px-4 rounded-lg bg-tg-button text-tg-button-text hover:opacity-90 disabled:opacity-50 transition-opacity font-medium">
+                        <i v-if="savingTitle" class="fas fa-spinner fa-spin mr-2"></i>
+                        [[ savingTitle ? 'Saving...' : 'Save' ]]
                     </button>
                 </div>
             </div>

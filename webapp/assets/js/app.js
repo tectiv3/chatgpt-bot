@@ -162,6 +162,14 @@ createApp({
             deleteThreadId: null,
             showArchivedSection: false,
 
+            // Edit title modal state
+            showEditTitle: false,
+            editingTitle: {
+                id: null,
+                title: '',
+            },
+            savingTitle: false,
+
             // Settings (will be loaded from DeviceStorage)
             threadSettings: {
                 model_name: 'gpt-4o',
@@ -1493,6 +1501,93 @@ createApp({
             } else {
                 // Mobile/tablet: close sidebar to prevent overlay issues
                 // Note: We don't force close here to allow users to keep it open if they want
+            }
+        },
+
+        // Copy message content to clipboard
+        async copyMessage(content) {
+            if (!content) return
+
+            try {
+                // Try modern clipboard API first
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(content)
+                } else {
+                    // Fallback for older browsers or insecure contexts
+                    const textArea = document.createElement('textarea')
+                    textArea.value = content
+                    textArea.style.position = 'fixed'
+                    textArea.style.left = '-999999px'
+                    textArea.style.top = '-999999px'
+                    document.body.appendChild(textArea)
+                    textArea.focus()
+                    textArea.select()
+                    document.execCommand('copy')
+                    textArea.remove()
+                }
+            } catch (error) {
+                console.error('Failed to copy message:', error)
+                this.showError('Failed to copy message to clipboard')
+            }
+        },
+
+        // Open edit thread title modal
+        editThreadTitle(threadId, currentTitle) {
+            this.editingTitle = {
+                id: threadId,
+                title: currentTitle,
+            }
+            this.showEditTitle = true
+
+            // Focus the input after modal opens
+            this.$nextTick(() => {
+                if (this.$refs.editTitleInput) {
+                    this.$refs.editTitleInput.focus()
+                    this.$refs.editTitleInput.select()
+                }
+            })
+        },
+
+        // Save thread title
+        async saveThreadTitle() {
+            if (!this.editingTitle.title.trim() || this.savingTitle) return
+
+            this.savingTitle = true
+
+            try {
+                // Call the API to update thread title
+                await this.apiCall(`/api/threads/${this.editingTitle.id}/title`, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        title: this.editingTitle.title.trim(),
+                    }),
+                })
+
+                // Update the title in local threads array
+                const activeThread = this.threads.find(t => t.id === this.editingTitle.id)
+                if (activeThread) {
+                    activeThread.title = this.editingTitle.title.trim()
+                }
+
+                // Update the title in archived threads array
+                const archivedThread = this.archivedThreads.find(
+                    t => t.id === this.editingTitle.id
+                )
+                if (archivedThread) {
+                    archivedThread.title = this.editingTitle.title.trim()
+                }
+
+                // Update current thread if it's the one being edited
+                if (this.currentThread && this.currentThread.id === this.editingTitle.id) {
+                    this.currentThread.title = this.editingTitle.title.trim()
+                }
+
+                // Close the modal
+                this.showEditTitle = false
+            } catch (error) {
+                this.showError('Failed to update thread title')
+            } finally {
+                this.savingTitle = false
             }
         },
     },

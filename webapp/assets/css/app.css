@@ -213,11 +213,11 @@ body {
   animation: spin 1s linear infinite;
 }
 
-/* Message streaming indicator */
-.streaming-text::after {
-  content: '▋';
-  animation: blink 1s infinite;
-  color: var(--tg-theme-link-color);
+.streaming-text {
+    /* Smooth content updates during streaming */
+    transition: opacity 0.1s ease-in-out;
+    user-select: none;
+    contain: layout style paint;
 }
 
 @keyframes blink {

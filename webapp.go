@@ -614,6 +614,17 @@ func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 		default:
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
+	case subPath == "/title":
+		if threadID == "" {
+			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for title update")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			s.updateThreadTitle(w, r, threadID)
+		default:
+			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		}
 	case subPath == "/archive":
 		if threadID == "" {
 			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for archive")
@@ -1047,6 +1058,54 @@ func (s *Server) generateAndUpdateThreadTitle(w http.ResponseWriter, r *http.Req
 	title, err := s.generateThreadTitleFromConversation(titleReq.Question, titleReq.Response)
 	if err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to generate title")
+		return
+	}
+
+	// Update thread title
+	chat.ThreadTitle = &title
+	if err := s.db.Save(&chat).Error; err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to update thread title")
+		return
+	}
+
+	s.writeJSONSuccess(w, "Thread title updated successfully", map[string]interface{}{
+		"thread_id": threadID,
+		"title":     title,
+	})
+}
+
+func (s *Server) updateThreadTitle(w http.ResponseWriter, r *http.Request, threadID string) {
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	// Parse request body
+	var titleReq struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&titleReq); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate title
+	title := strings.TrimSpace(titleReq.Title)
+	if title == "" {
+		s.writeJSONError(w, http.StatusBadRequest, "Title cannot be empty")
+		return
+	}
+	if len(title) > 100 {
+		s.writeJSONError(w, http.StatusBadRequest, "Title too long (max 100 characters)")
+		return
+	}
+
+	// Find chat
+	var chat Chat
+	err := s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).First(&chat).Error
+	if err != nil {
+		s.writeJSONError(w, http.StatusNotFound, "Thread not found")
 		return
 	}
 
