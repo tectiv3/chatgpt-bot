@@ -177,7 +177,7 @@ createApp({
                 role_id: null,
                 lang: 'en',
                 master_prompt: '',
-                context_limit: 4000,
+                context_limit: 40000,
             },
 
             // Persistent user preferences
@@ -551,11 +551,11 @@ createApp({
                     temperature: this.userPreferences.defaultTemperature || 1.0,
                     role_id: this.userPreferences.selectedRole || null,
                     lang: 'en',
-                    master_prompt: '',
-                    context_limit: 4000,
+                    master_prompt:
+                        "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
+                    context_limit: 40000,
                 }
 
-                // Create thread immediately via API
                 const response = await this.apiCall('/api/threads', {
                     method: 'POST',
                     body: JSON.stringify({
@@ -574,7 +574,7 @@ createApp({
                 // Add real thread to list
                 const newThread = {
                     id: threadId,
-                    title: 'New Thread', // Always show "New Thread" initially
+                    title: 'New Thread',
                     message_count: 0,
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString(),
@@ -616,8 +616,9 @@ createApp({
                     temperature: 1.0,
                     role_id: null,
                     lang: 'en',
-                    master_prompt: '',
-                    context_limit: 4000,
+                    master_prompt:
+                        "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
+                    context_limit: 40000,
                     ...this.currentThread.settings,
                 }
 
@@ -1555,12 +1556,9 @@ createApp({
             this.savingTitle = true
 
             try {
-                // Call the API to update thread title
                 await this.apiCall(`/api/threads/${this.editingTitle.id}/title`, {
                     method: 'PUT',
-                    body: JSON.stringify({
-                        title: this.editingTitle.title.trim(),
-                    }),
+                    body: JSON.stringify({ title: this.editingTitle.title.trim() }),
                 })
 
                 // Update the title in local threads array
