@@ -1,1810 +1,301 @@
-/* Base styles */
+/* Telegram Mini App CSS with Tailwind Integration */
+
+:root {
+  /* Telegram WebApp CSS Variables (provided by Telegram) */
+  --tg-theme-bg-color: #ffffff;
+  --tg-theme-text-color: #000000;
+  --tg-theme-hint-color: #999999;
+  --tg-theme-link-color: #2481cc;
+  --tg-theme-button-color: #2481cc;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-secondary-bg-color: #f1f1f1;
+  --tg-theme-header-bg-color: #ffffff;
+  --tg-theme-accent-text-color: #2481cc;
+  --tg-theme-section-bg-color: #ffffff;
+  --tg-theme-section-header-text-color: #2481cc;
+  --tg-theme-subtitle-text-color: #999999;
+  --tg-theme-destructive-text-color: #ff3b30;
+}
+
+/* Apply Telegram colors to base elements */
 * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+  box-sizing: border-box;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-    background: var(--tg-bg-color, #ffffff);
-    color: var(--tg-text-color, #000000);
-    height: 100vh;
-    height: 100dvh; /* Use dynamic viewport height on mobile */
-    overflow: hidden;
-    /* Mobile safe area support */
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-    /* Prevent mobile bounce scrolling */
-    position: fixed;
-    width: 100%;
-    top: 0;
-    left: 0;
+  background-color: var(--tg-theme-bg-color) !important;
+  color: var(--tg-theme-text-color) !important;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-/* CSS Variables for Telegram theme adaptation */
-:root {
-    --primary-color: var(--tg-accent-text-color, #007AFF);
-    --secondary-color: var(--tg-secondary-bg-color, #f1f1f3);
-    --danger-color: #ff4757;
-    --success-color: #2ed573;
-    --border-color: var(--tg-secondary-bg-color, #e1e1e5);
-    --sidebar-width: 280px;
-    --header-height: 56px; /* Reduced for mobile */
-    --input-height: auto; /* Let it be flexible */
-    /* Mobile-first safe area variables */
-    --safe-area-top: env(safe-area-inset-top, 0px);
-    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-area-left: env(safe-area-inset-left, 0px);
-    --safe-area-right: env(safe-area-inset-right, 0px);
+/* Ensure app container uses theme colors */
+#app {
+  background-color: var(--tg-theme-bg-color) !important;
+  color: var(--tg-theme-text-color) !important;
+  min-height: 100vh;
 }
 
-/* Loading */
-.loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    gap: 16px;
+/* Force explicit background colors for key elements */
+.sidebar,
+[class*="bg-tg-secondary"] {
+  background-color: var(--tg-theme-secondary-bg-color) !important;
 }
 
-/* Simple Image Attachment Styles */
-.image-attachment-preview {
-    padding: 12px;
-    background: var(--secondary-color);
-    border-radius: 12px;
-    margin-bottom: 8px;
-    border: 1px solid var(--border-color);
+[class*="bg-tg-primary"] {
+  background-color: var(--tg-theme-bg-color) !important;
 }
 
-.attached-image {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    position: relative;
+[class*="text-tg-primary"] {
+  color: var(--tg-theme-text-color) !important;
 }
 
-.attachment-preview-image {
-    width: 60px;
-    height: 60px;
-    object-fit: cover;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
+[class*="text-tg-hint"] {
+  color: var(--tg-theme-hint-color) !important;
 }
 
-.attachment-info {
-    flex: 1;
-    min-width: 0;
+[class*="text-tg-link"] {
+  color: var(--tg-theme-link-color) !important;
 }
 
-.attachment-name {
-    display: block;
-    font-weight: 500;
-    color: var(--tg-text-color, #000);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+/* Ensure Tailwind color classes work with CSS variables */
+.bg-tg-primary { background-color: var(--tg-theme-bg-color) !important; }
+.bg-tg-secondary { background-color: var(--tg-theme-secondary-bg-color) !important; }
+.bg-tg-button { background-color: var(--tg-theme-button-color) !important; }
+
+.text-tg-text { color: var(--tg-theme-text-color) !important; }
+.text-tg-hint { color: var(--tg-theme-hint-color) !important; }
+.text-tg-link { color: var(--tg-theme-link-color) !important; }
+.text-tg-button-text { color: var(--tg-theme-button-text-color) !important; }
+.text-tg-destructive { color: var(--tg-theme-destructive-text-color) !important; }
+
+.border-tg-hint { border-color: var(--tg-theme-hint-color) !important; }
+.border-tg-link { border-color: var(--tg-theme-link-color) !important; }
+
+.placeholder-tg-hint::placeholder { color: var(--tg-theme-hint-color) !important; }
+
+/* Border opacity utilities */
+.border-tg-hint\/20 { border-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent) !important; }
+.border-tg-hint\/30 { border-color: color-mix(in srgb, var(--tg-theme-hint-color) 30%, transparent) !important; }
+.border-tg-link\/20 { border-color: color-mix(in srgb, var(--tg-theme-link-color) 20%, transparent) !important; }
+
+/* Background opacity utilities */
+.bg-tg-text\/10 { background-color: color-mix(in srgb, var(--tg-theme-text-color) 10%, transparent) !important; }
+.bg-tg-hint\/10 { background-color: color-mix(in srgb, var(--tg-theme-hint-color) 10%, transparent) !important; }
+.bg-tg-hint\/20 { background-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent) !important; }
+.bg-tg-link\/10 { background-color: color-mix(in srgb, var(--tg-theme-link-color) 10%, transparent) !important; }
+
+/* Hover states */
+.hover\:bg-tg-secondary:hover { background-color: var(--tg-theme-secondary-bg-color) !important; }
+.hover\:bg-tg-text\/10:hover { background-color: color-mix(in srgb, var(--tg-theme-text-color) 10%, transparent) !important; }
+.hover\:bg-tg-hint\/20:hover { background-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent) !important; }
+.hover\:text-tg-text:hover { color: var(--tg-theme-text-color) !important; }
+
+/* Focus states for inputs */
+.focus\:border-tg-link:focus { border-color: var(--tg-theme-link-color) !important; }
+.focus\:ring-tg-link\/20:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tg-theme-link-color) 20%, transparent) !important; }
+
+/* Custom button styles with Telegram colors */
+.btn-tg-primary {
+  background-color: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
 }
 
-.attachment-size {
-    display: block;
-    font-size: 12px;
-    color: var(--tg-hint-color, #999);
-    margin-top: 2px;
+.btn-tg-primary:hover {
+  opacity: 0.9;
 }
 
-.clear-attachment-btn {
-    background: var(--danger-color);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 12px;
-    transition: all 0.2s ease;
+.btn-tg-primary:disabled {
+  opacity: 0.5;
 }
 
-.clear-attachment-btn:hover {
-    background: #ff3742;
-    transform: scale(1.05);
+/* Scrollbar styling for webkit browsers */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
 }
 
-.image-attach-btn {
-    background: transparent;
-    border: none;
-    color: var(--tg-hint-color, #999);
-    font-size: 18px;
-    cursor: pointer;
-    padding: 8px;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.image-attach-btn:hover {
-    background: var(--secondary-color);
-    color: var(--primary-color);
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--tg-theme-hint-color);
+  border-radius: 2px;
 }
 
-.image-attach-btn.active {
-    color: var(--primary-color);
-    background: var(--secondary-color);
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--tg-theme-text-color);
 }
 
-/* Message image display */
-.message-image {
-    margin-bottom: 8px;
-}
-
-.message-image-content {
-    max-width: 300px;
-    max-height: 300px;
-    width: 100%;
-    height: auto;
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
-    object-fit: contain;
-}
-
-/* Mobile responsiveness for images */
-@media (max-width: 768px) {
-    .message-image-content {
-        max-width: 250px;
-        max-height: 250px;
-    }
-    
-    .attachment-preview-image {
-        width: 50px;
-        height: 50px;
-    }
-}
-
-.loading-spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--border-color);
-    border-top: 3px solid var(--primary-color);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* Performance optimizations for smooth scrolling and streaming */
-.app-container {
-    /* Enable hardware acceleration for the entire app */
-    transform: translateZ(0);
-    -webkit-transform: translate3d(0,0,0);
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-}
-
-/* Optimize message animations */
-.message {
-    /* Composite layer for individual messages */
-    will-change: auto;
-    /* Prevent layout thrashing */
-    contain: layout style paint;
-}
-
-/* Smooth transitions for content updates */
-.message-text {
-    /* Optimize text rendering during updates */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    /* Prevent unnecessary repaints */
-    contain: layout style;
-}
-
-/* Layout - Mobile First */
-.app-container {
-    display: flex;
-    height: 100vh;
-    height: 100dvh; /* Use dynamic viewport height */
-    width: 100%;
-    position: relative;
-    /* On mobile, stack vertically by default */
-    flex-direction: column;
-}
-
-/* Desktop layout */
-@media (min-width: 769px) {
-    .app-container {
-        flex-direction: row;
-    }
-}
-
-/* Sidebar - Mobile First */
-.sidebar {
-    /* Mobile: Fixed overlay */
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: var(--sidebar-width);
-    height: 100vh;
-    height: 100dvh;
-    background: var(--secondary-color);
-    border-right: 1px solid var(--border-color);
-    display: flex;
-    flex-direction: column;
-    z-index: 1000;
-    transform: translateX(-100%);
+/* Mobile-specific sidebar styles */
+@media (max-width: 1023px) {
+  /* Ensure solid background for mobile sidebar */
+  .sidebar {
+    background-color: var(--tg-theme-bg-color) !important;
+    opacity: 1 !important;
+  }
+  
+  .sidebar-slide-enter-active,
+  .sidebar-slide-leave-active {
     transition: transform 0.3s ease;
-    /* Add safe area padding */
-    padding-top: var(--safe-area-top);
+  }
+  
+  .sidebar-slide-enter-from,
+  .sidebar-slide-leave-to {
+    transform: translateX(-100%);
+  }
 }
-
-.sidebar-open {
-    transform: translateX(0);
-}
-
-/* Desktop: Static sidebar */
-@media (min-width: 769px) {
-    .sidebar {
-        position: relative;
-        transform: translateX(0);
-        z-index: auto;
-        padding-top: 0;
-    }
-    
-    .sidebar-open {
-        transform: translateX(0);
-    }
-}
-
-.sidebar-header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.sidebar-header-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-}
-
-.sidebar-header-top h3 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--tg-text-color, #000000);
-}
-
-.close-sidebar-btn {
-    background: none;
-    border: none;
-    color: var(--tg-text-color, #666666);
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 14px;
-    transition: all 0.2s ease;
-    display: none;
-}
-
-.close-sidebar-btn:hover {
-    background: var(--border-color);
-    color: var(--tg-text-color, #000000);
-}
-
-/* Mobile sidebar backdrop */
-.sidebar-backdrop {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 999;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-@media (max-width: 768px) {
-    .close-sidebar-btn {
-        display: block;
-    }
-    
-    .sidebar-open ~ .sidebar-backdrop,
-    .sidebar-backdrop.show {
-        display: block;
-        opacity: 1;
-    }
-}
-
-.new-thread-btn {
-    width: 100%;
-    padding: 12px 16px;
-    background: var(--primary-color);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: center;
-    transition: opacity 0.2s ease;
-}
-
-.new-thread-btn:hover {
-    opacity: 0.9;
-}
-
-.threads-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-}
-
-.thread-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    margin-bottom: 4px;
-    border-radius: 8px;
-    transition: background-color 0.2s ease;
-}
-
-.thread-item:hover {
-    background: var(--border-color);
-}
-
-.thread-item.active {
-    background: var(--primary-color);
-    color: white;
-}
-
-.thread-title {
-    font-weight: 500;
-    margin-bottom: 4px;
-    word-break: break-word;
-}
-
-.thread-meta {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    opacity: 0.7;
-}
-
-.sidebar-footer {
-    padding: 16px;
-    border-top: 1px solid var(--border-color);
-}
-
-.sidebar-btn {
-    width: 100%;
-    padding: 8px 12px;
-    background: transparent;
-    color: var(--tg-text-color, #000000);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    font-size: 14px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    transition: background-color 0.2s ease;
-}
-
-.sidebar-btn:hover {
-    background: var(--border-color);
-}
-
-.sidebar-btn:last-child {
-    margin-bottom: 0;
-}
-
-/* Main Content - Mobile First */
-.main-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    /* Mobile: Full width, full height */
-    width: 100%;
-    height: 100vh;
-    height: 100dvh;
-    position: relative;
-}
-
-/* Desktop: Adjust for sidebar */
-@media (min-width: 769px) {
-    .main-content {
-        width: calc(100% - var(--sidebar-width));
-        height: 100vh;
-    }
-}
-
-/* Header - Mobile First */
-.header {
-    height: var(--header-height);
-    min-height: var(--header-height);
-    padding: 0 12px;
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: var(--tg-bg-color, #ffffff);
-    position: relative;
-    z-index: 10;
-    flex-shrink: 0;
-    /* Mobile: Add safe area padding */
-    padding-top: max(8px, var(--safe-area-top));
-    padding-left: max(12px, var(--safe-area-left));
-    padding-right: max(12px, var(--safe-area-right));
-}
-
-.sidebar-toggle {
-    /* Mobile: Always visible */
-    display: flex;
-    background: none;
-    border: none;
-    font-size: 18px;
-    color: var(--tg-text-color, #000000);
-    cursor: pointer;
-    padding: 8px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    transition: background-color 0.2s ease;
-}
-
-.sidebar-toggle:hover {
-    background: var(--border-color);
-}
-
-/* Desktop: Hide sidebar toggle */
-@media (min-width: 769px) {
-    .sidebar-toggle {
-        display: none;
-    }
-    
-    .header {
-        padding: 0 16px;
-        padding-top: 0;
-        padding-left: 16px;
-        padding-right: 16px;
-    }
-}
-
-.thread-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-}
-
-.current-settings {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    flex: 1;
-    min-width: 0;
-    align-items: center;
-}
-
-.thread-selectors {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-    /* Mobile: Stack vertically if needed */
-    flex-wrap: wrap;
-}
-
-.selector-group {
-    min-width: 120px;
-    flex: 1;
-    max-width: 200px;
-}
-
-/* Mobile adjustments for thread toolbar */
-@media (max-width: 768px) {
-    .thread-toolbar {
-        gap: 6px;
-        flex-wrap: wrap;
-    }
-    
-    .thread-selectors {
-        width: 100%;
-        flex-direction: column;
-        gap: 6px;
-        align-items: stretch;
-    }
-    
-    .selector-group {
-        min-width: auto;
-        max-width: none;
-        width: 100%;
-    }
-    
-    .current-settings {
-        width: 100%;
-        justify-content: flex-start;
-        gap: 4px;
-    }
-}
-
-.setting-select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    font-size: 14px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--secondary-color);
-    color: var(--tg-text-color, #000000);
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.setting-select:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    background: var(--tg-bg-color, #ffffff);
-}
-
-.setting-select:hover {
-    border-color: var(--primary-color);
-}
-
-.thread-settings-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--tg-text-color, #000000);
-    border: 1px solid var(--border-color);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    transition: background-color 0.2s ease;
-    flex-shrink: 0;
-}
-
-.thread-settings-btn:hover {
-    background: var(--border-color);
-}
-
-.setting-badge {
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.model-badge {
-    background: var(--primary-color);
-    color: white;
-}
-
-.role-badge {
-    background: var(--success-color);
-    color: white;
-}
-
-.temp-badge {
-    background: var(--secondary-color);
-    color: var(--tg-text-color, #000000);
-}
-
-/* Connection Status */
-.connection-status {
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-right: auto;
-}
-
-.connection-status.disconnected {
-    background: var(--danger-color);
-    color: white;
-}
-
-.connection-status.reconnecting {
-    background: #f39c12;
-    color: white;
-}
-
-.connection-status.reconnecting i {
-    animation: blink 1s ease-in-out infinite;
-}
-
-/* Messages - Mobile First */
-.messages-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    /* Performance optimizations for smooth scrolling */
-    scroll-behavior: smooth;
-    -webkit-overflow-scrolling: touch;
-    /* Enhanced GPU acceleration for smoother animations */
-    transform: translateZ(0);
-    will-change: scroll-position;
-    /* Reduce layout thrashing during scroll */
-    contain: layout style paint;
-    /* Better scrollbar styling */
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-color) transparent;
-    /* Prevent scroll jank on iOS */
-    -webkit-transform: translate3d(0,0,0);
-    /* Optimize for frequent content changes */
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-    /* Smoother text rendering during scroll */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    /* Mobile: Ensure proper height calculation */
-    min-height: 0;
-    height: 0;
-}
-
-/* Desktop: More padding */
-@media (min-width: 769px) {
-    .messages-container {
-        padding: 16px;
-        gap: 16px;
-    }
-}
-
-/* Hide scroll sentinel */
-.scroll-sentinel {
-    visibility: hidden !important;
-    height: 1px !important;
-    width: 1px !important;
-    position: absolute !important;
-    bottom: 0 !important;
-    pointer-events: none !important;
-}
-
-.welcome-message {
-    text-align: center;
-    padding: 40px 20px;
-    color: var(--tg-text-color, #666666);
-}
-
-.welcome-message h2 {
-    margin-bottom: 8px;
-    color: var(--tg-text-color, #000000);
-}
-
-.message {
-    display: flex;
-    gap: 12px;
-    margin: 8px 0;
-/*    max-width: 80%;*/
-}
-
-.message.user {
-    align-self: flex-end;
-    flex-direction: row-reverse;
-}
-
-.message.user .message-content {
-    background: var(--primary-color);
-    color: white;
-}
-
-.message.assistant .message-content {
-    background: var(--secondary-color);
-    color: var(--tg-text-color, #000000);
-}
-
-.message.summary .message-content {
-    background: #fff3cd;
-    border: 1px solid #ffeaa7;
-    color: #856404;
-}
-
-.message-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 16px;
-    background: var(--border-color);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    font-size: 14px;
-}
-
-.message.user .message-avatar {
-    background: var(--primary-color);
-    color: white;
-}
-
-.message-content {
-    padding: 12px 16px;
-    border-radius: 16px;
-    max-width: 100%;
-    word-wrap: break-word;
-    transition: min-height 0.2s ease-out;
-    position: relative;
-    overflow: hidden;
-}
-
-/* Streaming message improvements */
-.message-content.is-streaming {
-    /* Pre-allocated height prevents layout jumps */
-    transition: min-height 0.3s ease-out;
-    /* Optimize rendering during streaming */
-    contain: layout style;
-    /* Hardware acceleration for smooth updates */
-    transform: translateZ(0);
-    will-change: auto;
-    /* Prevent text reflow during updates */
-    word-break: break-word;
-    overflow-wrap: break-word;
-    /* Optimize for frequent content changes */
-    -webkit-transform: translate3d(0,0,0);
-    backface-visibility: hidden;
-}
-
-.streaming-text {
-    /* Smooth content updates during streaming */
-    transition: opacity 0.1s ease-in-out;
-}
-
-/* Enhanced streaming indicator */
-.streaming-dots {
-    display: inline-flex;
-    gap: 2px;
-    margin-right: 4px;
-}
-
-.streaming-dots span {
-    width: 4px;
-    height: 4px;
-    background-color: currentColor;
-    border-radius: 50%;
-    animation: streaming-dot 1.4s infinite ease-in-out;
-}
-
-.streaming-dots span:nth-child(1) {
-    animation-delay: -0.32s;
-}
-
-.streaming-dots span:nth-child(2) {
-    animation-delay: -0.16s;
-}
-
-@keyframes streaming-dot {
-    0%, 80%, 100% {
-        opacity: 0.3;
-        transform: scale(0.8);
-    }
-    40% {
-        opacity: 1;
-        transform: scale(1);
-    }
-}
-
-.summary-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    margin-bottom: 8px;
-    font-size: 12px;
-    opacity: 0.8;
-}
-
-.message-text {
-    line-height: 1.5;
-    /* GPU acceleration for smooth text updates */
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    /* Prevent text selection during streaming for smoother updates */
-    user-select: text;
-}
-
-/* Prose styles for markdown content */
-.message-text h1, .message-text h2, .message-text h3, .message-text h4, .message-text h5, .message-text h6 {
-    margin: 1em 0 0.5em 0;
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--tg-text-color, #000);
-}
-
-.message-text h1 { font-size: 1.5em; }
-.message-text h2 { font-size: 1.3em; }
-.message-text h3 { font-size: 1.2em; }
-.message-text h4 { font-size: 1.1em; }
-.message-text h5, .message-text h6 { font-size: 1em; }
-
-.message-text p {
-    margin: 0.8em 0;
-    line-height: 1.6;
-}
-
-.message-text ul, .message-text ol {
-    margin: 0.8em 0;
-    padding-left: 1.5em;
-    line-height: 1.5;
-}
-
-.message-text li {
-    margin: 0.3em 0;
-}
-
-.message-text blockquote {
-    margin: 1em 0;
-    padding: 0.5em 1em;
-    border-left: 3px solid var(--primary-color);
-    background: var(--secondary-color);
-    border-radius: 0 8px 8px 0;
-    font-style: italic;
-}
-
-.message-text code {
-    background: var(--secondary-color);
-    padding: 0.2em 0.4em;
-    border-radius: 4px;
-    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-    font-size: 0.9em;
-    border: 1px solid var(--border-color);
-}
-
-.message-text pre {
-    background: var(--secondary-color);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 1em;
-    margin: 1em 0;
-    overflow-x: auto;
-    line-height: 1.4;
-}
-
-.message-text pre code {
-    background: none;
-    border: none;
-    padding: 0;
-    font-size: 0.85em;
-}
-
-.message-text a {
-    color: var(--primary-color);
-    text-decoration: underline;
-}
-
-.message-text a:hover {
-    text-decoration: none;
-}
-
-.message-text strong {
-    font-weight: 600;
-}
-
-.message-text em {
-    font-style: italic;
-}
-
-.message-text hr {
-    margin: 1.5em 0;
-    border: none;
-    height: 1px;
-    background: var(--border-color);
-}
-
-.message-text table {
-    border-collapse: collapse;
-    margin: 1em 0;
-    width: 100%;
-}
-
-.message-text th, .message-text td {
-    border: 1px solid var(--border-color);
-    padding: 0.5em 0.8em;
-    text-align: left;
-}
-
-.message-text th {
-    background: var(--secondary-color);
-    font-weight: 600;
-}
-
-.message-text.streaming-text {
-    /* Slightly reduce selection during streaming for better performance */
-    user-select: none;
-    /* Optimize rendering during rapid updates */
-    contain: layout style paint;
-}
-
-.message-meta {
-    margin-top: 8px;
-    font-size: 11px;
-    opacity: 0.6;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.archived-badge {
-    background: var(--border-color);
-    padding: 2px 6px;
-    border-radius: 8px;
-    font-size: 10px;
-}
-
-.streaming-badge {
-    background: var(--primary-color);
-    color: white;
-    padding: 2px 6px;
-    border-radius: 8px;
-    font-size: 10px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    animation: pulse-badge 2s ease-in-out infinite;
-}
-
-@keyframes pulse-badge {
-    0%, 100% { 
-        opacity: 1;
-        transform: scale(1);
-    }
-    50% { 
-        opacity: 0.7;
-        transform: scale(0.95);
-    }
-}
-
-/* Input - Mobile First */
-.input-container {
-    padding: 8px 12px;
-    /* Mobile: Add safe area bottom padding */
-    padding-bottom: max(8px, var(--safe-area-bottom));
-    padding-left: max(12px, var(--safe-area-left));
-    padding-right: max(12px, var(--safe-area-right));
-    border-top: 1px solid var(--border-color);
-    background: var(--tg-bg-color, #ffffff);
-    flex-shrink: 0;
-    /* Mobile: Ensure it stays at bottom */
-    position: relative;
-    z-index: 10;
-}
-
-/* Desktop: More padding */
-@media (min-width: 769px) {
-    .input-container {
-        padding: 12px 16px 16px 16px;
-        padding-bottom: 16px;
-        padding-left: 16px;
-        padding-right: 16px;
-    }
-}
-
-.input-wrapper {
-    display: flex;
-    gap: 12px;
-    align-items: flex-end;
-    max-width: 100%;
-}
-
-.message-input {
-    flex: 1;
-    min-height: 44px;
-    max-height: 120px;
-    padding: 12px 16px;
-    border: 1px solid var(--border-color);
-    border-radius: 22px;
-    font-size: 16px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    resize: none;
-    background: var(--tg-bg-color, #ffffff);
-    color: var(--tg-text-color, #000000);
-    line-height: 1.4;
-    transition: border-color 0.2s ease;
-}
-
-.message-input:focus {
-    outline: none;
-    border-color: var(--primary-color);
+  
+  .sidebar-slide-enter-from,
+  .sidebar-slide-leave-to {
+    transform: translateX(-100%);
+  }
 }
 
-.send-button {
-    width: 44px;
-    height: 44px;
-    border-radius: 22px;
-    background: var(--primary-color);
-    color: white;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+/* Prose styling for message content */
+.prose {
+  max-width: none;
 }
 
-.send-button:hover:not(:disabled) {
-    opacity: 0.9;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.prose p {
+  margin-bottom: 0.75rem;
 }
 
-.send-button:active:not(:disabled) {
-    transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+.prose pre {
+  background-color: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
 }
 
-.send-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
+.prose code {
+  background-color: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
 }
 
-/* Send button states */
-.send-button.sending {
-    background: var(--primary-color);
-    cursor: wait;
+.prose pre code {
+  background: none;
+  padding: 0;
 }
 
-.send-button.streaming {
-    background: var(--danger-color);
-    animation: pulse 1.5s ease-in-out infinite;
+.prose blockquote {
+  border-left: 4px solid var(--tg-theme-link-color);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  font-style: italic;
+  color: var(--tg-theme-hint-color);
 }
 
-.send-button.streaming:hover {
-    background: #e74c3c;
-    transform: scale(1.05);
+.prose ul,
+.prose ol {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
 }
 
-.send-button.stop-hover {
-    background: var(--danger-color);
+.prose li {
+  margin-bottom: 0.25rem;
 }
 
-@keyframes pulse {
-    0% {
-        transform: scale(1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-    50% {
-        transform: scale(1.02);
-        box-shadow: 0 4px 16px rgba(231, 76, 60, 0.3);
-    }
-    100% {
-        transform: scale(1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
+/* Loading spinner animation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-/* Streaming indicator */
-.message.assistant .message-content:not(.is-complete) {
-    position: relative;
+.animate-spin {
+  animation: spin 1s linear infinite;
 }
 
-.message.assistant .message-content:not(.is-complete)::after {
-    content: '';
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    background: var(--primary-color);
-    border-radius: 50%;
-    margin-left: 8px;
-    animation: blink 1s ease-in-out infinite;
+/* Message streaming indicator */
+.streaming-text::after {
+  content: '▋';
+  animation: blink 1s infinite;
+  color: var(--tg-theme-link-color);
 }
 
 @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-}
-
-/* Streaming Status Bar */
-.streaming-status {
-    background: var(--primary-color);
-    color: white;
-    padding: 8px 16px;
-    text-align: center;
-    font-size: 14px;
-    font-weight: 500;
-    animation: pulse-bg 2s ease-in-out infinite;
-}
-
-.streaming-indicator {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-
-.streaming-indicator i {
-    animation: blink 1s ease-in-out infinite;
-}
-
-.keyboard-hint {
-    font-size: 12px;
-    opacity: 0.8;
-    font-weight: 400;
-}
-
-@keyframes pulse-bg {
-    0%, 100% { 
-        background: var(--primary-color);
-    }
-    50% { 
-        background: #0056b3;
-    }
-}
-
-@media (max-width: 768px) {
-    .streaming-status {
-        padding: 6px 12px;
-        font-size: 12px;
-    }
-    
-    .keyboard-hint {
-        font-size: 10px;
-    }
-}
-
-/* Mobile input optimizations */
-@media (max-width: 768px) {
-    .input-wrapper {
-        gap: 8px;
-        align-items: flex-end;
-    }
-    
-    .message-input {
-        font-size: 16px; /* Prevent zoom on iOS */
-        -webkit-appearance: none;
-        border-radius: 20px;
-        min-height: 40px;
-        max-height: 100px;
-    }
-    
-    .send-button {
-        width: 40px;
-        height: 40px;
-        border-radius: 20px;
-        font-size: 14px;
-    }
-}
-
-/* Modals */
-.modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-    padding: 20px;
-}
-
-.modal {
-    background: var(--tg-bg-color, #ffffff);
-    border-radius: 16px;
-    width: 100%;
-    max-width: 500px;
-    max-height: 80vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-.modal-header {
-    padding: 20px 24px 16px;
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.modal-header h3 {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--tg-text-color, #000000);
-}
-
-.close-btn {
-    background: none;
-    border: none;
-    font-size: 18px;
-    color: var(--tg-text-color, #666666);
-    cursor: pointer;
-    padding: 4px;
-}
-
-.modal-body {
-    padding: 20px 24px;
-    flex: 1;
-    overflow-y: auto;
-}
-
-.modal-footer {
-    padding: 16px 24px 20px;
-    border-top: 1px solid var(--border-color);
-}
-
-.setting-group {
-    margin-bottom: 20px;
-}
-
-.setting-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: var(--tg-text-color, #000000);
-}
-
-.setting-group input,
-.setting-group select,
-.setting-group textarea {
-    width: 100%;
-    padding: 12px 16px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    font-size: 14px;
-    font-family: inherit;
-    background: var(--tg-bg-color, #ffffff);
-    color: var(--tg-text-color, #000000);
-}
-
-.setting-group input:focus,
-.setting-group select:focus,
-.setting-group textarea:focus {
-    outline: none;
-    border-color: var(--primary-color);
-}
-
-.slider {
-    height: 6px;
-    border-radius: 3px;
-    background: var(--border-color);
-    outline: none;
-    -webkit-appearance: none;
-}
-
-.slider::-webkit-slider-thumb {
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--primary-color);
-    cursor: pointer;
-}
-
-.slider::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--primary-color);
-    cursor: pointer;
-    border: none;
-}
-
-.checkbox-label {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-}
-
-.checkbox-label input[type="checkbox"] {
-    width: auto !important;
-    margin: 0;
-}
-
-.save-btn {
-    width: 100%;
-    padding: 12px 16px;
-    background: var(--primary-color);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: opacity 0.2s ease;
-}
-
-.save-btn:hover {
-    opacity: 0.9;
-}
-
-/* Role Manager */
-.new-role-btn {
-    width: 100%;
-    padding: 12px 16px;
-    background: var(--success-color);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 20px;
-    transition: opacity 0.2s ease;
-}
-
-.new-role-btn:hover {
-    opacity: 0.9;
-}
-
-.roles-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.role-item {
-    padding: 16px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--secondary-color);
-}
-
-.role-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-}
-
-.role-name {
-    font-weight: 600;
-    color: var(--tg-text-color, #000000);
-}
-
-.role-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.edit-btn, .delete-btn {
-    padding: 4px 8px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    transition: opacity 0.2s ease;
-}
-
-.edit-btn {
-    background: var(--primary-color);
-    color: white;
-}
-
-.delete-btn {
-    background: var(--danger-color);
-    color: white;
-}
-
-.edit-btn:hover, .delete-btn:hover {
-    opacity: 0.9;
-}
-
-.role-prompt {
-    font-size: 13px;
-    line-height: 1.4;
-    color: var(--tg-text-color, #666666);
-    white-space: pre-wrap;
-}
-
-/* Mobile responsive adjustments */
-@media (max-width: 768px) {
-    .modal {
-        margin: 10px;
-        max-height: calc(100vh - 20px);
-        max-height: calc(100dvh - 20px);
-    }
-    
-    .message {
-        max-width: 95%;
-    }
-    
-    .thread-settings-btn {
-        width: 32px;
-        height: 32px;
-        font-size: 12px;
-        /* Improve touch target */
-        touch-action: manipulation;
-    }
-    
-    /* Ensure setting badges are visible but compact */
-    .setting-badge {
-        font-size: 11px;
-        padding: 3px 6px;
-    }
-    
-    /* Improve touch targets for mobile */
-    .sidebar-toggle,
-    .send-button,
-    .new-thread-btn,
-    .action-btn {
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Better mobile scrolling */
-    .messages-container,
-    .threads-list {
-        -webkit-overflow-scrolling: touch;
-        scroll-behavior: smooth;
-    }
-    
-    /* Mobile keyboard handling */
-    .message-input:focus {
-        /* Prevent page zoom when focusing input on mobile */
-        transform: translateZ(0);
-    }
-    
-    /* Support for dynamic viewport when keyboard appears */
-    @supports (height: 100dvh) {
-        .app-container,
-        .main-content,
-        .sidebar {
-            height: 100dvh;
-        }
-    }
-    
-    /* Ensure proper layering on mobile */
-    .header {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-    }
-    
-    .input-container {
-        position: sticky;
-        bottom: 0;
-        z-index: 100;
-    }
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-    width: 6px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #999;
-}
-
-/* Thread management styles */
-.thread-content {
-    flex: 1;
-    cursor: pointer;
-}
-
-.thread-actions {
-    display: flex;
-    gap: 4px;
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
     opacity: 0;
-    visibility: hidden;
-    transition: all 0.2s ease;
+  }
 }
 
-.thread-item:hover .thread-actions {
+/* Focus styles for better accessibility */
+.focus-tg:focus {
+  outline: 2px solid var(--tg-theme-link-color);
+  outline-offset: 2px;
+}
+
+/*/* Form controls - using Tailwind classes in HTML instead */
+
+/* Range slider styling */
+.slider-tg {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tg-theme-secondary-bg-color);
+  outline: none;
+}
+
+.slider-tg::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tg-theme-button-color);
+  cursor: pointer;
+}
+
+.slider-tg::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tg-theme-button-color);
+  cursor: pointer;
+  border: none;
+}
+
+/* Enhanced mobile viewport handling */
+@media (max-width: 1023px) {
+  /* Prevent scroll when sidebar is open on mobile */
+  body.sidebar-open {
+    overflow: hidden;
+  }
+  
+  /* Ensure full height on mobile with proper viewport handling */
+  #app {
+    height: var(--tg-viewport-height, 100vh);
+    height: var(--tg-stable-height, var(--tg-viewport-height, 100vh));
+  }
+  
+  /* Mobile-specific input adjustments */
+  .input-tg:focus {
+    transform: translateZ(0); /* Force hardware acceleration on iOS */
+  }
+}
+
+/* Desktop sticky sidebar enhancements */
+@media (min-width: 1024px) {
+  .sidebar-sticky {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  
+  /* Desktop hover states for better UX */
+  .thread-item:hover .thread-actions {
     opacity: 1;
-    visibility: visible;
-}
-
-.thread-item.active .thread-actions {
-    opacity: 1;
-    visibility: visible;
-}
-
-.action-btn {
-    width: 28px;
-    height: 28px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    transition: all 0.2s ease;
-    background: rgba(0, 0, 0, 0.1);
-    color: var(--tg-text-color, #000000);
-}
-
-.action-btn:hover {
-    background: rgba(0, 0, 0, 0.2);
-}
-
-.archive-btn:hover {
-    background: var(--primary-color);
-    color: white;
-}
-
-.unarchive-btn:hover {
-    background: var(--success-color);
-    color: white;
-}
-
-.delete-btn:hover {
-    background: var(--danger-color);
-    color: white;
-}
-
-/* Archived threads section */
-.archived-section {
-    margin-top: 16px;
-    border-top: 1px solid var(--border-color);
-    padding-top: 16px;
-}
-
-.archived-header {
-    width: 100%;
-    background: none;
-    border: none;
-    color: var(--tg-text-color, #000000);
-    cursor: pointer;
-    padding: 8px 12px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    transition: background-color 0.2s ease;
-}
-
-.archived-header:hover {
-    background: var(--border-color);
-}
-
-.archived-list {
-    margin-top: 8px;
-}
-
-.thread-item.archived {
-    opacity: 0.7;
-}
-
-.thread-item.archived .thread-title {
-    font-style: italic;
-}
-
-/* Confirmation modal styles */
-.confirm-modal {
-    max-width: 400px;
-}
-
-.warning-icon {
-    text-align: center;
-    font-size: 48px;
-    color: var(--danger-color);
-    margin-bottom: 16px;
-}
-
-.modal-footer {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    margin-top: 20px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border-color);
-}
-
-.cancel-btn {
-    padding: 10px 20px;
-    border: 1px solid var(--border-color);
-    background: var(--secondary-color);
-    color: var(--tg-text-color, #000000);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.cancel-btn:hover {
-    background: var(--border-color);
-}
-
-.delete-btn {
-    padding: 10px 20px;
-    border: none;
-    background: var(--danger-color);
-    color: white;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-weight: 500;
-}
-
-.delete-btn:hover {
-    background: #e74c3c;
-}
-
-/* Mobile responsive adjustments */
-@media (max-width: 768px) {
-    /* On mobile, make buttons slightly larger but still hidden by default */
-    .action-btn {
-        width: 32px;
-        height: 32px;
-        font-size: 14px;
-    }
-    
-    /* On mobile, show thread actions on tap/touch */
-    .thread-item:active .thread-actions {
-        opacity: 1;
-        visibility: visible;
-    }
-    
-    .archived-header {
-        font-size: 16px;
-        padding: 12px;
-    }
-}
-
-/* Enhanced mobile keyboard and touch support */
-@media (max-width: 768px), (hover: none) {
-    /* Improve mobile text input experience */
-    .message-input {
-        /* Prevent iOS zoom on focus */
-        font-size: 16px !important;
-        -webkit-text-size-adjust: 100%;
-        /* Improve touch target size */
-        min-height: 48px;
-        touch-action: manipulation;
-        /* Better visual feedback */
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    
-    .message-input:focus {
-        /* Enhanced focus state for better visibility */
-        box-shadow: 0 0 0 2px var(--primary-color);
-        border-color: var(--primary-color);
-        /* Prevent zoom and maintain position */
-        transform: translateZ(0);
-        -webkit-transform: translateZ(0);
-    }
-    
-    /* Optimize input container for virtual keyboards */
-    .input-container {
-        /* Ensure input stays accessible when keyboard appears */
-        position: sticky;
-        bottom: 0;
-        z-index: 1000;
-        /* Add background to prevent content from showing through */
-        background: var(--tg-bg-color, #ffffff);
-        /* Smooth transitions for keyboard animations */
-        transition: padding-bottom 0.2s ease;
-    }
-    
-    /* Handle keyboard appearance gracefully */
-    .input-wrapper {
-        /* Ensure good spacing around input elements */
-        align-items: flex-end;
-        gap: 8px;
-    }
-    
-    .send-button {
-        /* Ensure button remains accessible */
-        flex-shrink: 0;
-        /* Better touch target */
-        min-width: 48px;
-        min-height: 48px;
-        /* Prevent accidental taps */
-        touch-action: manipulation;
-    }
-}
-
-/* iOS specific fixes */
-@supports (-webkit-touch-callout: none) {
-    /* iOS Safari specific styles */
-    .message-input {
-        /* Fix iOS rendering issues */
-        -webkit-appearance: none;
-        -webkit-border-radius: 22px;
-        /* Prevent rubber band scrolling within textarea */
-        -webkit-overflow-scrolling: touch;
-    }
-    
-    /* Fix for iOS viewport height issues */
-    .app-container {
-        min-height: -webkit-fill-available;
-    }
-    
-    /* Prevent iOS from adding blue highlight */
-    .message-input:focus,
-    .send-button:focus {
-        -webkit-tap-highlight-color: transparent;
-        -webkit-user-select: text; /* Allow text selection in input */
-    }
-    
-    .send-button {
-        -webkit-user-select: none;
-    }
-}
-
-/* Android specific fixes */
-@media (max-width: 768px) {
-    /* Android Chrome keyboard handling */
-    @supports (height: 100dvh) {
-        .app-container {
-            height: 100dvh;
-        }
-    }
-    
-    /* Fix for Android input focus issues */
-    .message-input:focus {
-        /* Ensure proper scrolling behavior */
-        scroll-margin-bottom: 10px;
-    }
-}
-
-/* Visual keyboard resize handling */
-@media (max-width: 768px) {
-    /* When virtual keyboard might be present */
-    .input-container.keyboard-active {
-        padding-bottom: 10px;
-    }
-    
-    /* Smooth transitions for keyboard animations */
-    .messages-container {
-        transition: max-height 0.2s ease;
-    }
-}
-
-/* High contrast and accessibility improvements */
-@media (prefers-contrast: high) {
-    .message-input:focus {
-        box-shadow: 0 0 0 3px var(--primary-color);
-        border-width: 2px;
-    }
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-    .message-input,
-    .input-container,
-    .messages-container {
-        transition: none;
-    }
+  }
 }

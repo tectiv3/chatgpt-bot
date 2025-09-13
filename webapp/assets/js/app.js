@@ -109,7 +109,11 @@ const useDeviceStorage = () => {
 // Simplified mobile detection
 const useMobileKeyboard = () => {
     const isMobile = computed(() => {
-        return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 'ontouchstart' in window
+        return (
+            /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent
+            ) || 'ontouchstart' in window
+        )
     })
 
     const focusInput = inputRef => {
@@ -120,7 +124,7 @@ const useMobileKeyboard = () => {
 
     return {
         isMobile,
-        focusInput
+        focusInput,
     }
 }
 
@@ -145,6 +149,7 @@ createApp({
             sending: false,
             streaming: false,
             currentStreamController: null,
+            creatingThread: false,
 
             // Streaming UX improvements
             streamingBuffer: '',
@@ -203,6 +208,14 @@ createApp({
             return role ? role.name : 'Unknown Role'
         },
 
+        // Computed property for current thread
+        getCurrentThread() {
+            return (
+                this.threads.find(t => t.id === this.currentThreadId) ||
+                this.archivedThreads.find(t => t.id === this.currentThreadId)
+            )
+        },
+
         // Computed property for sorted threads (most recent first)
         sortedThreads() {
             return [...this.threads].sort((a, b) => {
@@ -217,6 +230,7 @@ createApp({
             return (
                 !this.sending &&
                 !this.streaming &&
+                !this.creatingThread &&
                 this.messageInput.trim().length > 0 &&
                 this.currentThreadId !== null
             )
@@ -270,11 +284,7 @@ createApp({
 
         // Should show role selector (only for new threads)
         shouldShowRoleSelector() {
-            return (
-                !this.currentThreadId ||
-                this.currentThreadId.startsWith('temp_') ||
-                this.messages.length === 0
-            )
+            return this.currentThreadId && this.messages.length === 0
         },
     },
 
@@ -285,10 +295,16 @@ createApp({
                 this.currentThread.message_count = newCount
             }
         },
+
+        // Watch sidebar state to handle mobile scroll prevention
+        sidebarOpen(isOpen) {
+            if (window.innerWidth < 1024) {
+                document.body.classList.toggle('sidebar-open', isOpen)
+            }
+        },
     },
 
     async mounted() {
-
         // Initialize composables
         this.deviceStorage = useDeviceStorage()
         this.mobileKeyboard = useMobileKeyboard()
@@ -309,6 +325,14 @@ createApp({
 
         this.loading = false
 
+        // Open sidebar by default on desktop/wide screens
+        if (window.innerWidth >= 1024) {
+            this.sidebarOpen = true
+        }
+
+        // Handle window resize to adapt sidebar behavior
+        window.addEventListener('resize', this.handleWindowResize)
+
         // Handle Telegram events
         if (window.Telegram?.WebApp) {
             window.Telegram.WebApp.onEvent('themeChanged', this.adaptToTelegramTheme)
@@ -326,6 +350,7 @@ createApp({
     beforeUnmount() {
         // Clean up event listeners
         document.removeEventListener('keydown', this.handleGlobalKeyDown)
+        window.removeEventListener('resize', this.handleWindowResize)
 
         // Clean up any active streaming and timers
         if (this.streamingUpdateTimer) {
@@ -337,31 +362,124 @@ createApp({
     methods: {
         adaptToTelegramTheme() {
             const webApp = window.Telegram?.WebApp
+            const root = document.documentElement
+
+            // Set CSS variables for Telegram theme colors
             if (webApp?.themeParams) {
-                document.documentElement.style.setProperty(
-                    '--tg-bg-color',
-                    webApp.themeParams.bg_color
+                // Apply all available theme parameters
+                root.style.setProperty(
+                    '--tg-theme-bg-color',
+                    webApp.themeParams.bg_color ||
+                        webApp.themeParams.background_color ||
+                        '#ffffff'
                 )
-                document.documentElement.style.setProperty(
-                    '--tg-text-color',
-                    webApp.themeParams.text_color
+                root.style.setProperty(
+                    '--tg-theme-text-color',
+                    webApp.themeParams.text_color || '#000000'
                 )
-                document.documentElement.style.setProperty(
-                    '--tg-accent-text-color',
-                    webApp.themeParams.accent_text_color
+                root.style.setProperty(
+                    '--tg-theme-hint-color',
+                    webApp.themeParams.hint_color || '#999999'
                 )
-                document.documentElement.style.setProperty(
-                    '--tg-secondary-bg-color',
-                    webApp.themeParams.secondary_bg_color
+                root.style.setProperty(
+                    '--tg-theme-link-color',
+                    webApp.themeParams.link_color || '#2481cc'
                 )
+                root.style.setProperty(
+                    '--tg-theme-button-color',
+                    webApp.themeParams.button_color || '#2481cc'
+                )
+                root.style.setProperty(
+                    '--tg-theme-button-text-color',
+                    webApp.themeParams.button_text_color || '#ffffff'
+                )
+                root.style.setProperty(
+                    '--tg-theme-secondary-bg-color',
+                    webApp.themeParams.secondary_bg_color || '#f1f1f1'
+                )
+                root.style.setProperty(
+                    '--tg-theme-header-bg-color',
+                    webApp.themeParams.header_bg_color ||
+                        webApp.themeParams.bg_color ||
+                        '#ffffff'
+                )
+                root.style.setProperty(
+                    '--tg-theme-accent-text-color',
+                    webApp.themeParams.accent_text_color ||
+                        webApp.themeParams.link_color ||
+                        '#2481cc'
+                )
+                root.style.setProperty(
+                    '--tg-theme-section-bg-color',
+                    webApp.themeParams.section_bg_color ||
+                        webApp.themeParams.secondary_bg_color ||
+                        '#f1f1f1'
+                )
+                root.style.setProperty(
+                    '--tg-theme-section-header-text-color',
+                    webApp.themeParams.section_header_text_color ||
+                        webApp.themeParams.link_color ||
+                        '#2481cc'
+                )
+                root.style.setProperty(
+                    '--tg-theme-subtitle-text-color',
+                    webApp.themeParams.subtitle_text_color ||
+                        webApp.themeParams.hint_color ||
+                        '#999999'
+                )
+                root.style.setProperty(
+                    '--tg-theme-destructive-text-color',
+                    webApp.themeParams.destructive_text_color || '#ff3b30'
+                )
+
+                document.body.classList.toggle('tg-dark-theme', webApp.colorScheme === 'dark')
+                document.body.style.backgroundColor = webApp.themeParams.bg_color || '#ffffff'
+                document.body.style.color = webApp.themeParams.text_color || '#000000'
+            } else {
+                // Fallback colors for development
+                console.log('Telegram WebApp theme not available, using default light theme')
+
+                // Set light theme defaults
+                root.style.setProperty('--tg-theme-bg-color', '#ffffff')
+                root.style.setProperty('--tg-theme-text-color', '#000000')
+                root.style.setProperty('--tg-theme-hint-color', '#999999')
+                root.style.setProperty('--tg-theme-link-color', '#2481cc')
+                root.style.setProperty('--tg-theme-button-color', '#2481cc')
+                root.style.setProperty('--tg-theme-button-text-color', '#ffffff')
+                root.style.setProperty('--tg-theme-secondary-bg-color', '#f1f1f1')
+                root.style.setProperty('--tg-theme-header-bg-color', '#ffffff')
+                root.style.setProperty('--tg-theme-accent-text-color', '#2481cc')
+                root.style.setProperty('--tg-theme-section-bg-color', '#f1f1f1')
+                root.style.setProperty('--tg-theme-section-header-text-color', '#2481cc')
+                root.style.setProperty('--tg-theme-subtitle-text-color', '#999999')
+                root.style.setProperty('--tg-theme-destructive-text-color', '#ff3b30')
+
+                document.body.style.backgroundColor = '#ffffff'
+                document.body.style.color = '#000000'
             }
 
-            // Set viewport height correctly
+            // Set viewport height correctly for the app container
             if (webApp?.viewportHeight) {
+                document.documentElement.style.setProperty(
+                    '--tg-viewport-height',
+                    `${webApp.viewportHeight}px`
+                )
                 document.body.style.height = `${webApp.viewportHeight}px`
             } else {
-                // Fallback for development
+                // Fallback for development or non-Telegram environments
+                document.documentElement.style.setProperty('--tg-viewport-height', '100vh')
                 document.body.style.height = '100vh'
+            }
+
+            // Handle viewport stable height for mobile keyboards
+            if (
+                webApp?.viewportStableHeight &&
+                webApp.viewportStableHeight !== webApp.viewportHeight
+            ) {
+                document.documentElement.style.setProperty(
+                    '--tg-stable-height',
+                    `${webApp.viewportStableHeight}px`
+                )
             }
         },
 
@@ -380,7 +498,6 @@ createApp({
                 this.roles = rolesResponse.roles || []
                 this.archivedThreads = archivedResponse.threads || []
 
-                // Auto-select most recent thread
                 if (this.threads.length > 0) {
                     await this.selectThread(this.threads[0].id)
                 }
@@ -396,7 +513,6 @@ createApp({
                 'Telegram-Init-Data': initData,
             }
 
-
             const defaultOptions = {
                 headers: defaultHeaders,
             }
@@ -411,46 +527,63 @@ createApp({
             return await response.json()
         },
 
-        newThread() {
+        async newThread() {
+            // Prevent multiple simultaneous thread creations
+            if (this.creatingThread) return
 
-            // Close sidebar
-            this.sidebarOpen = false
+            this.creatingThread = true
 
-            // Reset thread settings using user preferences as defaults
-            this.threadSettings = {
-                model_name: this.userPreferences.selectedModel || 'gpt-4o',
-                temperature: this.userPreferences.defaultTemperature || 1.0,
-                role_id: this.userPreferences.selectedRole || null,
-                lang: 'en',
-                master_prompt: '',
-                context_limit: 4000,
+            try {
+                // Close sidebar
+                this.sidebarOpen = false
+
+                // Reset thread settings using user preferences as defaults
+                this.threadSettings = {
+                    model_name: this.userPreferences.selectedModel || 'gpt-4o',
+                    temperature: this.userPreferences.defaultTemperature || 1.0,
+                    role_id: this.userPreferences.selectedRole || null,
+                    lang: 'en',
+                    master_prompt: '',
+                    context_limit: 4000,
+                }
+
+                // Create thread immediately via API
+                const response = await this.apiCall('/api/threads', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        initial_message: '', // Backend requires this field
+                        settings: this.threadSettings,
+                    }),
+                })
+
+                // Extract thread ID from response (might be nested in data)
+                const threadId = response.thread_id || response.data?.thread_id
+
+                if (!threadId) {
+                    throw new Error('Thread creation failed - no thread ID returned')
+                }
+
+                // Add real thread to list
+                const newThread = {
+                    id: threadId,
+                    title: 'New Thread', // Always show "New Thread" initially
+                    message_count: 0,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                    settings: { ...this.threadSettings },
+                }
+
+                this.threads.unshift(newThread)
+                this.currentThreadId = threadId
+                this.currentThread = newThread
+                this.messages = []
+
+                this.$nextTick(() => this.focusInput())
+            } catch (error) {
+                this.showError(`Failed to create new thread: ${error.message}`)
+            } finally {
+                this.creatingThread = false
             }
-
-            // Create a temporary local thread
-            const tempThreadId = 'temp_' + Date.now()
-            const newThreadObj = {
-                id: tempThreadId,
-                title: 'New Conversation',
-                message_count: 0,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                settings: { ...this.threadSettings },
-            }
-
-            // Add to threads list at the top
-            this.threads.unshift(newThreadObj)
-
-            // Clear messages BEFORE setting thread to ensure reactivity
-            this.messages = []
-            
-            // Select this thread
-            this.currentThreadId = tempThreadId
-            this.currentThread = newThreadObj
-
-            // Force Vue to update the DOM with cleared messages
-            this.$nextTick(() => {
-                this.focusInput()
-            })
         },
 
         async selectThread(threadId) {
@@ -458,20 +591,38 @@ createApp({
 
             // Stop any active streaming when switching threads
             if (this.streaming) {
-                this.stopStreaming()
+                // this.stopStreaming() // why?
             }
 
             this.currentThreadId = threadId
             this.currentThread =
                 this.threads.find(t => t.id === threadId) ||
                 this.archivedThreads.find(t => t.id === threadId)
+
             this.sidebarOpen = false // Close sidebar on mobile
 
             if (this.currentThread) {
-                this.threadSettings = { ...this.currentThread.settings }
-                await this.loadMessages()
+                // Ensure thread settings exist, fallback to defaults
+                this.threadSettings = {
+                    model_name: 'gpt-4o',
+                    temperature: 1.0,
+                    role_id: null,
+                    lang: 'en',
+                    master_prompt: '',
+                    context_limit: 4000,
+                    ...this.currentThread.settings,
+                }
 
-                this.$nextTick(() => this.focusInput())
+                try {
+                    await this.loadMessages()
+                    this.$nextTick(() => this.focusInput())
+                } catch (error) {
+                    console.error('Failed to load messages:', error)
+                    this.showError('Failed to load thread messages')
+                }
+            } else {
+                console.error('Thread not found:', threadId)
+                this.showError('Thread not found')
             }
         },
 
@@ -486,11 +637,6 @@ createApp({
 
         async loadMessages() {
             if (!this.currentThreadId) return
-
-            // Skip loading for temp threads
-            if (this.currentThreadId.startsWith('temp_')) {
-                return
-            }
 
             try {
                 const response = await this.apiCall(
@@ -518,12 +664,18 @@ createApp({
         },
 
         async sendMessage() {
+            // Simple validation - thread must exist
             if (
                 (!this.messageInput.trim() && !this.attachedImage) ||
                 this.sending ||
-                !this.currentThreadId
-            )
+                !this.currentThreadId ||
+                !this.currentThread
+            ) {
+                if (!this.currentThreadId || !this.currentThread) {
+                    this.showError('No thread selected')
+                }
                 return
+            }
 
             const message = this.messageInput.trim()
             const hasImage = !!this.attachedImage
@@ -561,36 +713,22 @@ createApp({
             this.sending = true
 
             try {
-                let apiThreadId = this.currentThreadId
+                // Update thread title on first message if still "New Conversation"
+                if (
+                    this.currentThread &&
+                    this.currentThread.title === 'New Conversation' &&
+                    message.trim()
+                ) {
+                    const newTitle =
+                        message.substring(0, 50) + (message.length > 50 ? '...' : '')
+                    this.currentThread.title = newTitle
 
-                // If this is a temporary thread, create it on the backend first
-                if (this.currentThreadId.startsWith('temp_')) {
-
-                    const createResponse = await this.apiCall('/api/threads', {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            initial_message: message,
-                            settings: this.threadSettings,
-                        }),
-                    })
-
-                    apiThreadId = createResponse.thread_id
-
-                    // Update the local thread with real ID
+                    // Find and update in threads array
                     const threadIndex = this.threads.findIndex(
                         t => t.id === this.currentThreadId
                     )
                     if (threadIndex !== -1) {
-                        this.threads[threadIndex].id = apiThreadId
-                        this.threads[threadIndex].title =
-                            message.substring(0, 50) + (message.length > 50 ? '...' : '')
-                        this.threads[threadIndex].settings = { ...this.threadSettings }
-                    }
-
-                    // Update the current thread reference to point to the updated thread object
-                    this.currentThreadId = apiThreadId
-                    if (threadIndex !== -1) {
-                        this.currentThread = this.threads[threadIndex]
+                        this.threads[threadIndex].title = newTitle
                     }
                 }
 
@@ -609,15 +747,12 @@ createApp({
                 }
 
                 // Always use streaming for better UX
-                await this.sendMessageWithStreaming(apiThreadId, messagePayload)
+                await this.sendMessageWithStreaming(this.currentThreadId, messagePayload)
             } catch (error) {
-                this.showError('Failed to send message')
+                this.showError(`Failed to send message: ${error.message}`)
             } finally {
                 this.sending = false
                 this.streaming = false
-
-                // DON'T reload messages since we already show user message immediately
-                // and backend will only send assistant response via streaming or sync response
 
                 // Keep focus on mobile to prevent keyboard closing
                 this.$nextTick(() => {
@@ -628,7 +763,6 @@ createApp({
 
         // Method to stop streaming
         stopStreaming() {
-
             if (this.currentStreamController) {
                 this.currentStreamController.abort()
                 this.currentStreamController = null
@@ -647,12 +781,10 @@ createApp({
             let lastUpdateTime = 0
 
             try {
-
                 const headers = {
                     'Content-Type': 'application/json',
                     'Telegram-Init-Data': window.Telegram?.WebApp?.initData || '',
                 }
-
 
                 const response = await fetch(`/api/threads/${threadId}/messages`, {
                     method: 'POST',
@@ -662,7 +794,10 @@ createApp({
                 })
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+                    const errorText = await response.text()
+                    throw new Error(
+                        `HTTP ${response.status}: ${response.statusText} - ${errorText}`
+                    )
                 }
 
                 const reader = response.body.getReader()
@@ -694,6 +829,11 @@ createApp({
                                                 message.is_complete = true
                                                 message.isStreaming = false
                                             }
+
+                                            // Update thread title if this is the first message exchange
+                                            this.generateTitleFromConversation(
+                                                streamingMessageId
+                                            )
                                         }
 
                                         return
@@ -711,7 +851,9 @@ createApp({
                                                 id: data.id,
                                                 role: 'assistant',
                                                 content: data.content || '',
-                                                created_at: data.created_at || new Date().toISOString(),
+                                                created_at:
+                                                    data.created_at ||
+                                                    new Date().toISOString(),
                                                 is_live: true,
                                                 message_type: 'normal',
                                                 is_complete: false,
@@ -725,16 +867,25 @@ createApp({
                                             // Update streaming content with throttling
                                             this.streamingBuffer = data.content || ''
                                             const now = Date.now()
-                                            
-                                            if (now - lastUpdateTime >= this.streamingThrottleMs) {
-                                                this.updateStreamingMessage(streamingMessageId, this.streamingBuffer)
+
+                                            if (
+                                                now - lastUpdateTime >=
+                                                this.streamingThrottleMs
+                                            ) {
+                                                this.updateStreamingMessage(
+                                                    streamingMessageId,
+                                                    this.streamingBuffer
+                                                )
                                                 lastUpdateTime = now
                                             } else {
                                                 if (this.streamingUpdateTimer) {
                                                     clearTimeout(this.streamingUpdateTimer)
                                                 }
                                                 this.streamingUpdateTimer = setTimeout(() => {
-                                                    this.updateStreamingMessage(streamingMessageId, this.streamingBuffer)
+                                                    this.updateStreamingMessage(
+                                                        streamingMessageId,
+                                                        this.streamingBuffer
+                                                    )
                                                     lastUpdateTime = Date.now()
                                                 }, this.streamingThrottleMs - (now - lastUpdateTime))
                                             }
@@ -748,7 +899,6 @@ createApp({
                     }
                 }
             } catch (error) {
-
                 // Handle cancellation gracefully
                 if (
                     error.name === 'AbortError' ||
@@ -828,7 +978,7 @@ createApp({
             }
         },
 
-        // Update current thread settings when dropdowns change (for temp threads)
+        // Update current thread settings when dropdowns change (for draft threads)
         updateThreadSettings() {
             if (this.currentThread) {
                 this.currentThread.settings = { ...this.threadSettings }
@@ -843,13 +993,9 @@ createApp({
 
         async saveSettings() {
             if (!this.currentThreadId) {
-                return
-            }
-
-            // Don't save for temp threads - they'll be saved with first message
-            if (this.currentThreadId.startsWith('temp_')) {
-                this.updateThreadSettings()
+                await this.saveUserPreferences()
                 this.showSettings = false
+                this.$nextTick(() => this.focusInput())
                 return
             }
 
@@ -986,16 +1132,16 @@ createApp({
 
         formatMessage(content) {
             if (!content) return ''
-            
+
             if (!this.markdownProcessor) {
                 this.markdownProcessor = window.markdownit({
                     html: false,
                     linkify: true,
                     typographer: true,
-                    breaks: true
+                    breaks: true,
                 })
             }
-            
+
             return this.markdownProcessor.render(content)
         },
 
@@ -1010,14 +1156,7 @@ createApp({
 
         // Thread management functions
         confirmDeleteThread(threadId) {
-            // For temp threads, delete immediately without confirmation
-            if (threadId.toString().startsWith('temp_')) {
-                this.deleteThreadId = threadId
-                this.deleteThread()
-                return
-            }
-
-            // For real threads, show confirmation dialog
+            // Show confirmation dialog for all threads
             this.deleteThreadId = threadId
             this.showDeleteConfirm = true
         },
@@ -1031,15 +1170,10 @@ createApp({
             if (!this.deleteThreadId) return
 
             try {
-                // Check if it's a temp thread
-                const isTemp = this.deleteThreadId.toString().startsWith('temp_')
-
-                if (!isTemp) {
-                    // Only make API call for real threads
-                    await this.apiCall(`/api/threads/${this.deleteThreadId}`, {
-                        method: 'DELETE',
-                    })
-                }
+                // Make API call to delete thread
+                await this.apiCall(`/api/threads/${this.deleteThreadId}`, {
+                    method: 'DELETE',
+                })
 
                 // Remove from local arrays
                 this.threads = this.threads.filter(t => t.id !== this.deleteThreadId)
@@ -1053,9 +1187,14 @@ createApp({
                     this.currentThread = null
                     this.messages = []
 
-                    // Auto-select next available thread
+                    // Auto-select next available thread or clear if none
                     if (this.threads.length > 0) {
                         await this.selectThread(this.threads[0].id)
+                    } else {
+                        // Clear current selection if no threads left
+                        this.currentThreadId = null
+                        this.currentThread = null
+                        this.messages = []
                     }
                 }
 
@@ -1099,6 +1238,11 @@ createApp({
 
                             if (this.threads.length > 0) {
                                 await this.selectThread(this.threads[0].id)
+                            } else {
+                                // Clear current selection if no threads left
+                                this.currentThreadId = null
+                                this.currentThread = null
+                                this.messages = []
                             }
                         }
                     } else {
@@ -1124,7 +1268,7 @@ createApp({
             if (container) {
                 container.scrollTo({
                     top: container.scrollHeight,
-                    behavior: smooth ? 'smooth' : 'auto'
+                    behavior: smooth ? 'smooth' : 'auto',
                 })
             }
         },
@@ -1142,7 +1286,11 @@ createApp({
                 this.$nextTick(() => {
                     const container = this.$refs.messagesContainer
                     if (container) {
-                        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
+                        const isNearBottom =
+                            container.scrollHeight -
+                                container.scrollTop -
+                                container.clientHeight <
+                            100
                         if (isNearBottom) {
                             this.scrollToBottom(true)
                         }
@@ -1151,7 +1299,49 @@ createApp({
             }
         },
 
+        async generateTitleFromConversation(assistantMessageId) {
+            // Only update if this is the first message exchange and title is still "New Thread"
+            if (!this.currentThread || this.currentThread.title !== 'New Thread') return
 
+            // Check if we have exactly 2 messages (user question + assistant response)
+            if (this.messages.length !== 2) return
+
+            const userMessage = this.messages.find(m => m.role === 'user')
+            const assistantMessage = this.messages.find(m => m.id === assistantMessageId)
+
+            if (!userMessage || !assistantMessage) return
+
+            try {
+                // Generate title from conversation
+                const response = await this.apiCall(
+                    `/api/threads/${this.currentThreadId}/generate-title`,
+                    {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            question: userMessage.content,
+                            response: assistantMessage.content,
+                        }),
+                    }
+                )
+
+                // Update the thread title in UI
+                const newTitle = response.data?.title || response.title
+                if (newTitle) {
+                    this.currentThread.title = newTitle
+
+                    // Update in threads array
+                    const threadIndex = this.threads.findIndex(
+                        t => t.id === this.currentThreadId
+                    )
+                    if (threadIndex !== -1) {
+                        this.threads[threadIndex].title = newTitle
+                    }
+                }
+            } catch (error) {
+                // Silent failure for title generation - it's not critical
+                // console.log('Failed to generate thread title:', error)
+            }
+        },
 
         // DeviceStorage integration methods
         async loadUserPreferences() {
@@ -1171,10 +1361,8 @@ createApp({
             }
         },
 
-
         async saveUserPreferences() {
             try {
-
                 // Extract current preferences from thread settings
                 this.userPreferences = {
                     selectedModel: this.threadSettings.model_name,
@@ -1215,7 +1403,6 @@ createApp({
             }
         },
 
-
         focusInput() {
             const input = this.$refs.messageInput
             if (input) {
@@ -1223,19 +1410,10 @@ createApp({
             }
         },
 
-        onInputFocus() {
-            // Input focused
-        },
-
-        onInputBlur() {
-            // Input blurred
-        },
-
         onInputTouch(event) {
             event.target.focus()
         },
 
-        // Simple image attachment methods
         selectImage() {
             const input = document.createElement('input')
             input.type = 'file'
@@ -1248,10 +1426,8 @@ createApp({
             const file = event.target.files[0]
             if (!file) return
 
-            // Validate file
             if (!this.validateImageFile(file)) return
 
-            // Create preview
             const reader = new FileReader()
             reader.onload = e => {
                 this.attachedImage = {
@@ -1267,7 +1443,13 @@ createApp({
         },
 
         validateImageFile(file) {
-            const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            const allowedTypes = [
+                'image/jpeg',
+                'image/jpg',
+                'image/png',
+                'image/gif',
+                'image/webp',
+            ]
             if (!allowedTypes.includes(file.type)) {
                 this.showError('File type not supported. Please use JPEG, PNG, GIF, or WebP.')
                 return false
@@ -1292,6 +1474,16 @@ createApp({
             const i = Math.floor(Math.log(bytes) / Math.log(k))
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
         },
+
+        // Handle window resize to adapt sidebar behavior
+        handleWindowResize() {
+            if (window.innerWidth >= 1024) {
+                // Desktop: ensure sidebar is open
+                this.sidebarOpen = true
+            } else {
+                // Mobile/tablet: close sidebar to prevent overlay issues
+                // Note: We don't force close here to allow users to keep it open if they want
+            }
+        },
     },
 }).mount('#app')
-

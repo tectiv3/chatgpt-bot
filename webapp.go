@@ -85,6 +85,11 @@ type MessageResponse struct {
 	ImageName   *string   `json:"image_name,omitempty"` // Original filename
 }
 
+type ChatWithThreadResponse struct {
+	Message *MessageResponse `json:"message,omitempty"`
+	Thread  *ThreadResponse  `json:"thread,omitempty"`
+}
+
 type ModelResponse struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -131,6 +136,7 @@ func (s *Server) setupWebServer() *http.ServeMux {
 	mux.HandleFunc("/api/csrf-token", s.apiMiddleware(s.getCSRFToken, false))
 	mux.HandleFunc("/api/threads", s.apiMiddleware(s.handleThreads, false))
 	mux.HandleFunc("/api/threads/archived", s.apiMiddleware(s.getArchivedThreads, false))
+	mux.HandleFunc("/api/messages", s.apiMiddleware(s.handleDraftMessages, false)) // Direct messages endpoint for draft threads
 	mux.HandleFunc("/api/threads/", s.apiMiddleware(s.handleThreadsWithID, false))
 	mux.HandleFunc("/api/models", s.apiMiddleware(s.getAvailableModels, false))
 	mux.HandleFunc("/api/roles", s.apiMiddleware(s.handleRoles, false))
@@ -459,11 +465,18 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate and sanitize initial message
-	sanitizedMessage, err := validateChatMessage(req.InitialMessage)
-	if err != nil {
-		s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid initial message: %v", err))
-		return
+	var sanitizedMessage string
+	if req.InitialMessage == "" {
+		// Allow empty message for thread creation without immediate message
+		sanitizedMessage = ""
+	} else {
+		// Validate and sanitize non-empty initial message
+		var err error
+		sanitizedMessage, err = validateChatMessage(req.InitialMessage)
+		if err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid initial message: %v", err))
+			return
+		}
 	}
 	req.InitialMessage = sanitizedMessage
 
@@ -475,11 +488,19 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate thread ID and title using miniModel
+	// Generate thread ID and title
 	threadID := uuid.New().String()
-	title, err := s.generateThreadTitle(req.InitialMessage)
-	if err != nil {
-		title = "New Conversation" // Fallback
+	var title string
+	if req.InitialMessage == "" {
+		// No message provided - just use simple title
+		title = "New Thread"
+	} else {
+		// Generate title from actual message
+		var err error
+		title, err = s.generateThreadTitle(req.InitialMessage)
+		if err != nil {
+			title = "New Thread" // Fallback
+		}
 	}
 
 	// Create new chat with thread
@@ -535,41 +556,70 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 // Handle /api/threads/{id}/... routes
 func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 	threadID := extractPathParam(r.URL.Path, "/api/threads")
-	if threadID == "" {
-		s.writeJSONError(w, http.StatusBadRequest, "Thread ID required")
-		return
-	}
 
-	// Validate thread ID format (UUID)
-	if !strings.HasPrefix(threadID, "temp_") { // Allow temp thread IDs
-		if err := validateUUID(threadID); err != nil {
-			s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
-			return
+	// Allow empty thread ID for draft threads (will be handled in individual endpoints)
+	if threadID != "" {
+		// Validate thread ID format (UUID) only if provided
+		if !strings.HasPrefix(threadID, "temp_") { // Allow temp thread IDs
+			if err := validateUUID(threadID); err != nil {
+				s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
+				return
+			}
 		}
 	}
 
 	// Check if it's a sub-resource or main thread operation
-	subPath := strings.TrimPrefix(r.URL.Path, "/api/threads/"+threadID)
+	var subPath string
+	if threadID == "" {
+		// Handle case where URL is /api/threads//messages (empty thread ID)
+		subPath = strings.TrimPrefix(r.URL.Path, "/api/threads/")
+	} else {
+		subPath = strings.TrimPrefix(r.URL.Path, "/api/threads/"+threadID)
+	}
 
 	switch {
 	case subPath == "/messages":
 		switch r.Method {
 		case http.MethodGet:
+			if threadID == "" {
+				s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for GET messages")
+				return
+			}
 			s.getThreadMessages(w, r, threadID)
 		case http.MethodPost:
+			// POST to /messages supports empty thread ID for draft threads
 			s.chatInThread(w, r, threadID)
 		default:
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
 	// Remove polling endpoint as it's no longer needed
 	case subPath == "/settings":
+		if threadID == "" {
+			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for settings")
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
 			s.updateThreadSettings(w, r, threadID)
 		default:
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
+	case subPath == "/generate-title":
+		if threadID == "" {
+			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for title generation")
+			return
+		}
+		switch r.Method {
+		case http.MethodPost:
+			s.generateAndUpdateThreadTitle(w, r, threadID)
+		default:
+			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		}
 	case subPath == "/archive":
+		if threadID == "" {
+			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for archive")
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
 			s.archiveThread(w, r, threadID)
@@ -577,10 +627,16 @@ func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
 	case subPath == "" || subPath == "/":
+		if threadID == "" {
+			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for thread operations")
+			return
+		}
 		// Main thread operations
 		switch r.Method {
 		case http.MethodDelete:
 			s.deleteThread(w, r, threadID)
+		case http.MethodPatch:
+			s.updateThread(w, r, threadID)
 		default:
 			s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
@@ -655,7 +711,11 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		return
 	}
 
-	var req ChatRequest
+	// Enhanced request structure to support thread settings
+	var req struct {
+		ChatRequest
+		Settings *ThreadSettings `json:"settings,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "Invalid request format")
 		return
@@ -669,14 +729,79 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	}
 	req.Message = sanitizedMessage
 
-	// Find chat by thread ID
 	var chat Chat
-	err = s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).
-		Preload("Role").
-		First(&chat).Error
-	if err != nil {
-		s.writeJSONError(w, http.StatusNotFound, "Thread not found")
-		return
+	var isNewThread bool
+
+	if threadID == "" || threadID == "null" {
+		// Create new thread for draft message
+		isNewThread = true
+
+		// Validate thread settings if provided
+		if req.Settings != nil {
+			if err := validateThreadSettings(req.Settings); err != nil {
+				s.writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid settings: %v", err))
+				return
+			}
+		}
+
+		// Generate thread ID and title using first message
+		newThreadID := uuid.New().String()
+		title, err := s.generateThreadTitle(req.Message)
+		if err != nil {
+			title = "New Conversation" // Fallback
+		}
+
+		// Create new chat with thread
+		chat = Chat{
+			UserID:       user.ID,
+			ChatID:       int64(user.ID)*1000 + time.Now().Unix()%1000, // Unique chat ID
+			ThreadID:     &newThreadID,
+			ThreadTitle:  &title,
+			Temperature:  1.0, // Default values
+			ModelName:    "gpt-4o",
+			Stream:       true,
+			ContextLimit: 4000,
+		}
+
+		// Apply custom settings if provided
+		if req.Settings != nil {
+			if req.Settings.ModelName != "" {
+				chat.ModelName = req.Settings.ModelName
+			}
+			if req.Settings.Temperature >= 0 {
+				chat.Temperature = req.Settings.Temperature
+			}
+			if req.Settings.RoleID != nil {
+				chat.RoleID = req.Settings.RoleID
+			}
+			if req.Settings.Lang != "" {
+				chat.Lang = req.Settings.Lang
+			}
+			if req.Settings.MasterPrompt != "" {
+				chat.MasterPrompt = req.Settings.MasterPrompt
+			}
+			if req.Settings.ContextLimit > 0 {
+				chat.ContextLimit = req.Settings.ContextLimit
+			}
+		}
+
+		if err := s.db.Create(&chat).Error; err != nil {
+			s.writeJSONError(w, http.StatusInternalServerError, "Failed to create thread")
+			return
+		}
+
+		// Load the created chat with relationships
+		s.db.Preload("Role").First(&chat, chat.ID)
+
+	} else {
+		// Find existing chat by thread ID
+		err = s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).
+			Preload("Role").
+			First(&chat).Error
+		if err != nil {
+			s.writeJSONError(w, http.StatusNotFound, "Thread not found")
+			return
+		}
 	}
 
 	// Process image if present
@@ -733,10 +858,10 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 
 	if chat.Stream {
 		// Use Server-Sent Events for streaming response
-		s.handleStreamingResponse(w, r, &chat, &userMessage)
+		s.handleStreamingResponse(w, r, &chat, &userMessage, isNewThread)
 	} else {
 		// Process synchronously and return complete response
-		s.handleSynchronousResponse(w, &chat, &userMessage)
+		s.handleSynchronousResponse(w, &chat, &userMessage, isNewThread)
 	}
 }
 
@@ -853,6 +978,90 @@ func (s *Server) deleteThread(w http.ResponseWriter, r *http.Request, threadID s
 	}
 
 	s.writeJSONSuccess(w, "Thread deleted successfully", nil)
+}
+
+func (s *Server) updateThread(w http.ResponseWriter, r *http.Request, threadID string) {
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	// Find chat
+	var chat Chat
+	err := s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).First(&chat).Error
+	if err != nil {
+		s.writeJSONError(w, http.StatusNotFound, "Thread not found")
+		return
+	}
+
+	// Parse request body
+	var updateReq struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&updateReq); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Update thread title
+	if updateReq.Title != "" {
+		chat.ThreadTitle = &updateReq.Title
+		if err := s.db.Save(&chat).Error; err != nil {
+			s.writeJSONError(w, http.StatusInternalServerError, "Failed to update thread")
+			return
+		}
+	}
+
+	s.writeJSONSuccess(w, "Thread updated successfully", map[string]interface{}{
+		"thread_id": threadID,
+		"title":     updateReq.Title,
+	})
+}
+
+func (s *Server) generateAndUpdateThreadTitle(w http.ResponseWriter, r *http.Request, threadID string) {
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	// Find chat
+	var chat Chat
+	err := s.db.Where("user_id = ? AND thread_id = ?", user.ID, threadID).First(&chat).Error
+	if err != nil {
+		s.writeJSONError(w, http.StatusNotFound, "Thread not found")
+		return
+	}
+
+	// Parse request body
+	var titleReq struct {
+		Question string `json:"question"`
+		Response string `json:"response"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&titleReq); err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Generate title from conversation
+	title, err := s.generateThreadTitleFromConversation(titleReq.Question, titleReq.Response)
+	if err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to generate title")
+		return
+	}
+
+	// Update thread title
+	chat.ThreadTitle = &title
+	if err := s.db.Save(&chat).Error; err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to update thread title")
+		return
+	}
+
+	s.writeJSONSuccess(w, "Thread title updated successfully", map[string]interface{}{
+		"thread_id": threadID,
+		"title":     title,
+	})
 }
 
 func (s *Server) getAvailableModels(w http.ResponseWriter, r *http.Request) {
@@ -1030,6 +1239,17 @@ func (s *Server) getUserInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Handle /api/messages (POST only) - for draft threads without thread ID
+func (s *Server) handleDraftMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Call chatInThread with empty thread ID to trigger new thread creation
+	s.chatInThread(w, r, "")
+}
+
 func (s *Server) getCSRFToken(w http.ResponseWriter, r *http.Request) {
 	user := getUserFromContext(r)
 	if user == nil {
@@ -1067,6 +1287,35 @@ func (s *Server) generateThreadTitle(initialMessage string) (string, error) {
 
 	if len(response.Choices) > 0 {
 		if content, ok := response.Choices[0].Message.Content.(string); ok && content != "" {
+			title := strings.TrimSpace(content)
+			if len(title) > 50 {
+				title = title[:47] + "..."
+			}
+			return title, nil
+		}
+	}
+
+	return "", fmt.Errorf("no title generated")
+}
+
+func (s *Server) generateThreadTitleFromConversation(question, response string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	messages := []openai.ChatMessage{
+		{Role: "system", Content: "Generate a short, descriptive title (max 50 chars) for this conversation based on the user's question and AI response. Reply with just the title, no quotes or extra text."},
+		{Role: "user", Content: question},
+		{Role: "assistant", Content: response},
+		{Role: "user", Content: "Generate a title for this conversation"},
+	}
+
+	apiResponse, err := s.openAI.CreateChatCompletionWithContext(ctx, miniModel, messages, openai.ChatCompletionOptions{}.SetTemperature(0.3))
+	if err != nil {
+		return "", err
+	}
+
+	if len(apiResponse.Choices) > 0 {
+		if content, ok := apiResponse.Choices[0].Message.Content.(string); ok && content != "" {
 			title := strings.TrimSpace(content)
 			if len(title) > 50 {
 				title = title[:47] + "..."
@@ -1510,7 +1759,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 }
 
 // Handle streaming response with Server-Sent Events
-func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, userMessage *ChatMessage) {
+func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, userMessage *ChatMessage, isNewThread bool) {
 	// Set up Server-Sent Events headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1594,13 +1843,39 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		Log.WithField("error", err).Error("Failed to save final response to database")
 	}
 
+	// Send thread data if this was a new thread
+	if isNewThread {
+		settings := ThreadSettings{
+			ModelName:    chat.ModelName,
+			Temperature:  chat.Temperature,
+			RoleID:       chat.RoleID,
+			Lang:         chat.Lang,
+			MasterPrompt: chat.MasterPrompt,
+			ContextLimit: chat.ContextLimit,
+		}
+
+		threadResponse := ThreadResponse{
+			ID:           *chat.ThreadID,
+			Title:        *chat.ThreadTitle,
+			CreatedAt:    chat.CreatedAt,
+			UpdatedAt:    chat.UpdatedAt,
+			ArchivedAt:   chat.ArchivedAt,
+			Settings:     settings,
+			MessageCount: 1, // Will have one user message + one assistant message
+		}
+
+		threadData, _ := json.Marshal(threadResponse)
+		fmt.Fprintf(w, "data: {\"type\": \"thread\", \"thread\": %s}\n\n", threadData)
+		flusher.Flush()
+	}
+
 	// Send completion signal
 	fmt.Fprintf(w, "data: {\"type\": \"complete\"}\n\n")
 	flusher.Flush()
 }
 
 // Handle synchronous response without streaming
-func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, userMessage *ChatMessage) {
+func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, userMessage *ChatMessage, isNewThread bool) {
 	// Load chat with full relationships
 	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
 
@@ -1646,7 +1921,36 @@ func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, us
 		MessageType: "normal",
 	}
 
-	s.writeJSONSuccess(w, "Response generated successfully", msgResponse)
+	if isNewThread {
+		// Include thread data in response for new threads
+		settings := ThreadSettings{
+			ModelName:    chat.ModelName,
+			Temperature:  chat.Temperature,
+			RoleID:       chat.RoleID,
+			Lang:         chat.Lang,
+			MasterPrompt: chat.MasterPrompt,
+			ContextLimit: chat.ContextLimit,
+		}
+
+		threadResponse := ThreadResponse{
+			ID:           *chat.ThreadID,
+			Title:        *chat.ThreadTitle,
+			CreatedAt:    chat.CreatedAt,
+			UpdatedAt:    chat.UpdatedAt,
+			ArchivedAt:   chat.ArchivedAt,
+			Settings:     settings,
+			MessageCount: 2, // User message + assistant message
+		}
+
+		combinedResponse := ChatWithThreadResponse{
+			Message: &msgResponse,
+			Thread:  &threadResponse,
+		}
+
+		s.writeJSONSuccess(w, "Response generated successfully", combinedResponse)
+	} else {
+		s.writeJSONSuccess(w, "Response generated successfully", msgResponse)
+	}
 }
 
 // Helper methods for AI providers

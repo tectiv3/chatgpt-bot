@@ -10,253 +10,352 @@
     <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.1/dist/markdown-it.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Configure Tailwind to recognize our custom theme classes
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'tg': {
+                            'primary': 'var(--tg-theme-bg-color)',
+                            'secondary': 'var(--tg-theme-secondary-bg-color)',
+                            'text': 'var(--tg-theme-text-color)',
+                            'hint': 'var(--tg-theme-hint-color)',
+                            'link': 'var(--tg-theme-link-color)',
+                            'button': 'var(--tg-theme-button-color)',
+                            'button-text': 'var(--tg-theme-button-text-color)',
+                            'destructive': 'var(--tg-theme-destructive-text-color)'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <link rel="stylesheet" href="/assets/css/app.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
-<body>
-    <div id="app">
-        <div v-if="loading" class="loading-container">
-            <div class="loading-spinner"></div>
-            <div>Loading...</div>
+<body class="bg-tg-primary text-tg-text font-sans">
+    <div id="app" class="h-screen flex flex-col">
+        <!-- Loading Screen -->
+        <div v-if="loading" class="flex-1 flex items-center justify-center bg-tg-primary">
+            <div class="text-center">
+                <div class="w-8 h-8 border-2 border-tg-link border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <div class="text-tg-hint">Loading...</div>
+            </div>
         </div>
 
         <!-- Main App -->
-        <div v-else class="app-container">
-            <div class="sidebar" :class="{ 'sidebar-open': sidebarOpen }">
-                <div class="sidebar-header">
-                    <div class="sidebar-header-top">
-                        <h3>Threads</h3>
-                        <button @click="sidebarOpen = false" class="close-sidebar-btn" title="Close">
-                            <i class="fas fa-times"></i>
+        <div v-else class="flex-1 flex h-full overflow-hidden">
+            <!-- Sidebar -->
+            <div class="fixed lg:relative z-50 lg:z-auto w-80 h-full bg-tg-secondary border-r border-white/10 dark:border-white/10 flex flex-col transform transition-transform duration-300 ease-in-out"
+                 :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'">
+                
+                <!-- Header (Fixed) -->
+                <div class="flex-shrink-0 p-4 border-b border-white/10 dark:border-white/10 bg-tg-secondary">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-lg font-semibold text-tg-text">Threads</h3>
+                        <button @click="sidebarOpen = false" 
+                                class="lg:hidden p-1 rounded-md hover:bg-tg-primary/10 text-tg-hint">
+                            <i class="fas fa-times w-4 h-4"></i>
                         </button>
                     </div>
-                    <button @click="newThread()" class="new-thread-btn">
-                        <i class="fas fa-plus"></i>
-                        New Thread
+                    <button @click="newThread()" 
+                            :disabled="creatingThread"
+                            class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">
+                        <i class="fas" :class="creatingThread ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                        [[ creatingThread ? 'Creating...' : 'New Thread' ]]
                     </button>
                 </div>
                 
-                <div class="threads-list">
-                    <div 
-                        v-for="thread in sortedThreads" 
-                        :key="thread.id"
-                        class="thread-item"
-                        :class="{ active: currentThreadId === thread.id }"
-                    >
-                        <div @click="selectThread(thread.id)" class="thread-content">
-                            <div class="thread-title">[[ thread.title ]]</div>
-                            <div class="thread-meta">
-                                <span class="message-count">[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
-                                <span class="thread-date">[[ formatDate(thread.updated_at) ]]</span>
-                            </div>
-                        </div>
-                        <div class="thread-actions">
-                            <button v-if="!thread.id.toString().startsWith('temp_')" @click.stop="archiveThread(thread.id)" class="action-btn archive-btn" title="Archive thread">
-                                <i class="fas fa-archive"></i>
-                            </button>
-                            <button @click.stop="confirmDeleteThread(thread.id)" class="action-btn delete-btn" title="Delete thread">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Archived Threads Section -->
-                <div v-if="hasArchivedThreads" class="archived-section">
-                    <button @click="toggleArchivedSection" class="archived-header">
-                        <i :class="showArchivedSection ? 'fas fa-chevron-down' : 'fas fa-chevron-right'"></i>
-                        Archived Threads ([[ archivedThreads.length ]])
-                    </button>
-                    
-                    <div v-if="showArchivedSection" class="archived-list">
-                        <div 
-                            v-for="thread in archivedThreads" 
-                            :key="'archived-' + thread.id"
-                            class="thread-item archived"
-                            :class="{ active: currentThreadId === thread.id }"
-                        >
-                            <div @click="selectThread(thread.id)" class="thread-content">
-                                <div class="thread-title">[[ thread.title ]]</div>
-                                <div class="thread-meta">
-                                    <span class="message-count">[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
-                                    <span class="thread-date">Archived [[ formatDate(thread.archived_at) ]]</span>
+                <!-- Scrollable Content -->
+                <div class="flex-1 overflow-y-auto scrollbar-thin">
+                    <div class="p-2">
+                        <!-- Active Threads -->
+                        <div v-for="thread in sortedThreads" 
+                             :key="thread.id"
+                             class="group rounded-lg mb-2 p-3 cursor-pointer transition-all hover:bg-tg-primary/5"
+                             :class="currentThreadId === thread.id ? 'bg-tg-link/10 border border-tg-link/20' : 'hover:bg-tg-primary/5'"
+                             @click="selectThread(thread.id)">
+                            <div class="flex items-start gap-3">
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-medium text-sm text-tg-text truncate mb-1">[[ thread.title ]]</div>
+                                    <div class="flex items-center gap-2 text-xs text-tg-hint">
+                                        <span>[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
+                                        <span>•</span>
+                                        <span>[[ formatDate(thread.updated_at) ]]</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button v-if="thread.id" 
+                                            @click.stop="archiveThread(thread.id)" 
+                                            class="p-1.5 rounded hover:bg-tg-hint/20 text-tg-hint hover:text-tg-text transition-colors"
+                                            title="Archive thread">
+                                        <i class="fas fa-archive text-xs"></i>
+                                    </button>
+                                    <button v-if="thread.id" 
+                                            @click.stop="confirmDeleteThread(thread.id)" 
+                                            class="p-1.5 rounded hover:bg-red-100 text-tg-hint hover:text-tg-destructive transition-colors"
+                                            title="Delete thread">
+                                        <i class="fas fa-trash text-xs"></i>
+                                    </button>
                                 </div>
                             </div>
-                            <div class="thread-actions">
-                                <button @click.stop="archiveThread(thread.id)" class="action-btn unarchive-btn" title="Unarchive thread">
-                                    <i class="fas fa-undo"></i>
-                                </button>
-                                <button @click.stop="confirmDeleteThread(thread.id)" class="action-btn delete-btn" title="Delete thread">
-                                    <i class="fas fa-trash"></i>
-                                </button>
+                        </div>
+                    
+                        <!-- Archived Threads -->
+                        <div v-if="hasArchivedThreads" class="mt-4">
+                            <button @click="toggleArchivedSection" 
+                                    class="w-full flex items-center gap-2 py-2 px-3 text-sm text-tg-hint hover:text-tg-text hover:bg-tg-primary/5 rounded-lg transition-all">
+                                <i :class="showArchivedSection ? 'fas fa-chevron-down' : 'fas fa-chevron-right'" class="text-xs"></i>
+                                Archived Threads ([[ archivedThreads.length ]])
+                            </button>
+                            
+                            <div v-if="showArchivedSection" class="mt-2 space-y-2">
+                                <div v-for="thread in archivedThreads" 
+                                     :key="'archived-' + thread.id"
+                                     class="group rounded-lg p-3 cursor-pointer transition-all hover:bg-tg-primary/5 opacity-75"
+                                     :class="currentThreadId === thread.id ? 'bg-tg-link/10 border border-tg-link/20' : ''"
+                                     @click="selectThread(thread.id)">
+                                    <div class="flex items-start gap-3">
+                                        <div class="flex-1 min-w-0">
+                                            <div class="font-medium text-sm text-tg-text truncate mb-1">[[ thread.title ]]</div>
+                                            <div class="flex items-center gap-2 text-xs text-tg-hint">
+                                                <span>[[ thread.id === currentThreadId ? messageCount : thread.message_count ]] messages</span>
+                                                <span>•</span>
+                                                <span>Archived [[ formatDate(thread.archived_at) ]]</span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button @click.stop="archiveThread(thread.id)" 
+                                                    class="p-1.5 rounded hover:bg-tg-hint/20 text-tg-hint hover:text-tg-text transition-colors"
+                                                    title="Unarchive thread">
+                                                <i class="fas fa-undo text-xs"></i>
+                                            </button>
+                                            <button v-if="thread.id" 
+                                                    @click.stop="confirmDeleteThread(thread.id)" 
+                                                    class="p-1.5 rounded hover:bg-red-100 text-tg-hint hover:text-tg-destructive transition-colors"
+                                                    title="Delete thread">
+                                                <i class="fas fa-trash text-xs"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="sidebar-footer">
-                    <button @click="showRoleManager = true" class="sidebar-btn">
+                <!-- Footer (Fixed at Bottom) -->
+                <div class="flex-shrink-0 p-4 border-t border-white/10 dark:border-white/10 bg-tg-secondary">
+                    <button @click="showRoleManager = true" 
+                            class="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-tg-primary/5 hover:bg-tg-primary/10 text-tg-text transition-colors">
                         <i class="fas fa-user-tag"></i>
-                        Roles
+                        <span class="font-medium">Roles</span>
                     </button>
                 </div>
             </div>
 
             <!-- Mobile Sidebar Backdrop -->
-            <div class="sidebar-backdrop" :class="{ show: sidebarOpen }" @click="sidebarOpen = false"></div>
+            <div v-if="sidebarOpen" 
+                 class="fixed inset-0 bg-black/50 z-40 lg:hidden" 
+                 @click="sidebarOpen = false"></div>
 
             <!-- Main Content -->
-            <div class="main-content">
+            <div class="flex-1 flex flex-col min-w-0">
                 <!-- Header -->
-                <div class="header">
-                    <button @click="sidebarOpen = !sidebarOpen" class="sidebar-toggle">
-                        <i class="fas fa-bars"></i>
-                    </button>
-                    
-                    <div v-if="currentThreadId" class="thread-toolbar">
-                        <!-- Show selectors for new threads with no messages -->
-                        <div v-if="shouldShowRoleSelector" class="thread-selectors">
-                            <div class="selector-group">
-                                <select v-model="threadSettings.model_name" @change="updateThreadSettings" class="setting-select">
-                                    <option v-for="model in models" :key="model.id" :value="model.id">
-                                        [[ model.name ]]
-                                    </option>
-                                </select>
-                            </div>
-                            
-                            <div v-if="roles.length > 0 && shouldShowRoleSelector" class="selector-group">
-                                <select v-model="threadSettings.role_id" @change="updateThreadSettings" class="setting-select">
-                                    <option :value="null">Default Role</option>
-                                    <option v-for="role in roles" :key="role.id" :value="role.id">
-                                        [[ role.name ]]
-                                    </option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <!-- Show current settings badges after first message -->
-                        <div v-else class="current-settings">
-                            <div class="setting-badge model-badge">
-                                <i class="fas fa-brain"></i>
-                                [[ threadSettings.model_name || 'No model' ]]
-                            </div>
-                            
-                            <div v-if="threadSettings.role_id" class="setting-badge role-badge">
-                                <i class="fas fa-user-tag"></i>
-                                [[ currentRoleName ]]
-                            </div>
-                            
-                            <div class="setting-badge temp-badge">
-                                <i class="fas fa-thermometer-half"></i>
-                                [[ threadSettings.temperature || 1.0 ]]
-                            </div>
-                        </div>
-                        
-                        <!-- Thread settings button -->
-                        <button @click="showSettings = true" class="thread-settings-btn" title="Thread Settings">
-                            <i class="fas fa-cog"></i>
+                <div class="flex-shrink-0 bg-tg-primary border-b border-white/10 dark:border-white/10 p-4">
+                    <div class="flex items-center gap-4">
+                        <button @click="sidebarOpen = !sidebarOpen" 
+                                class="lg:hidden p-2 rounded-lg hover:bg-tg-secondary text-tg-text">
+                            <i class="fas fa-bars"></i>
                         </button>
+                        
+                        <div v-if="currentThreadId" class="flex-1 flex items-center justify-between">
+                            <!-- Show selectors for new threads with no messages -->
+                            <div v-if="shouldShowRoleSelector" class="flex items-center gap-3 flex-1">
+                                <div class="flex-1">
+                                    <select v-model="threadSettings.model_name" 
+                                            @change="updateThreadSettings" 
+                                            class="w-full py-2 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
+                                        <option v-for="model in models" :key="model.id" :value="model.id">
+                                            [[ model.name ]]
+                                        </option>
+                                    </select>
+                                </div>
+                                
+                                <div v-if="roles.length > 0" class="flex-1">
+                                    <select v-model="threadSettings.role_id" 
+                                            @change="updateThreadSettings" 
+                                            class="w-full py-2 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
+                                        <option :value="null">Default Role</option>
+                                        <option v-for="role in roles" :key="role.id" :value="role.id">
+                                            [[ role.name ]]
+                                        </option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <!-- Show current settings badges after first message -->
+                            <div v-else class="flex items-center gap-2 flex-1">
+                                <div class="flex items-center gap-1 bg-tg-secondary px-3 py-1.5 rounded-full text-sm">
+                                    <i class="fas fa-brain text-tg-link"></i>
+                                    <span class="text-tg-text font-medium">[[ threadSettings.model_name || 'No model' ]]</span>
+                                </div>
+                                
+                                <div v-if="threadSettings.role_id" 
+                                     class="flex items-center gap-1 bg-tg-secondary px-3 py-1.5 rounded-full text-sm">
+                                    <i class="fas fa-user-tag text-tg-link"></i>
+                                    <span class="text-tg-text font-medium">[[ currentRoleName ]]</span>
+                                </div>
+                                
+                                <div class="flex items-center gap-1 bg-tg-secondary px-3 py-1.5 rounded-full text-sm">
+                                    <i class="fas fa-thermometer-half text-tg-link"></i>
+                                    <span class="text-tg-text font-medium">[[ threadSettings.temperature || 1.0 ]]</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Thread settings button -->
+                            <button @click="showSettings = true" 
+                                    class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors" 
+                                    title="Thread Settings">
+                                <i class="fas fa-cog"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Messages -->
-                <div class="messages-container" ref="messagesContainer">
-                    <div v-if="!currentThreadId" class="welcome-message">
-                        <h2>Welcome to {{.BotName}} Assistant</h2>
-                        <p>Create a new thread to start chatting, or select an existing thread from the sidebar.</p>
+                <div class="flex-1 overflow-y-auto scrollbar-thin" ref="messagesContainer">
+                    <!-- Welcome message -->
+                    <div v-if="!currentThreadId" class="flex-1 flex items-center justify-center p-8">
+                        <div class="text-center max-w-md">
+                            <h2 class="text-2xl font-bold text-tg-text mb-4">Welcome to {{.BotName}} Assistant</h2>
+                            <p class="text-tg-hint leading-relaxed">Create a new thread to start chatting, or select an existing thread from the sidebar.</p>
+                        </div>
                     </div>
                     
-                    <div v-else>
-                        <div 
-                            v-for="message in messages" 
-                            :key="message.id"
-                            class="message"
-                            :class="[message.role, message.message_type]"
-                        >
-                            <div class="message-avatar">
-                                <i v-if="message.role === 'user'" class="fas fa-user"></i>
-                                <i v-else-if="message.role === 'assistant'" class="fas fa-robot"></i>
-                                <i v-else class="fas fa-info-circle"></i>
+                    <!-- Messages list -->
+                    <div v-else class="p-4 space-y-4">
+                        <div v-for="message in messages" 
+                             :key="message.id"
+                             class="flex gap-3"
+                             :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+                            
+                            <!-- Assistant Avatar -->
+                            <div v-if="message.role === 'assistant'" 
+                                 class="flex-shrink-0 w-8 h-8 rounded-full bg-tg-link flex items-center justify-center">
+                                <i class="fas fa-robot text-white text-sm"></i>
                             </div>
-                            <div 
-                                class="message-content" 
-                                :class="{ 'is-complete': message.is_complete, 'is-streaming': message.isStreaming }"
-                                :style="message.isStreaming && message.estimatedHeight ? { minHeight: message.estimatedHeight + 'px' } : {}"
-                            >
-                                <div v-if="message.message_type === 'summary'" class="summary-header">
+                            
+                            <!-- Message Content -->
+                            <div class="max-w-[80%] lg:max-w-[70%]"
+                                 :class="message.role === 'user' ? 'order-first' : ''">
+                                
+                                <!-- Summary Header -->
+                                <div v-if="message.message_type === 'summary'" 
+                                     class="flex items-center gap-2 mb-2 text-sm text-tg-hint">
                                     <i class="fas fa-compress-alt"></i>
-                                    Conversation Summary
+                                    <span>Conversation Summary</span>
                                 </div>
                                 
-                                <div v-if="message.image_data" class="message-image">
-                                    <img :src="message.image_data" :alt="message.image_name" class="message-image-content">
+                                <!-- Message bubble -->
+                                <div class="rounded-2xl px-4 py-3"
+                                     :class="message.role === 'user' 
+                                       ? 'bg-tg-link text-white ml-auto' 
+                                       : 'bg-tg-secondary text-tg-text'"
+                                     :style="message.isStreaming && message.estimatedHeight ? { minHeight: message.estimatedHeight + 'px' } : {}">
+                                    
+                                    <!-- Image attachment -->
+                                    <div v-if="message.image_data" class="mb-3">
+                                        <img :src="message.image_data" 
+                                             :alt="message.image_name" 
+                                             class="max-w-full h-auto rounded-lg">
+                                    </div>
+                                    
+                                    <!-- Message text -->
+                                    <div class="prose prose-sm"
+                                         :class="{ 
+                                           'streaming-text': message.isStreaming,
+                                           'text-white': message.role === 'user'
+                                         }"
+                                         v-html="formatMessage(message.content)"></div>
                                 </div>
                                 
-                                <div 
-                                    class="message-text prose" 
-                                    :class="{ 'streaming-text': message.isStreaming }"
-                                    v-html="formatMessage(message.content)"
-                                ></div>
-                                <div class="message-meta">
-                                    [[ formatTime(message.created_at) ]]
-                                    <span v-if="!message.is_live" class="archived-badge">Archived</span>
+                                <!-- Message metadata -->
+                                <div class="flex items-center gap-2 mt-1 px-1 text-xs text-tg-hint"
+                                     :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+                                    <span>[[ formatTime(message.created_at) ]]</span>
+                                    <span v-if="!message.is_live" 
+                                          class="px-2 py-0.5 bg-tg-hint/20 rounded-full">Archived</span>
                                 </div>
+                            </div>
+                            
+                            <!-- User Avatar -->
+                            <div v-if="message.role === 'user'" 
+                                 class="flex-shrink-0 w-8 h-8 rounded-full bg-white text-gray-700 flex items-center justify-center">
+                                <i class="fas fa-user text-sm"></i>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Input Area -->
-                <div v-if="currentThreadId" class="input-container">
-                    <div v-if="attachedImage" class="image-attachment-preview">
-                        <div class="attached-image">
-                            <img :src="attachedImage.preview" :alt="attachedImage.name" class="attachment-preview-image">
-                            <div class="attachment-info">
-                                <span class="attachment-name">[[ attachedImage.name ]]</span>
-                                <span class="attachment-size">[[ formatFileSize(attachedImage.size) ]]</span>
+                <div v-if="currentThreadId" class="flex-shrink-0 bg-tg-primary border-t border-white/10 dark:border-white/10">
+                    <!-- Image attachment preview -->
+                    <div v-if="attachedImage" class="p-4 pb-0">
+                        <div class="flex items-center gap-3 bg-tg-secondary rounded-lg p-3">
+                            <img :src="attachedImage.preview" 
+                                 :alt="attachedImage.name" 
+                                 class="w-12 h-12 object-cover rounded-lg">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium text-tg-text truncate">[[ attachedImage.name ]]</div>
+                                <div class="text-xs text-tg-hint">[[ formatFileSize(attachedImage.size) ]]</div>
                             </div>
-                            <button @click="clearAttachedImage" class="clear-attachment-btn" title="Remove image">
+                            <button @click="clearAttachedImage" 
+                                    class="p-1.5 rounded-lg hover:bg-tg-primary/10 text-tg-hint hover:text-tg-text transition-colors" 
+                                    title="Remove image">
                                 <i class="fas fa-times"></i>
                             </button>
                         </div>
                     </div>
                     
-                    <div class="input-wrapper">
-                        <button 
-                            @click="selectImage"
-                            class="image-attach-btn"
-                            :class="{ active: !!attachedImage }"
-                            title="Attach image"
-                        >
+                    <!-- Input wrapper -->
+                    <div class="p-4 flex items-center gap-2 max-w-4xl mx-auto w-full">
+                        <button @click="selectImage"
+                                class="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-colors"
+                                :class="attachedImage 
+                                  ? 'bg-tg-link text-white' 
+                                  : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
+                                title="Attach image">
                             <i class="fas fa-image"></i>
                         </button>
                         
-                        <textarea
-                            ref="messageInput"
-                            v-model="messageInput"
-                            @keydown="handleKeyDown"
-                            @focus="onInputFocus"
-                            @blur="onInputBlur"
-                            @touchstart.passive="onInputTouch"
-                            placeholder="Type your message..."
-                            class="message-input"
-                            :disabled="sending"
-                            autocomplete="off"
-                            autocorrect="off"
-                            autocapitalize="sentences"
-                            spellcheck="true"
-                        ></textarea>
-                        <button 
-                            @click="streaming ? stopStreaming() : sendMessage()"
-                            :disabled="!canSendMessage && !canStopStreaming"
-                            class="send-button"
-                            :class="{
-                                'sending': sendButtonState === 'sending',
-                                'streaming': sendButtonState === 'streaming',
-                                'stop-button': streaming
-                            }"
-                            :title="streaming ? 'Stop generation' : 'Send message (Enter)'"
-                        >
+                        <div class="flex-1">
+                            <textarea ref="messageInput"
+                                      v-model="messageInput"
+                                      @keydown="handleKeyDown"
+                                      @touchstart.passive="onInputTouch"
+                                      placeholder="Type your message..."
+                                      class="w-full py-3 px-4 rounded-2xl bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20 resize-none min-h-[48px]"
+                                      :disabled="sending"
+                                      autocomplete="off"
+                                      autocorrect="off"
+                                      autocapitalize="sentences"
+                                      spellcheck="true"
+                                      rows="1"
+                                      style="field-sizing: content; max-height: 120px;"></textarea>
+                        </div>
+                        
+                        <button @click="streaming ? stopStreaming() : sendMessage()"
+                                :disabled="!canSendMessage && !canStopStreaming"
+                                class="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-all"
+                                :class="streaming 
+                                  ? 'bg-tg-destructive text-white hover:bg-red-600' 
+                                  : (canSendMessage 
+                                    ? 'bg-tg-button text-tg-button-text hover:opacity-90' 
+                                    : 'bg-tg-hint/20 text-tg-hint cursor-not-allowed')"
+                                :title="streaming ? 'Stop generation' : 'Send message (Enter)'">
                             <i :class="sendButtonIcon"></i>
                         </button>
                     </div>
@@ -265,98 +364,111 @@
         </div>
 
         <!-- Settings Modal -->
-        <div v-if="showSettings" class="modal-overlay" @click="showSettings = false">
-            <div class="modal" @click.stop>
-                <div class="modal-header">
-                    <h3>Thread Settings</h3>
-                    <button @click="showSettings = false" class="close-btn">
+        <div v-if="showSettings" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click="showSettings = false">
+            <div class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col" @click.stop>
+                <div class="flex-shrink-0 flex items-center justify-between p-6 border-b border-white/10 dark:border-white/10">
+                    <h3 class="text-xl font-semibold text-tg-text">Thread Settings</h3>
+                    <button @click="showSettings = false" 
+                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="modal-body">
-                    <div class="setting-group">
-                        <label>Model</label>
-                        <select v-model="threadSettings.model_name">
-                            <option v-for="model in models" :key="model.id" :value="model.id">
-                                [[ model.name ]] ([[ model.provider ]])
-                            </option>
-                        </select>
+                
+                <div class="p-6 overflow-y-auto">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">Model</label>
+                            <select v-model="threadSettings.model_name" 
+                                    class="w-full py-2.5 px-3 rounded-lg bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
+                                <option v-for="model in models" :key="model.id" :value="model.id">
+                                    [[ model.name ]] ([[ model.provider ]])
+                                </option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">
+                                Temperature: [[ threadSettings.temperature ]]
+                            </label>
+                            <input type="range" 
+                                   v-model.number="threadSettings.temperature"
+                                   min="0" 
+                                   max="1" 
+                                   step="0.1"
+                                   class="slider-tg w-full">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">
+                                Role ([[ roles.length ]] available)
+                            </label>
+                            <select v-model="threadSettings.role_id" 
+                                    class="w-full py-2.5 px-3 rounded-lg bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
+                                <option :value="null">No role</option>
+                                <option v-if="roles.length === 0" disabled>Loading roles...</option>
+                                <option v-for="role in roles" :key="role.id" :value="role.id">
+                                    [[ role.name ]]
+                                </option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">Context Limit</label>
+                            <input type="number" 
+                                   v-model.number="threadSettings.context_limit"
+                                   min="1000" 
+                                   max="8000"
+                                   step="500"
+                                   class="w-full py-2.5 px-3 rounded-lg bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20 resize-none">
+                        </div>
                     </div>
-                    
-                    <div class="setting-group">
-                        <label>Temperature: [[ threadSettings.temperature ]]</label>
-                        <input 
-                            type="range" 
-                            v-model.number="threadSettings.temperature"
-                            min="0" 
-                            max="1" 
-                            step="0.1"
-                            class="slider"
-                        >
-                    </div>
-                    
-                    <div class="setting-group" v-if="shouldShowRoleSelector">
-                        <label>Role ([[ roles.length ]] available)</label>
-                        <select v-model="threadSettings.role_id">
-                            <option :value="null">No role</option>
-                            <option v-if="roles.length === 0" disabled>Loading roles...</option>
-                            <option v-for="role in roles" :key="role.id" :value="role.id">
-                                [[ role.name ]]
-                            </option>
-                        </select>
-                    </div>
-                    
-                    <div class="setting-group">
-                        <label>Context Limit</label>
-                        <input 
-                            type="number" 
-                            v-model.number="threadSettings.context_limit"
-                            min="1000" 
-                            max="8000"
-                            step="500"
-                        >
-                    </div>
-                    
                 </div>
-                <div class="modal-footer">
-                    <button @click="saveSettings" class="save-btn">Save Settings</button>
+                
+                <div class="flex-shrink-0 p-6 border-t border-white/10 dark:border-white/10">
+                    <button @click="saveSettings" 
+                            class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">
+                        Save Settings
+                    </button>
                 </div>
             </div>
         </div>
 
         <!-- Role Manager Modal -->
-        <div v-if="showRoleManager" class="modal-overlay" @click="showRoleManager = false">
-            <div class="modal" @click.stop>
-                <div class="modal-header">
-                    <h3>Role Manager</h3>
-                    <button @click="showRoleManager = false" class="close-btn">
+        <div v-if="showRoleManager" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click="showRoleManager = false">
+            <div class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" @click.stop>
+                <div class="flex-shrink-0 flex items-center justify-between p-6 border-b border-white/10 dark:border-white/10">
+                    <h3 class="text-xl font-semibold text-tg-text">Role Manager</h3>
+                    <button @click="showRoleManager = false" 
+                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="modal-body">
-                    <button @click="newRole" class="new-role-btn">
+                
+                <div class="p-6 overflow-y-auto">
+                    <button @click="newRole" 
+                            class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">
                         <i class="fas fa-plus"></i>
                         New Role
                     </button>
                     
-                    <div class="roles-list">
-                        <div 
-                            v-for="role in roles" 
-                            :key="role.id"
-                            class="role-item"
-                        >
-                            <div class="role-header">
-                                <span class="role-name">[[ role.name ]]</span>
-                                <div class="role-actions">
-                                    <button @click="editRole(role)" class="edit-btn">
-                                        <i class="fas fa-edit"></i>
+                    <div class="space-y-4">
+                        <div v-for="role in roles" 
+                             :key="role.id"
+                             class="bg-tg-secondary rounded-lg p-4">
+                            <div class="flex items-start justify-between mb-3">
+                                <span class="font-semibold text-tg-text">[[ role.name ]]</span>
+                                <div class="flex items-center gap-2">
+                                    <button @click="editRole(role)" 
+                                            class="p-1.5 rounded hover:bg-tg-primary/10 text-tg-link hover:text-tg-text transition-colors">
+                                        <i class="fas fa-edit text-sm"></i>
                                     </button>
-                                    <button @click="deleteRole(role.id)" class="delete-btn">
-                                        <i class="fas fa-trash"></i>
+                                    <button @click="deleteRole(role.id)" 
+                                            class="p-1.5 rounded hover:bg-red-100 text-tg-hint hover:text-tg-destructive transition-colors">
+                                        <i class="fas fa-trash text-sm"></i>
                                     </button>
                                 </div>
                             </div>
-                            <div class="role-prompt">[[ role.prompt ]]</div>
+                            <div class="text-sm text-tg-hint leading-relaxed">[[ role.prompt ]]</div>
                         </div>
                     </div>
                 </div>
@@ -364,35 +476,39 @@
         </div>
 
         <!-- Role Editor Modal -->
-        <div v-if="showRoleEditor" class="modal-overlay" @click="showRoleEditor = false">
-            <div class="modal" @click.stop>
-                <div class="modal-header">
-                    <h3>[[ editingRole?.id ? 'Edit Role' : 'New Role' ]]</h3>
-                    <button @click="showRoleEditor = false" class="close-btn">
+        <div v-if="showRoleEditor" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click="showRoleEditor = false">
+            <div class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" @click.stop>
+                <div class="flex-shrink-0 flex items-center justify-between p-6 border-b border-white/10 dark:border-white/10">
+                    <h3 class="text-xl font-semibold text-tg-text">[[ editingRole?.id ? 'Edit Role' : 'New Role' ]]</h3>
+                    <button @click="showRoleEditor = false" 
+                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="modal-body">
-                    <div class="setting-group">
-                        <label>Role Name</label>
-                        <input 
-                            type="text" 
-                            v-model="editingRole.name"
-                            placeholder="Enter role name"
-                        >
-                    </div>
-                    
-                    <div class="setting-group">
-                        <label>System Prompt</label>
-                        <textarea 
-                            v-model="editingRole.prompt"
-                            placeholder="Enter system prompt..."
-                            rows="6"
-                        ></textarea>
+                
+                <div class="p-6 overflow-y-auto">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">Role Name</label>
+                            <input type="text" 
+                                   v-model="editingRole.name"
+                                   placeholder="Enter role name"
+                                   class="w-full py-2.5 px-3 rounded-lg bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20 resize-none">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-tg-text mb-2">System Prompt</label>
+                            <textarea v-model="editingRole.prompt"
+                                      placeholder="Enter system prompt..."
+                                      rows="6"
+                                      class="w-full py-2.5 px-3 rounded-lg bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20 resize-none"></textarea>
+                        </div>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button @click="saveRole" class="save-btn">
+                
+                <div class="flex-shrink-0 p-6 border-t border-white/10 dark:border-white/10">
+                    <button @click="saveRole" 
+                            class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">
                         [[ editingRole?.id ? 'Update Role' : 'Create Role' ]]
                     </button>
                 </div>
@@ -400,29 +516,37 @@
         </div>
 
         <!-- Delete Confirmation Dialog -->
-        <div v-if="showDeleteConfirm" class="modal-overlay" @click="cancelDelete">
-            <div class="modal confirm-modal" @click.stop>
-                <div class="modal-header">
-                    <h3>Delete Thread</h3>
-                    <button @click="cancelDelete" class="close-btn">
+        <div v-if="showDeleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click="cancelDelete">
+            <div class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col" @click.stop>
+                <div class="flex-shrink-0 flex items-center justify-between p-6 border-b border-white/10 dark:border-white/10">
+                    <h3 class="text-xl font-semibold text-tg-text">Delete Thread</h3>
+                    <button @click="cancelDelete" 
+                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="modal-body">
-                    <div class="warning-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
+                
+                <div class="flex-1 overflow-y-auto p-6 text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+                        <i class="fas fa-exclamation-triangle text-2xl text-tg-destructive"></i>
                     </div>
-                    <p>Are you sure you want to delete this thread? This cannot be undone.</p>
+                    <p class="text-tg-text">Are you sure you want to delete this thread? This cannot be undone.</p>
                 </div>
-                <div class="modal-footer">
-                    <button @click="cancelDelete" class="cancel-btn">Cancel</button>
-                    <button @click="deleteThread" class="delete-btn">Delete Thread</button>
+                
+                <div class="flex-shrink-0 p-6 flex gap-3 border-t border-white/10 dark:border-white/10">
+                    <button @click="cancelDelete" 
+                            class="flex-1 py-2.5 px-4 rounded-lg bg-tg-secondary text-tg-text hover:bg-tg-hint/20 transition-colors font-medium">
+                        Cancel
+                    </button>
+                    <button @click="deleteThread" 
+                            class="flex-1 py-2.5 px-4 rounded-lg bg-tg-destructive text-white hover:bg-red-600 transition-colors font-medium">
+                        Delete Thread
+                    </button>
                 </div>
             </div>
         </div>
-
     </div>
 
-    <script src="/assets/js/app.js"></script>
+    <script src="/assets/js/app.js?333"></script>
 </body>
 </html>
