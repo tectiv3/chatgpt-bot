@@ -1410,6 +1410,16 @@ createApp({
             }
         },
 
+        dismissKeyboard() {
+            // Only dismiss keyboard on mobile when clicking outside textarea
+            if (this.mobileKeyboard.isMobile.value) {
+                const input = this.$refs.messageInput
+                if (input && document.activeElement === input) {
+                    input.blur()
+                }
+            }
+        },
+
         onInputTouch(event) {
             event.target.focus()
         },

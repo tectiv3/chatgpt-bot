@@ -147,7 +147,7 @@
                 </div>
 
                 <!-- Footer (Fixed at Bottom) -->
-                <div class="flex-shrink-0 p-4 border-t border-white/10 dark:border-white/10 bg-tg-secondary">
+                <div class="flex-shrink-0 h-[89px] px-4 flex items-center border-t border-white/10 dark:border-white/10 bg-tg-secondary">
                     <button @click="showRoleManager = true" 
                             class="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-tg-primary/5 hover:bg-tg-primary/10 text-tg-text transition-colors">
                         <i class="fas fa-user-tag"></i>
@@ -173,11 +173,11 @@
                         
                         <div v-if="currentThreadId" class="flex-1 flex items-center justify-between">
                             <!-- Show selectors for new threads with no messages -->
-                            <div v-if="shouldShowRoleSelector" class="flex items-center gap-3 flex-1">
+                            <div v-if="shouldShowRoleSelector" class="flex items-center gap-2 flex-1 mr-2">
                                 <div class="flex-1">
                                     <select v-model="threadSettings.model_name" 
                                             @change="updateThreadSettings" 
-                                            class="w-full py-2 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
+                                            class="w-full h-10 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
                                         <option v-for="model in models" :key="model.id" :value="model.id">
                                             [[ model.name ]]
                                         </option>
@@ -187,7 +187,7 @@
                                 <div v-if="roles.length > 0" class="flex-1">
                                     <select v-model="threadSettings.role_id" 
                                             @change="updateThreadSettings" 
-                                            class="w-full py-2 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
+                                            class="w-full h-10 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20">
                                         <option :value="null">Default Role</option>
                                         <option v-for="role in roles" :key="role.id" :value="role.id">
                                             [[ role.name ]]
@@ -226,7 +226,7 @@
                 </div>
 
                 <!-- Messages -->
-                <div class="flex-1 overflow-y-auto scrollbar-thin" ref="messagesContainer">
+                <div class="flex-1 overflow-y-auto scrollbar-thin pb-24" ref="messagesContainer" @click="dismissKeyboard">
                     <!-- Welcome message -->
                     <div v-if="!currentThreadId" class="flex-1 flex items-center justify-center p-8">
                         <div class="text-center max-w-md">
@@ -301,7 +301,7 @@
                 </div>
 
                 <!-- Input Area -->
-                <div v-if="currentThreadId" class="flex-shrink-0 bg-tg-primary border-t border-white/10 dark:border-white/10">
+                <div v-if="currentThreadId" class="fixed bottom-0 left-0 lg:left-80 right-0 bg-tg-primary border-t border-white/10 dark:border-white/10 z-20">
                     <!-- Image attachment preview -->
                     <div v-if="attachedImage" class="p-4 pb-0">
                         <div class="flex items-center gap-3 bg-tg-secondary rounded-lg p-3">
