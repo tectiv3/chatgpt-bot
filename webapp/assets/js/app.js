@@ -186,6 +186,7 @@ createApp({
                 selectedRole: null,
                 defaultTemperature: 1.0,
                 enableStreaming: true,
+                selectedThreadId: null, // Last selected thread ID
             },
 
             // Role editing
@@ -506,11 +507,33 @@ createApp({
                 this.roles = rolesResponse.roles || []
                 this.archivedThreads = archivedResponse.threads || []
 
-                if (this.threads.length > 0) {
-                    await this.selectThread(this.threads[0].id)
-                }
+                // Try to restore the last selected thread from storage
+                await this.restoreSelectedThread()
             } catch (error) {
                 this.showError('Failed to load data.')
+            }
+        },
+
+        async restoreSelectedThread() {
+            // Get the last selected thread ID from storage
+            const savedThreadId = this.userPreferences.selectedThreadId
+
+            if (savedThreadId) {
+                // Check if the saved thread still exists in active or archived threads
+                const threadExists = 
+                    this.threads.find(t => t.id === savedThreadId) ||
+                    this.archivedThreads.find(t => t.id === savedThreadId)
+
+                if (threadExists) {
+                    // Restore the saved thread selection
+                    await this.selectThread(savedThreadId)
+                    return
+                }
+            }
+
+            // Fallback: select the first available thread if no saved thread or it doesn't exist
+            if (this.threads.length > 0) {
+                await this.selectThread(this.threads[0].id)
             }
         },
 
@@ -606,6 +629,9 @@ createApp({
             this.currentThread =
                 this.threads.find(t => t.id === threadId) ||
                 this.archivedThreads.find(t => t.id === threadId)
+
+            // Save selected thread to storage
+            await this.saveUserPreference('selectedThreadId', threadId)
 
             this.sidebarOpen = false // Close sidebar on mobile
 
@@ -1204,6 +1230,9 @@ createApp({
                     this.currentThread = null
                     this.messages = []
 
+                    // Clear from storage
+                    await this.saveUserPreference('selectedThreadId', null)
+
                     // Auto-select next available thread or clear if none
                     if (this.threads.length > 0) {
                         await this.selectThread(this.threads[0].id)
@@ -1252,6 +1281,9 @@ createApp({
                             this.currentThreadId = null
                             this.currentThread = null
                             this.messages = []
+
+                            // Clear from storage since thread is being archived
+                            await this.saveUserPreference('selectedThreadId', null)
 
                             if (this.threads.length > 0) {
                                 await this.selectThread(this.threads[0].id)
@@ -1369,12 +1401,13 @@ createApp({
 
         // DeviceStorage integration methods
         async loadUserPreferences() {
-            const [selectedModel, selectedRole, defaultTemperature, enableStreaming] =
+            const [selectedModel, selectedRole, defaultTemperature, enableStreaming, selectedThreadId] =
                 await Promise.all([
                     this.deviceStorage.getItem('selectedModel', 'gpt-4o'),
                     this.deviceStorage.getItem('selectedRole', null),
                     this.deviceStorage.getItem('defaultTemperature', 1.0),
                     this.deviceStorage.getItem('enableStreaming', true),
+                    this.deviceStorage.getItem('selectedThreadId', null),
                 ])
 
             this.userPreferences = {
@@ -1382,6 +1415,7 @@ createApp({
                 selectedRole,
                 defaultTemperature,
                 enableStreaming,
+                selectedThreadId,
             }
         },
 
@@ -1393,6 +1427,7 @@ createApp({
                     selectedRole: this.threadSettings.role_id,
                     defaultTemperature: this.threadSettings.temperature,
                     enableStreaming: this.threadSettings.stream,
+                    selectedThreadId: this.currentThreadId, // Save current thread selection
                 }
 
                 await Promise.all([
@@ -1411,6 +1446,10 @@ createApp({
                     this.deviceStorage.setItem(
                         'enableStreaming',
                         this.userPreferences.enableStreaming
+                    ),
+                    this.deviceStorage.setItem(
+                        'selectedThreadId',
+                        this.userPreferences.selectedThreadId
                     ),
                 ])
             } catch (error) {

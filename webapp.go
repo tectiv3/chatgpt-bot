@@ -511,7 +511,7 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		Temperature:  1.0, // Default values
 		ModelName:    "gpt-4o",
 		Stream:       true,
-		ContextLimit: 4000,
+		ContextLimit: 40000,
 	}
 
 	// Apply custom settings if provided
@@ -1123,16 +1123,19 @@ func (s *Server) updateThreadTitle(w http.ResponseWriter, r *http.Request, threa
 }
 
 func (s *Server) getAvailableModels(w http.ResponseWriter, r *http.Request) {
-	models := make([]ModelResponse, len(s.conf.Models))
-	for i, model := range s.conf.Models {
-		models[i] = ModelResponse{
-			ID:       model.ModelID,
-			Name:     model.Name,
-			Provider: model.Provider,
+	// Filter to only return OpenAI models
+	var openaiModels []ModelResponse
+	for _, model := range s.conf.Models {
+		if model.Provider == "openai" {
+			openaiModels = append(openaiModels, ModelResponse{
+				ID:       model.ModelID,
+				Name:     model.Name,
+				Provider: model.Provider,
+			})
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string][]ModelResponse{"models": models})
+	s.writeJSON(w, http.StatusOK, map[string][]ModelResponse{"models": openaiModels})
 }
 
 // Handle /api/roles (GET and POST)
@@ -2100,20 +2103,20 @@ func validateThreadSettings(settings *ThreadSettings) error {
 	}
 
 	// Validate temperature
-	if settings.Temperature < 0 || settings.Temperature > 2 {
-		return fmt.Errorf("temperature must be between 0 and 2")
+	if settings.Temperature < 0 || settings.Temperature > 1 {
+		return fmt.Errorf("temperature must be between 0 and 1")
 	}
 
 	// Validate master prompt
 	if settings.MasterPrompt != "" {
-		if err := validateString(settings.MasterPrompt, 0, 2000); err != nil {
+		if err := validateString(settings.MasterPrompt, 0, 4000); err != nil {
 			return fmt.Errorf("invalid master prompt: %v", err)
 		}
 	}
 
 	// Validate context limit
-	if settings.ContextLimit < 100 || settings.ContextLimit > 10000 {
-		return fmt.Errorf("context limit must be between 100 and 10000")
+	if settings.ContextLimit < 100 || settings.ContextLimit > 100000 {
+		return fmt.Errorf("context limit must be between 100 and 100000")
 	}
 
 	return nil
