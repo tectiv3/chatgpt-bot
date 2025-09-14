@@ -38,6 +38,8 @@ const (
 	cmdUsers      = "/users"
 	cmdAddUser    = "/add"
 	cmdDelUser    = "/del"
+	cmdHelp       = "/help"
+	cmdMiniApp    = "/webapp"
 	msgStart      = "This bot will answer your messages with ChatGPT API"
 	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 	pOllama       = "ollama"
@@ -113,11 +115,84 @@ func (s *Server) run() {
 	s.Unlock()
 
 	b.Handle(cmdStart, func(c tele.Context) error {
-		return c.Send(
-			l.GetWithLocale(c.Sender().LanguageCode, msgStart),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
-		)
+		return c.Reply(c.Message(), l.GetWithLocale(c.Sender().LanguageCode, msgStart))
+	})
+
+	b.Handle(cmdHelp, func(c tele.Context) error {
+		chat := s.getChat(c.Chat(), c.Sender())
+
+		helpText := fmt.Sprintf(`%s
+
+**General:**
+/help - %s
+/info - %s
+/reset - %s
+
+**Model Settings:**
+/model - %s
+/temperature - %s
+/stream - %s
+/age <days> - %s
+
+**Prompts & Roles:**
+/prompt <text> - %s
+/defaultprompt - %s
+/roles - %s
+/role <name> - %s
+
+**Translation:**
+/en - %s
+/ja - %s
+/ru - %s
+/it - %s
+/es - %s
+/cn - %s
+
+**Other Features:**
+/image <prompt> - %s
+/voice <url> - %s
+/lang <code> - %s`,
+			chat.t("Available commands:"),
+			chat.t("Show this help message"),
+			chat.t("Show current settings"),
+			chat.t("Reset conversation history"),
+			chat.t("Select AI model"),
+			chat.t("Set creativity level"),
+			chat.t("Toggle streaming responses"),
+			chat.t("Set conversation history age limit"),
+			chat.t("Set custom system prompt"),
+			chat.t("Reset to default prompt"),
+			chat.t("Manage saved roles"),
+			chat.t("Switch to a specific role"),
+			chat.t("Translate to Japanese"),
+			chat.t("Translate to English"),
+			chat.t("Translate to Russian"),
+			chat.t("Translate to Italian"),
+			chat.t("Translate to Spanish"),
+			chat.t("Translate to Chinese"),
+			chat.t("Generate an image"),
+			chat.t("Convert webpage to speech"),
+			chat.t("Set bot language"))
+
+		return c.Send(ConvertMarkdownToTelegramMarkdownV2(helpText), "text", &tele.SendOptions{
+			ReplyTo:   c.Message(),
+			ParseMode: tele.ModeMarkdownV2,
+		})
+	})
+
+	b.Handle(cmdMiniApp, func(c tele.Context) error {
+		if !s.conf.MiniAppEnabled {
+			return c.Reply("Mini app is not enabled")
+		}
+
+		// Create inline keyboard with mini app button
+		markup := &tele.ReplyMarkup{}
+		btnWebApp := markup.WebApp("🚀 Open Assistant", &tele.WebApp{
+			URL: s.conf.MiniAppURL,
+		})
+		markup.Inline(markup.Row(btnWebApp))
+
+		return c.Send("Open the mini app to chat with enhanced features like threading, visual settings, and role management:", markup)
 	})
 
 	b.Handle(cmdModel, func(c tele.Context) error {
@@ -172,10 +247,8 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		name := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateRoleName(name); err != nil {
-			return c.Send(
+			return c.Reply(c.Message(),
 				chat.t("Invalid role name: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		role := s.findRole(chat.UserID, name)
@@ -190,6 +263,7 @@ func (s *Server) run() {
 	b.Handle(cmdRoles, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		roles := chat.User.Roles
+
 		rows := []tele.Row{}
 		// iterate over roles, add menu button with role name 3 buttons in a row
 		row := []tele.Btn{
@@ -375,19 +449,17 @@ func (s *Server) run() {
 		ageStr := strings.TrimSpace(c.Message().Payload)
 		age, err := ValidateAge(ageStr)
 		if err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				chat.t("Invalid age: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		chat.ConversationAge = int64(age)
 		s.db.Save(&chat)
 
-		return c.Send(
+		return c.Reply(
+			c.Message(),
 			fmt.Sprintf(chat.t("Conversation age set to %d days"), age),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 	})
 
@@ -395,17 +467,16 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		query := strings.TrimSpace(c.Message().Payload)
 		if err := ValidatePrompt(query); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				chat.t("Invalid prompt: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 
 		chat.MasterPrompt = query
 		s.db.Save(&chat)
 
-		return c.Send(chat.t("Prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), chat.t("Prompt set"))
 	})
 
 	b.Handle(cmdPromptCL, func(c tele.Context) error {
@@ -414,7 +485,7 @@ func (s *Server) run() {
 		chat.RoleID = nil
 		s.db.Save(&chat)
 
-		return c.Send(chat.t("Default prompt set"), "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), chat.t("Default prompt set"))
 	})
 
 	b.Handle(cmdStream, func(c tele.Context) error {
@@ -427,7 +498,7 @@ func (s *Server) run() {
 		}
 		text := chat.t("Stream is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
 
-		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), text)
 	})
 
 	b.Handle(cmdQA, func(c tele.Context) error {
@@ -440,13 +511,13 @@ func (s *Server) run() {
 		}
 		text := chat.t("Questions List is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
 
-		return c.Send(text, "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), text)
 	})
 
 	b.Handle(cmdVoice, func(c tele.Context) error {
 		go s.pageToSpeech(c, c.Message().Payload)
 
-		return c.Send("Downloading page", "text", &tele.SendOptions{ReplyTo: c.Message()})
+		return c.Reply(c.Message(), "Downloading page")
 	})
 
 	b.Handle(cmdStop, func(c tele.Context) error {
@@ -469,7 +540,8 @@ func (s *Server) run() {
 		}
 
 		model := s.getModel(chat.ModelName)
-		return c.Send(
+		return c.Reply(
+			c.Message(),
 			fmt.Sprintf(
 				"Version: %s\nModel: %s (%s)\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConversation Age (days): %d\nRole: %s",
 				Version,
@@ -481,8 +553,6 @@ func (s *Server) run() {
 				chat.ConversationAge,
 				role,
 			),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 	})
 
@@ -538,18 +608,16 @@ func (s *Server) run() {
 		chat := s.getChat(c.Chat(), c.Sender())
 		langCode := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateLanguageCode(langCode); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				chat.t("Invalid language code: {{.error}}", &i18n.Replacements{"error": err.Error()}),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		chat.Lang = langCode
 		s.db.Save(&chat)
-		return c.Send(
+		return c.Reply(
+			c.Message(),
 			fmt.Sprintf("Language set to %s", chat.Lang),
-			"text",
-			&tele.SendOptions{ReplyTo: c.Message()},
 		)
 	})
 
@@ -685,10 +753,9 @@ func (s *Server) run() {
 		}
 		name := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateUsername(name); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				fmt.Sprintf("Invalid username: %s", err.Error()),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		s.addUser(name)
@@ -705,10 +772,9 @@ func (s *Server) run() {
 		}
 		name := strings.TrimSpace(c.Message().Payload)
 		if err := ValidateUsername(name); err != nil {
-			return c.Send(
+			return c.Reply(
+				c.Message(),
 				fmt.Sprintf("Invalid username: %s", err.Error()),
-				"text",
-				&tele.SendOptions{ReplyTo: c.Message()},
 			)
 		}
 		s.delUser(name)
@@ -753,10 +819,9 @@ func (s *Server) whitelist() tele.MiddlewareFunc {
 			Usernames: s.users,
 			In:        next,
 			Out: func(c tele.Context) error {
-				return c.Send(
+				return c.Reply(
+					c.Message(),
 					fmt.Sprintf("not allowed: %s", c.Sender().Username),
-					"text",
-					&tele.SendOptions{ReplyTo: c.Message()},
 				)
 			},
 		})(next)

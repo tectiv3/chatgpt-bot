@@ -587,12 +587,12 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 		if model.Provider == pOpenAI {
 			if err := s.getResponseStream(chat, c, msgPtr); err != nil {
 				Log.WithField("user", c.Sender().Username).Error(err)
-				_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+				_ = c.Reply(c.Message(), err.Error())
 			}
 		} else {
 			if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
 				Log.WithField("user", c.Sender().Username).Error(err)
-				_ = c.Send(err.Error(), "text", &tele.SendOptions{ReplyTo: c.Message()})
+				_ = c.Reply(c.Message(), err.Error())
 			}
 		}
 		return

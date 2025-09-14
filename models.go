@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
 	"github.com/meinside/openai-go"
 	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
@@ -51,6 +52,11 @@ type config struct {
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
 	PiperDir             string   `json:"piper_dir"`
+
+	// Mini app configuration
+	MiniAppEnabled bool   `json:"mini_app_enabled"`
+	WebServerPort  string `json:"web_server_port"`
+	MiniAppURL     string `json:"mini_app_url"`
 }
 
 type AiModel struct {
@@ -71,6 +77,101 @@ type Server struct {
 	nova      *awsnova.Client
 	bot       *tele.Bot
 	db        *gorm.DB
+	webServer *http.Server
+	
+	// Rate limiting and connection management for webapp
+	rateLimiter       *RateLimiter
+	connectionManager *ConnectionManager
+}
+
+// Rate limiting and connection management
+type RateLimiter struct {
+	mu       sync.RWMutex
+	requests map[uint][]time.Time // userID -> request timestamps
+	maxRequests int
+	window   time.Duration
+}
+
+func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
+	return &RateLimiter{
+		requests:    make(map[uint][]time.Time),
+		maxRequests: maxRequests,
+		window:      window,
+	}
+}
+
+func (rl *RateLimiter) Allow(userID uint) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	
+	now := time.Now()
+	windowStart := now.Add(-rl.window)
+	
+	// Get user's request history
+	requests := rl.requests[userID]
+	
+	// Filter out old requests outside the window
+	var validRequests []time.Time
+	for _, req := range requests {
+		if req.After(windowStart) {
+			validRequests = append(validRequests, req)
+		}
+	}
+	
+	// Check if under limit
+	if len(validRequests) >= rl.maxRequests {
+		rl.requests[userID] = validRequests
+		return false
+	}
+	
+	// Add current request
+	validRequests = append(validRequests, now)
+	rl.requests[userID] = validRequests
+	return true
+}
+
+// Connection manager for polling
+type ConnectionManager struct {
+	mu          sync.RWMutex
+	connections map[uint]int // userID -> active connection count
+	maxConnections int
+}
+
+func NewConnectionManager(maxConnections int) *ConnectionManager {
+	return &ConnectionManager{
+		connections:    make(map[uint]int),
+		maxConnections: maxConnections,
+	}
+}
+
+func (cm *ConnectionManager) CanConnect(userID uint) bool {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.connections[userID] < cm.maxConnections
+}
+
+func (cm *ConnectionManager) AddConnection(userID uint) bool {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	
+	if cm.connections[userID] >= cm.maxConnections {
+		return false
+	}
+	
+	cm.connections[userID]++
+	return true
+}
+
+func (cm *ConnectionManager) RemoveConnection(userID uint) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	
+	if cm.connections[userID] > 0 {
+		cm.connections[userID]--
+	}
+	if cm.connections[userID] == 0 {
+		delete(cm.connections, userID)
+	}
 }
 
 type User struct {
@@ -96,8 +197,11 @@ type Chat struct {
 	mutex           sync.Mutex `gorm:"-"`
 	ChatID          int64      `sql:"chat_id" json:"chat_id"`
 	UserID          uint       `json:"user_id" gorm:"nullable:false"`
+	ThreadID        *string    `json:"thread_id" gorm:"index;nullable:true"` // NULL for default chat, UUID for threads
+	ThreadTitle     *string    `json:"thread_title" gorm:"nullable:true"`    // Generated topic for thread
 	RoleID          *uint      `json:"role_id" gorm:"nullable:true"`
 	MessageID       *string    `json:"last_message_id" gorm:"nullable:true"`
+	ArchivedAt      *time.Time `json:"archived_at" gorm:"nullable:true"`     // NULL for active threads, timestamp when archived
 	Lang            string
 	History         []ChatMessage
 	User            User `gorm:"foreignKey:UserID;references:ID;fetch:join"`
@@ -110,19 +214,24 @@ type Chat struct {
 	Voice           bool
 	ConversationAge int64
 	TotalTokens     int `json:"total_tokens"`
+	ContextLimit    int `json:"context_limit" gorm:"default:4000"` // Context limit for this thread
 }
 
 type ChatMessage struct {
 	ID        uint `gorm:"primarykey"`
-	CreatedAt time.Time
+	CreatedAt time.Time `gorm:"index"`
 	UpdatedAt time.Time
-	ChatID    int64 `sql:"chat_id" json:"chat_id"`
+	ChatID    int64 `sql:"chat_id" json:"chat_id" gorm:"index"`
 
 	Role       openai.ChatMessageRole `json:"role"`
 	ToolCallID *string                `json:"tool_call_id,omitempty"`
 	Content    *string                `json:"content,omitempty"`
 	ImagePath  *string                `json:"image_path,omitempty"`
 	Filename   *string                `json:"filename,omitempty"`
+
+	// Context management
+	IsLive      bool   `json:"is_live" gorm:"default:true;index"`   // If false, not sent to model
+	MessageType string `json:"message_type" gorm:"default:normal"` // normal, summary, system
 
 	// for function call
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'

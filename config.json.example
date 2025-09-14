@@ -1,0 +1,57 @@
+{
+  "telegram_bot_token": "YOUR_BOT_TOKEN_HERE",
+  "telegram_server_url": "",
+  
+  "models": [
+    {
+      "model_id": "gpt-4o",
+      "name": "GPT-4o",
+      "provider": "openai"
+    },
+    {
+      "model_id": "gpt-4o-mini", 
+      "name": "GPT-4o Mini",
+      "provider": "openai"
+    },
+    {
+      "model_id": "claude-3-5-sonnet-20241022",
+      "name": "Claude 3.5 Sonnet",
+      "provider": "anthropic"
+    },
+    {
+      "model_id": "gemini-1.5-pro-latest",
+      "name": "Gemini 1.5 Pro",
+      "provider": "gemini"
+    }
+  ],
+
+  "openai_api_key": "YOUR_OPENAI_API_KEY",
+  "openai_org_id": "",
+  "openai_latest_model": "gpt-4o",
+
+  "anthropic_api_key": "YOUR_ANTHROPIC_API_KEY",
+  "anthropic_enabled": true,
+
+  "gemini_enabled": true,
+  "gemini_api_key": "YOUR_GEMINI_API_KEY",
+
+  "aws_access_key_id": "YOUR_AWS_ACCESS_KEY",
+  "aws_secret_access_key": "YOUR_AWS_SECRET_KEY",
+  "aws_model_id": "nova-pro-v1:0",
+  "aws_region": "us-west-2",
+  "aws_enabled": false,
+
+  "groq_api_key": "",
+
+  "ollama_url": "http://localhost:11434",
+  "ollama_enabled": false,
+
+  "allowed_telegram_users": ["your_telegram_username"],
+  "verbose": true,
+  "piper_dir": "",
+
+  "_comment": "Mini App Configuration - Set these to enable the web interface",
+  "mini_app_enabled": true,
+  "web_server_port": ":8080",
+  "mini_app_url": "https://your-domain.com/miniapp"
+}

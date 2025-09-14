@@ -408,6 +408,8 @@ github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794 h1:X1dBW7XXk7ta3uH
 github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794/go.mod h1:L1Df1Q+hQKQpQZnSzNo+qwsmdVMjF7HGpersx/21GP8=
 github.com/tectiv3/openai-go v0.7.1 h1:WoAo6OnSXtIQnoDM7whjdwCVn7HNoEEiDayFzosG17k=
 github.com/tectiv3/openai-go v0.7.1/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
+github.com/telegram-mini-apps/init-data-golang v1.5.0 h1:rtpsmQ/nihkicPvnrdRXmHHtTnPvG1FmxMRZJwMKPz0=
+github.com/telegram-mini-apps/init-data-golang v1.5.0/go.mod h1:GG4HnRx9ocjD4MjjzOw7gf9Ptm0NvFbDr5xqnfFOYuY=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

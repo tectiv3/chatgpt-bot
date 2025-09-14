@@ -15,6 +15,7 @@ require (
 	github.com/tectiv3/anthropic-go v0.1.0
 	github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117
 	github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794
+	github.com/telegram-mini-apps/init-data-golang v1.5.0
 	golang.org/x/crypto v0.39.0
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
 	golang.org/x/net v0.41.0

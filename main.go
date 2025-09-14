@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	stdlog "log"
+	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -104,6 +105,10 @@ func main() {
 				AccessKeyID:     conf.AWSAccessKeyID,
 				SecretAccessKey: conf.AWSSecretAccessKey,
 			}),
+			// Initialize rate limiter: 20 requests per minute per user
+			rateLimiter: NewRateLimiter(20, time.Minute),
+			// Allow max 3 concurrent polling connections per user
+			connectionManager: NewConnectionManager(3),
 		}
 		if conf.AnthropicEnabled {
 			server.anthropic = anthropic.New(anthropic.WithAPIKey(conf.AnthropicAPIKey))
@@ -112,6 +117,32 @@ func main() {
 			server.gemini = openai.NewClient(conf.GeminiAPIKey, "").SetBaseURL("https://generativelanguage.googleapis.com/v1beta/openai")
 		}
 		l = i18n.New("ru", "en")
+
+		// Setup and start web server if enabled
+		if conf.MiniAppEnabled {
+			mux := server.setupWebServer()
+
+			port := conf.WebServerPort
+			if port == "" {
+				port = ":8080"
+			}
+
+			if !strings.HasPrefix(port, ":") {
+				port = ":" + port
+			}
+
+			server.webServer = &http.Server{
+				Addr:    port,
+				Handler: mux,
+			}
+
+			Log.WithField("port", port).Info("Starting web server for mini app")
+			go func() {
+				if err := server.webServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					Log.WithField("error", err).Fatal("Failed to start web server")
+				}
+			}()
+		}
 
 		server.run()
 	} else {

@@ -1,0 +1,377 @@
+/* Telegram Mini App CSS with Tailwind Integration */
+
+:root {
+  /* Telegram WebApp CSS Variables (provided by Telegram) */
+  --tg-theme-bg-color: #ffffff;
+  --tg-theme-text-color: #000000;
+  --tg-theme-hint-color: #999999;
+  --tg-theme-link-color: #2481cc;
+  --tg-theme-button-color: #2481cc;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-secondary-bg-color: #f1f1f1;
+  --tg-theme-header-bg-color: #ffffff;
+  --tg-theme-accent-text-color: #2481cc;
+  --tg-theme-section-bg-color: #ffffff;
+  --tg-theme-section-header-text-color: #2481cc;
+  --tg-theme-subtitle-text-color: #999999;
+  --tg-theme-destructive-text-color: #ff3b30;
+}
+
+/* Apply Telegram colors to base elements */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--tg-theme-bg-color) !important;
+  color: var(--tg-theme-text-color) !important;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Ensure app container uses theme colors */
+#app {
+  background-color: var(--tg-theme-bg-color) !important;
+  color: var(--tg-theme-text-color) !important;
+  min-height: 100vh;
+}
+
+/* Force explicit background colors for key elements */
+.sidebar,
+[class*="bg-tg-secondary"] {
+  background-color: var(--tg-theme-secondary-bg-color) !important;
+}
+
+[class*="bg-tg-primary"] {
+  background-color: var(--tg-theme-bg-color) !important;
+}
+
+[class*="text-tg-primary"] {
+  color: var(--tg-theme-text-color) !important;
+}
+
+[class*="text-tg-hint"] {
+  color: var(--tg-theme-hint-color) !important;
+}
+
+[class*="text-tg-link"] {
+  color: var(--tg-theme-link-color) !important;
+}
+
+/* Ensure Tailwind color classes work with CSS variables */
+.bg-tg-primary { background-color: var(--tg-theme-bg-color) !important; }
+.bg-tg-secondary { background-color: var(--tg-theme-secondary-bg-color) !important; }
+.bg-tg-button { background-color: var(--tg-theme-button-color) !important; }
+
+.text-tg-text { color: var(--tg-theme-text-color) !important; }
+.text-tg-hint { color: var(--tg-theme-hint-color) !important; }
+.text-tg-link { color: var(--tg-theme-link-color) !important; }
+.text-tg-button-text { color: var(--tg-theme-button-text-color) !important; }
+.text-tg-destructive { color: var(--tg-theme-destructive-text-color) !important; }
+
+.border-tg-hint { border-color: var(--tg-theme-hint-color) !important; }
+.border-tg-link { border-color: var(--tg-theme-link-color) !important; }
+
+.placeholder-tg-hint::placeholder { color: var(--tg-theme-hint-color) !important; }
+
+/* Border opacity utilities */
+.border-tg-hint\/20 { border-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent) !important; }
+.border-tg-hint\/30 { border-color: color-mix(in srgb, var(--tg-theme-hint-color) 30%, transparent) !important; }
+.border-tg-link\/20 { border-color: color-mix(in srgb, var(--tg-theme-link-color) 20%, transparent) !important; }
+
+/* Background opacity utilities */
+.bg-tg-text\/10 { background-color: color-mix(in srgb, var(--tg-theme-text-color) 10%, transparent) !important; }
+.bg-tg-hint\/10 { background-color: color-mix(in srgb, var(--tg-theme-hint-color) 10%, transparent) !important; }
+.bg-tg-hint\/20 { background-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent) !important; }
+.bg-tg-link\/10 { background-color: color-mix(in srgb, var(--tg-theme-link-color) 10%, transparent) !important; }
+
+/* Hover states */
+.hover\:bg-tg-secondary:hover { background-color: var(--tg-theme-secondary-bg-color) !important; }
+.hover\:bg-tg-text\/10:hover { background-color: color-mix(in srgb, var(--tg-theme-text-color) 10%, transparent) !important; }
+.hover\:bg-tg-hint\/20:hover { background-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent) !important; }
+.hover\:text-tg-text:hover { color: var(--tg-theme-text-color) !important; }
+
+/* Focus states for inputs */
+.focus\:border-tg-link:focus { border-color: var(--tg-theme-link-color) !important; }
+.focus\:ring-tg-link\/20:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tg-theme-link-color) 20%, transparent) !important; }
+
+/* Custom button styles with Telegram colors */
+.btn-tg-primary {
+  background-color: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+}
+
+.btn-tg-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-tg-primary:disabled {
+  opacity: 0.5;
+}
+
+/* Scrollbar styling for webkit browsers */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--tg-theme-hint-color);
+  border-radius: 2px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--tg-theme-text-color);
+}
+
+/* Mobile-specific sidebar styles */
+@media (max-width: 1023px) {
+  /* Ensure solid background for mobile sidebar */
+  .sidebar {
+    background-color: var(--tg-theme-bg-color) !important;
+    opacity: 1 !important;
+  }
+  
+  .sidebar-slide-enter-active,
+  .sidebar-slide-leave-active {
+    transition: transform 0.3s ease;
+  }
+  
+  .sidebar-slide-enter-from,
+  .sidebar-slide-leave-to {
+    transform: translateX(-100%);
+  }
+}
+  
+  .sidebar-slide-enter-from,
+  .sidebar-slide-leave-to {
+    transform: translateX(-100%);
+  }
+}
+
+/* Prose styling for message content */
+.prose {
+  max-width: none;
+}
+
+.prose p {
+  margin-bottom: 0.75rem;
+}
+
+.prose pre {
+  background-color: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.prose code {
+  background-color: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.prose pre code {
+  background: none;
+  padding: 0;
+}
+
+.prose blockquote {
+  border-left: 4px solid var(--tg-theme-link-color);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  font-style: italic;
+  color: var(--tg-theme-hint-color);
+}
+
+.prose ul,
+.prose ol {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+}
+
+.prose li {
+  margin-bottom: 0.25rem;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.streaming-text {
+    /* Smooth content updates during streaming */
+    transition: opacity 0.1s ease-in-out;
+    user-select: none;
+    contain: layout style paint;
+}
+
+.streaming-indicator {
+    display: inline-block;
+    animation: blink 1.5s infinite;
+    font-weight: bold;
+    color: var(--tg-theme-link-color);
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+@keyframes typing-dots {
+  0%, 20% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  60%, 100% {
+    opacity: 0;
+  }
+}
+
+.typing-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: var(--tg-theme-hint-color);
+}
+
+.typing-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background-color: currentColor;
+    animation: typing-dots 1.5s infinite;
+}
+
+.typing-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+/* Focus styles for better accessibility */
+.focus-tg:focus {
+  outline: 2px solid var(--tg-theme-link-color);
+  outline-offset: 2px;
+}
+
+/*/* Form controls - using Tailwind classes in HTML instead */
+
+/* Range slider styling */
+.slider-tg {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tg-theme-secondary-bg-color);
+  outline: none;
+}
+
+.slider-tg::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tg-theme-button-color);
+  cursor: pointer;
+}
+
+.slider-tg::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tg-theme-button-color);
+  cursor: pointer;
+  border: none;
+}
+
+/*/* Enhanced mobile viewport handling */
+@media (max-width: 1023px) {
+  /* Prevent scroll when sidebar is open on mobile */
+  body.sidebar-open {
+    overflow: hidden;
+  }
+  
+  /* Fix viewport for mobile keyboards */
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  #app {
+    height: 100%;
+    height: -webkit-fill-available;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  
+  /* Keep input area at bottom when keyboard opens */
+  .main-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  /* Ensure messages scroll but input stays fixed */
+  .messages-container {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Fix input area position */
+  .input-area {
+    position: sticky;
+    bottom: 0;
+    background-color: var(--tg-theme-bg-color);
+    z-index: 10;
+  }
+  
+  /* Prevent iOS rubber band scrolling */
+  .fixed-bottom {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+}
+
+/* Desktop sticky sidebar enhancements */
+@media (min-width: 1024px) {
+  .sidebar-sticky {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  
+  /* Desktop hover states for better UX */
+  .thread-item:hover .thread-actions {
+    opacity: 1;
+  }
+}

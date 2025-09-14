@@ -7,3 +7,5 @@ bot.db
 .env
 cmd/i18n/i18n
 uploads/*
+.claude/settings.local.json
+.serena/cache
