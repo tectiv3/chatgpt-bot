@@ -90,6 +90,11 @@ type MessageResponse struct {
 	ModelUsed      *string `json:"model_used,omitempty"`
 	ResponseTimeMs *int64  `json:"response_time_ms,omitempty"`
 	FinishReason   *string `json:"finish_reason,omitempty"`
+
+	AnnotationFileID   *string `json:"annotation_file_id,omitempty"`
+	AnnotationFilename *string `json:"annotation_filename,omitempty"`
+	AnnotationFileType *string `json:"annotation_file_type,omitempty"`
+	AnnotationFilePath *string `json:"annotation_file_path,omitempty"`
 }
 
 type ChatWithThreadResponse struct {
@@ -672,6 +677,11 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			ModelUsed:      msg.ModelUsed,
 			ResponseTimeMs: msg.ResponseTimeMs,
 			FinishReason:   msg.FinishReason,
+
+			AnnotationFileID:   msg.AnnotationFileID,
+			AnnotationFilename: msg.AnnotationFilename,
+			AnnotationFileType: msg.AnnotationFileType,
+			AnnotationFilePath: msg.AnnotationFilePath,
 		}
 	}
 
@@ -1508,6 +1518,9 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	if len(model.SearchTool) > 0 {
 		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
 	}
+	if model.CodeInterpreter {
+		tools = append(tools, openai.NewBuiltinToolWithContainer("code_interpreter", "auto"))
+	}
 
 	if len(tools) > 0 {
 		options.SetTools(tools)
@@ -1591,6 +1604,20 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					jsonData, _ := json.Marshal(updatedResponse)
 					fmt.Fprintf(w, "data: %s\n\n", jsonData)
 					flusher.Flush()
+				case "code_interpreter_call":
+					currentContent := chat.t("Crafting and executing code, please wait...")
+					updatedResponse := MessageResponse{
+						ID:          assistantMsg.ID,
+						Role:        "assistant",
+						Content:     &currentContent,
+						CreatedAt:   assistantMsg.CreatedAt,
+						IsLive:      true,
+						MessageType: "normal",
+					}
+
+					jsonData, _ := json.Marshal(updatedResponse)
+					fmt.Fprintf(w, "data: %s\n\n", jsonData)
+					flusher.Flush()
 				}
 			}
 
@@ -1605,6 +1632,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 						}
 						usage.FinishReason = event.Item.Status
 					}
+					s.processWebappAnnotations(assistantMsg, event.Item.Content)
 				case "function_call":
 					Log.WithField("function", event.Item.Name).Info("Function call completed")
 					// Note: Function call handling would need to be implemented here
@@ -2071,6 +2099,11 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		ModelUsed:      assistantMsg.ModelUsed,
 		ResponseTimeMs: assistantMsg.ResponseTimeMs,
 		FinishReason:   assistantMsg.FinishReason,
+
+		AnnotationFileID:   assistantMsg.AnnotationFileID,
+		AnnotationFilename: assistantMsg.AnnotationFilename,
+		AnnotationFileType: assistantMsg.AnnotationFileType,
+		AnnotationFilePath: assistantMsg.AnnotationFilePath,
 	}
 	jsonData, _ = json.Marshal(finalResponse)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
@@ -2079,6 +2112,69 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	// Send completion signal
 	fmt.Fprintf(w, "data: {\"type\": \"complete\"}\n\n")
 	flusher.Flush()
+}
+
+
+// processWebappAnnotations processes annotations from OpenAI Response API
+func (s *Server) processWebappAnnotations(assistantMsg *ChatMessage, content []openai.OutputContent) {
+	for _, content := range content {
+		if len(content.Annotations) == 1 {
+			s.processWebappAnnotation(assistantMsg, content.Annotations[0])
+		} else {
+			for _, annotation := range content.Annotations {
+				if annotation.Type == "container_file_citation" {
+					s.processWebappAnnotation(assistantMsg, annotation)
+				}
+			}
+		}
+	}
+}
+
+// processWebappAnnotation processes a single annotation and stores file data
+func (s *Server) processWebappAnnotation(assistantMsg *ChatMessage, annotation openai.Annotation) {
+	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
+	if err != nil {
+		Log.WithField("error", err).Error("Failed to retrieve container file for webapp")
+		return
+	}
+
+	Log.WithField("File", len(result)).WithField("filename", annotation.Filename).Info("Processing annotation for webapp")
+
+	ext := filepath.Ext(annotation.Filename)
+	var fileType string
+	switch strings.ToLower(ext) {
+	case ".png", ".jpg", ".jpeg", ".gif":
+		fileType = "image"
+	case ".txt", ".md", ".py", ".js", ".html", ".css", ".json":
+		fileType = "text"
+	case ".pdf":
+		fileType = "document"
+	default:
+		fileType = "document"
+	}
+
+	annotationsDir := "uploads/annotations"
+	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
+		Log.WithField("error", err).Error("Failed to create annotations directory")
+		return
+	}
+
+	timestamp := time.Now().Format("20060102-150405")
+	randomID := uuid.New().String()[:8]
+	filename := fmt.Sprintf("%s_%s_%s", timestamp, randomID, annotation.Filename)
+	filePath := filepath.Join(annotationsDir, filename)
+
+	if err := os.WriteFile(filePath, result, 0644); err != nil {
+		Log.WithField("error", err).Error("Failed to save annotation file")
+		return
+	}
+
+	assistantMsg.AnnotationFileID = &annotation.FileID
+	assistantMsg.AnnotationFilename = &annotation.Filename
+	assistantMsg.AnnotationFileType = &fileType
+	assistantMsg.AnnotationFilePath = &filePath
+
+	Log.WithField("filepath", filePath).WithField("type", fileType).Info("Saved annotation file for webapp")
 }
 
 // Input validation and sanitization helpers

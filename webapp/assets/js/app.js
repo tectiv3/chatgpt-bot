@@ -200,6 +200,9 @@ createApp({
 
             // Simple image attachment
             attachedImage: null,
+
+            // Fullscreen image viewer
+            fullscreenImage: null,
         }
     },
 
@@ -946,6 +949,40 @@ createApp({
                                     const message = this.messages.find(
                                         m => m.id === streamingMessageId
                                     )
+
+                                    // Update message metadata if provided in this update
+                                    if (message && data.input_tokens !== undefined) {
+                                        message.input_tokens = data.input_tokens
+                                    }
+                                    if (message && data.output_tokens !== undefined) {
+                                        message.output_tokens = data.output_tokens
+                                    }
+                                    if (message && data.total_tokens !== undefined) {
+                                        message.total_tokens = data.total_tokens
+                                    }
+                                    if (message && data.model_used !== undefined) {
+                                        message.model_used = data.model_used
+                                    }
+                                    if (message && data.response_time_ms !== undefined) {
+                                        message.response_time_ms = data.response_time_ms
+                                    }
+                                    if (message && data.finish_reason !== undefined) {
+                                        message.finish_reason = data.finish_reason
+                                    }
+
+                                    // Update annotation metadata if provided
+                                    if (message && data.annotation_file_id !== undefined) {
+                                        message.annotation_file_id = data.annotation_file_id
+                                    }
+                                    if (message && data.annotation_filename !== undefined) {
+                                        message.annotation_filename = data.annotation_filename
+                                    }
+                                    if (message && data.annotation_file_type !== undefined) {
+                                        message.annotation_file_type = data.annotation_file_type
+                                    }
+                                    if (message && data.annotation_file_path !== undefined) {
+                                        message.annotation_file_path = data.annotation_file_path
+                                    }
 
                                     const now = Date.now()
 
@@ -1721,6 +1758,49 @@ createApp({
                 this.showError('Failed to update thread title')
             } finally {
                 this.savingTitle = false
+            }
+        },
+
+        // Annotation display methods
+        getAnnotationFilename(filePath) {
+            if (!filePath) return ''
+            // Extract just the filename from the full file path
+            return filePath.split('/').pop() || ''
+        },
+
+        viewImageFullscreen(message) {
+            if (!message.annotation_file_path || message.annotation_file_type !== 'image') {
+                return
+            }
+            
+            this.fullscreenImage = {
+                src: '/uploads/annotations/' + this.getAnnotationFilename(message.annotation_file_path),
+                filename: message.annotation_filename || 'annotation.png'
+            }
+        },
+
+        closeFullscreenImage() {
+            this.fullscreenImage = null
+        },
+
+        // Enhanced global keyboard shortcuts to include ESC for fullscreen
+        handleGlobalKeyDown(event) {
+            // Cmd+N (Mac) or Ctrl+N (Windows/Linux) to create new thread
+            if ((event.metaKey || event.ctrlKey) && event.key === 'n') {
+                event.preventDefault()
+                this.newThread()
+            }
+            
+            // ESC to close fullscreen image
+            if (event.key === 'Escape' && this.fullscreenImage) {
+                event.preventDefault()
+                this.closeFullscreenImage()
+            }
+            
+            // ESC to stop streaming
+            if (event.key === 'Escape' && this.streaming) {
+                event.preventDefault()
+                this.stopStreaming()
             }
         },
     },
