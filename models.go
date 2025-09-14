@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"sync"
 	"time"
 
-	"net/http"
 	"github.com/meinside/openai-go"
 	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/awsnova-go"
@@ -60,11 +60,12 @@ type config struct {
 }
 
 type AiModel struct {
-	ModelID    string `json:"model_id"`
-	Name       string `json:"name"`
-	Provider   string `json:"provider"` // openai, ollama, groq, nova
-	SearchTool string `json:"search_tool,omitempty"`
-	Reasoning  bool   `json:"reasoning,omitempty"`
+	ModelID         string `json:"model_id"`
+	Name            string `json:"name"`
+	Provider        string `json:"provider"` // openai, ollama, groq, nova
+	SearchTool      string `json:"search_tool,omitempty"`
+	Reasoning       bool   `json:"reasoning,omitempty"`
+	CodeInterpreter bool   `json:"code_interpreter,omitempty"`
 }
 
 type Server struct {
@@ -78,7 +79,7 @@ type Server struct {
 	bot       *tele.Bot
 	db        *gorm.DB
 	webServer *http.Server
-	
+
 	// Rate limiting and connection management for webapp
 	rateLimiter       *RateLimiter
 	connectionManager *ConnectionManager
@@ -86,10 +87,10 @@ type Server struct {
 
 // Rate limiting and connection management
 type RateLimiter struct {
-	mu       sync.RWMutex
-	requests map[uint][]time.Time // userID -> request timestamps
+	mu          sync.RWMutex
+	requests    map[uint][]time.Time // userID -> request timestamps
 	maxRequests int
-	window   time.Duration
+	window      time.Duration
 }
 
 func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
@@ -103,13 +104,13 @@ func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
 func (rl *RateLimiter) Allow(userID uint) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	
+
 	now := time.Now()
 	windowStart := now.Add(-rl.window)
-	
+
 	// Get user's request history
 	requests := rl.requests[userID]
-	
+
 	// Filter out old requests outside the window
 	var validRequests []time.Time
 	for _, req := range requests {
@@ -117,13 +118,13 @@ func (rl *RateLimiter) Allow(userID uint) bool {
 			validRequests = append(validRequests, req)
 		}
 	}
-	
+
 	// Check if under limit
 	if len(validRequests) >= rl.maxRequests {
 		rl.requests[userID] = validRequests
 		return false
 	}
-	
+
 	// Add current request
 	validRequests = append(validRequests, now)
 	rl.requests[userID] = validRequests
@@ -132,8 +133,8 @@ func (rl *RateLimiter) Allow(userID uint) bool {
 
 // Connection manager for polling
 type ConnectionManager struct {
-	mu          sync.RWMutex
-	connections map[uint]int // userID -> active connection count
+	mu             sync.RWMutex
+	connections    map[uint]int // userID -> active connection count
 	maxConnections int
 }
 
@@ -153,11 +154,11 @@ func (cm *ConnectionManager) CanConnect(userID uint) bool {
 func (cm *ConnectionManager) AddConnection(userID uint) bool {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	if cm.connections[userID] >= cm.maxConnections {
 		return false
 	}
-	
+
 	cm.connections[userID]++
 	return true
 }
@@ -165,7 +166,7 @@ func (cm *ConnectionManager) AddConnection(userID uint) bool {
 func (cm *ConnectionManager) RemoveConnection(userID uint) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	if cm.connections[userID] > 0 {
 		cm.connections[userID]--
 	}
@@ -201,7 +202,7 @@ type Chat struct {
 	ThreadTitle     *string    `json:"thread_title" gorm:"nullable:true"`    // Generated topic for thread
 	RoleID          *uint      `json:"role_id" gorm:"nullable:true"`
 	MessageID       *string    `json:"last_message_id" gorm:"nullable:true"`
-	ArchivedAt      *time.Time `json:"archived_at" gorm:"nullable:true"`     // NULL for active threads, timestamp when archived
+	ArchivedAt      *time.Time `json:"archived_at" gorm:"nullable:true"` // NULL for active threads, timestamp when archived
 	Lang            string
 	History         []ChatMessage
 	User            User `gorm:"foreignKey:UserID;references:ID;fetch:join"`
@@ -215,10 +216,14 @@ type Chat struct {
 	ConversationAge int64
 	TotalTokens     int `json:"total_tokens"`
 	ContextLimit    int `json:"context_limit" gorm:"default:4000"` // Context limit for this thread
+
+	// Thread-level token tracking
+	TotalInputTokens  int `json:"total_input_tokens" gorm:"default:0"`
+	TotalOutputTokens int `json:"total_output_tokens" gorm:"default:0"`
 }
 
 type ChatMessage struct {
-	ID        uint `gorm:"primarykey"`
+	ID        uint      `gorm:"primarykey"`
 	CreatedAt time.Time `gorm:"index"`
 	UpdatedAt time.Time
 	ChatID    int64 `sql:"chat_id" json:"chat_id" gorm:"index"`
@@ -230,8 +235,22 @@ type ChatMessage struct {
 	Filename   *string                `json:"filename,omitempty"`
 
 	// Context management
-	IsLive      bool   `json:"is_live" gorm:"default:true;index"`   // If false, not sent to model
+	IsLive      bool   `json:"is_live" gorm:"default:true;index"`  // If false, not sent to model
 	MessageType string `json:"message_type" gorm:"default:normal"` // normal, summary, system
+
+	// Meta information (nullable for backwards compatibility)
+	InputTokens    *int    `json:"input_tokens,omitempty" gorm:"nullable"`
+	OutputTokens   *int    `json:"output_tokens,omitempty" gorm:"nullable"`
+	TotalTokens    *int    `json:"total_tokens,omitempty" gorm:"nullable"`
+	ModelUsed      *string `json:"model_used,omitempty" gorm:"size:100;nullable"`
+	ResponseTimeMs *int64  `json:"response_time_ms,omitempty" gorm:"nullable"`
+	FinishReason   *string `json:"finish_reason,omitempty" gorm:"size:50;nullable"`
+
+	// Annotation data for code interpreter outputs (nullable for backwards compatibility)
+	AnnotationFileID   *string `json:"annotation_file_id,omitempty" gorm:"size:100;nullable"`
+	AnnotationFilename *string `json:"annotation_filename,omitempty" gorm:"size:255;nullable"`
+	AnnotationFileType *string `json:"annotation_file_type,omitempty" gorm:"size:50;nullable"`  // image, document, etc.
+	AnnotationFilePath *string `json:"annotation_file_path,omitempty" gorm:"size:500;nullable"` // Local storage path
 
 	// for function call
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'

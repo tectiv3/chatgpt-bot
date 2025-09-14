@@ -120,7 +120,7 @@ func (s *Server) getModel(model string) *AiModel {
 		}
 	}
 
-	return &AiModel{model, model, "openai", "", false}
+	return &AiModel{model, model, "openai", "", false, false}
 }
 
 func (s *Server) getRole(id uint) *Role {
