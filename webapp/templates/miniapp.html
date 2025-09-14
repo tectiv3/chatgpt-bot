@@ -42,7 +42,15 @@
         />
     </head>
     <body class="bg-tg-primary text-tg-text font-sans">
-        <div id="app" class="h-screen flex flex-col overflow-hidden">
+        <!-- Initial loading screen - visible before Vue loads -->
+        <div id="initial-loader" class="fixed inset-0 bg-tg-primary flex items-center justify-center z-50">
+            <div class="text-center">
+                <div class="w-12 h-12 border-3 border-tg-link border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <div class="text-tg-hint text-lg">Loading {{.BotName}}...</div>
+            </div>
+        </div>
+
+        <div id="app" class="h-screen flex flex-col overflow-hidden" v-cloak>
             <!-- Loading Screen -->
             <div v-if="loading" class="flex-1 flex items-center justify-center bg-tg-primary">
                 <div class="text-center">
@@ -953,6 +961,7 @@
             </div>
         </div>
 
-        <script src="/assets/js/app.js?555"></script>
+        <script src="/assets/js/app.js?777"></script>
+        
     </body>
 </html>

@@ -334,6 +334,9 @@ createApp({
 
         this.loading = false
 
+        // Hide initial loader and show Vue app with smooth transition
+        this.hideInitialLoader()
+
         // Open sidebar by default on desktop/wide screens
         if (window.innerWidth >= 1024) {
             this.sidebarOpen = true
@@ -369,6 +372,26 @@ createApp({
     },
 
     methods: {
+        hideInitialLoader() {
+            const loader = document.getElementById('initial-loader')
+            const app = document.getElementById('app')
+            
+            if (loader && app) {
+                // Start fade out animation
+                loader.classList.add('fade-out')
+                
+                // Show Vue app
+                app.style.visibility = 'visible'
+                
+                // Remove loader after animation completes
+                setTimeout(() => {
+                    if (loader.parentNode) {
+                        loader.parentNode.removeChild(loader)
+                    }
+                }, 300) // Match CSS transition duration
+            }
+        },
+
         adaptToTelegramTheme() {
             const webApp = window.Telegram?.WebApp
             const root = document.documentElement
