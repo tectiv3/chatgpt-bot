@@ -70,12 +70,10 @@
                         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
                     "
                 >
-                    <!-- Header (Fixed) -->
                     <div
-                        class="flex-shrink-0 p-4 border-b border-white/10 dark:border-white/10 bg-tg-secondary"
+                        class="flex-shrink-0 px-2 border-b border-white/10 dark:border-white/10 bg-tg-secondary"
                     >
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-lg font-semibold text-tg-text">Threads</h3>
+                        <div class="flex items-center justify-between mb-2">
                             <button
                                 @click="sidebarOpen = false"
                                 class="lg:hidden p-1 rounded-md hover:bg-tg-primary/10 text-tg-hint"
@@ -86,7 +84,7 @@
                         <button
                             @click="newThread()"
                             :disabled="creatingThread"
-                            class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            class="w-full bg-tg-button text-tg-button-text py-2 mb-2 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
                         >
                             <i
                                 class="fas"
@@ -282,7 +280,7 @@
                 <div class="flex-1 flex flex-col min-w-0">
                     <!-- Header -->
                     <div
-                        class="flex-shrink-0 bg-tg-primary border-b border-white/10 dark:border-white/10 p-4"
+                        class="flex-shrink-0 bg-tg-primary border-b border-white/10 dark:border-white/10 px-4 py-2"
                     >
                         <div class="flex items-center gap-4">
                             <button
@@ -555,10 +553,10 @@
                         </div>
 
                         <!-- Input wrapper -->
-                        <div class="p-4 flex items-center gap-2 max-w-4xl mx-auto w-full">
+                        <div class="py-4 px-2 flex items-center gap-2 max-w-4xl mx-auto w-full">
                             <button
                                 @click="selectImage"
-                                class="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-colors"
+                                class="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-colors"
                                 :class="
                                     attachedImage
                                         ? 'bg-tg-link text-white'
@@ -590,7 +588,7 @@
                             <button
                                 @click="streaming ? stopStreaming() : sendMessage()"
                                 :disabled="!canSendMessage && !canStopStreaming"
-                                class="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-all"
+                                class="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all"
                                 :class="
                                     streaming
                                         ? 'bg-tg-destructive text-white hover:bg-red-600'
