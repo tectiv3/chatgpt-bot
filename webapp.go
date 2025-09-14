@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,13 +62,15 @@ type ImageUploadResponse struct {
 }
 
 type ThreadResponse struct {
-	ID           string         `json:"id"`
-	Title        string         `json:"title"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	ArchivedAt   *time.Time     `json:"archived_at"`
-	Settings     ThreadSettings `json:"settings"`
-	MessageCount int            `json:"message_count"`
+	ID                string         `json:"id"`
+	Title             string         `json:"title"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	ArchivedAt        *time.Time     `json:"archived_at"`
+	Settings          ThreadSettings `json:"settings"`
+	MessageCount      int            `json:"message_count"`
+	TotalInputTokens  int            `json:"total_input_tokens"`
+	TotalOutputTokens int            `json:"total_output_tokens"`
 }
 
 type MessageResponse struct {
@@ -83,6 +82,14 @@ type MessageResponse struct {
 	MessageType string    `json:"message_type"`
 	ImageData   *string   `json:"image_data,omitempty"` // URL to the image
 	ImageName   *string   `json:"image_name,omitempty"` // Original filename
+
+	// Meta information (optional for backwards compatibility)
+	InputTokens    *int    `json:"input_tokens,omitempty"`
+	OutputTokens   *int    `json:"output_tokens,omitempty"`
+	TotalTokens    *int    `json:"total_tokens,omitempty"`
+	ModelUsed      *string `json:"model_used,omitempty"`
+	ResponseTimeMs *int64  `json:"response_time_ms,omitempty"`
+	FinishReason   *string `json:"finish_reason,omitempty"`
 }
 
 type ChatWithThreadResponse struct {
@@ -108,16 +115,6 @@ type ChatWithCount struct {
 	MessageCount int64
 }
 
-// CSRF token store for session-based CSRF protection
-type CSRFTokenStore struct {
-	tokens map[uint]string // userId -> token
-	mutex  sync.RWMutex
-}
-
-var csrfStore = &CSRFTokenStore{
-	tokens: make(map[uint]string),
-}
-
 func (s *Server) setupWebServer() *http.ServeMux {
 	if !s.conf.MiniAppEnabled {
 		return nil
@@ -133,16 +130,16 @@ func (s *Server) setupWebServer() *http.ServeMux {
 	// Mini app route
 	mux.HandleFunc("/miniapp", s.corsMiddleware(s.serveMiniApp))
 
-	mux.HandleFunc("/api/csrf-token", s.apiMiddleware(s.getCSRFToken, false))
-	mux.HandleFunc("/api/threads", s.apiMiddleware(s.handleThreads, false))
-	mux.HandleFunc("/api/threads/archived", s.apiMiddleware(s.getArchivedThreads, false))
-	mux.HandleFunc("/api/messages", s.apiMiddleware(s.handleDraftMessages, false)) // Direct messages endpoint for draft threads
-	mux.HandleFunc("/api/threads/", s.apiMiddleware(s.handleThreadsWithID, false))
-	mux.HandleFunc("/api/models", s.apiMiddleware(s.getAvailableModels, false))
-	mux.HandleFunc("/api/roles", s.apiMiddleware(s.handleRoles, false))
-	mux.HandleFunc("/api/roles/", s.apiMiddleware(s.handleRolesWithID, false))
-	mux.HandleFunc("/api/user", s.apiMiddleware(s.getUserInfo, false))
-	mux.HandleFunc("/api/upload-image", s.apiMiddleware(s.handleImageUpload, false))
+	mux.HandleFunc("/api/threads", s.apiMiddleware(s.handleThreads))
+	mux.HandleFunc("/api/threads/archived", s.apiMiddleware(s.getArchivedThreads))
+	mux.HandleFunc("/api/messages", s.apiMiddleware(s.handleDraftMessages)) // Direct messages endpoint for draft threads
+	mux.HandleFunc("/api/threads/", s.apiMiddleware(s.handleThreadsWithID))
+	mux.HandleFunc("/api/models", s.apiMiddleware(s.getAvailableModels))
+	mux.HandleFunc("/api/roles", s.apiMiddleware(s.handleRoles))
+	mux.HandleFunc("/api/roles/", s.apiMiddleware(s.handleRolesWithID))
+	mux.HandleFunc("/api/messages/", s.apiMiddleware(s.handleMessagesWithID)) // Message operations (delete, etc.)
+	mux.HandleFunc("/api/user", s.apiMiddleware(s.getUserInfo))
+	mux.HandleFunc("/api/upload-image", s.apiMiddleware(s.handleImageUpload))
 
 	return mux
 }
@@ -152,7 +149,7 @@ func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data, X-CSRF-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
@@ -163,13 +160,13 @@ func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// apiMiddleware consolidates CORS, auth, and optional CSRF protection
-func (s *Server) apiMiddleware(next http.HandlerFunc, requireCSRF bool) http.HandlerFunc {
+// apiMiddleware consolidates CORS, auth
+func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data, X-CSRF-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Telegram-Init-Data")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
@@ -200,20 +197,6 @@ func (s *Server) apiMiddleware(next http.HandlerFunc, requireCSRF bool) http.Han
 			return
 		}
 
-		// CSRF protection for write operations
-		if requireCSRF && r.Method != http.MethodGet {
-			providedToken := r.Header.Get("X-CSRF-Token")
-			if providedToken == "" {
-				s.writeJSONError(w, http.StatusForbidden, "CSRF token required")
-				return
-			}
-
-			if !csrfStore.validateCSRFToken(user.ID, providedToken) {
-				s.writeJSONError(w, http.StatusForbidden, "Invalid CSRF token")
-				return
-			}
-		}
-
 		// Add user to context and proceed
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next(w, r.WithContext(ctx))
@@ -236,31 +219,6 @@ func (s *Server) writeJSONSuccess(w http.ResponseWriter, message string, data in
 		response["data"] = data
 	}
 	s.writeJSON(w, http.StatusOK, response)
-}
-
-// Get client IP with proxy headers support
-func (s *Server) getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header (for proxies)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the chain
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
-		}
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fallback to remote address
-	ip := r.RemoteAddr
-	// Remove port if present
-	if colon := strings.LastIndex(ip, ":"); colon != -1 {
-		ip = ip[:colon]
-	}
-	return ip
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -386,13 +344,15 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 		}
 
 		threads[i] = ThreadResponse{
-			ID:           *chatCount.Chat.ThreadID,
-			Title:        *chatCount.Chat.ThreadTitle,
-			CreatedAt:    chatCount.Chat.CreatedAt,
-			UpdatedAt:    chatCount.Chat.UpdatedAt,
-			ArchivedAt:   chatCount.Chat.ArchivedAt,
-			Settings:     settings,
-			MessageCount: int(chatCount.MessageCount),
+			ID:                *chatCount.Chat.ThreadID,
+			Title:             *chatCount.Chat.ThreadTitle,
+			CreatedAt:         chatCount.Chat.CreatedAt,
+			UpdatedAt:         chatCount.Chat.UpdatedAt,
+			ArchivedAt:        chatCount.Chat.ArchivedAt,
+			Settings:          settings,
+			MessageCount:      int(chatCount.MessageCount),
+			TotalInputTokens:  chatCount.Chat.TotalInputTokens,
+			TotalOutputTokens: chatCount.Chat.TotalOutputTokens,
 		}
 	}
 
@@ -432,13 +392,15 @@ func (s *Server) getArchivedThreads(w http.ResponseWriter, r *http.Request) {
 		}
 
 		threads[i] = ThreadResponse{
-			ID:           *chatCount.Chat.ThreadID,
-			Title:        *chatCount.Chat.ThreadTitle,
-			CreatedAt:    chatCount.Chat.CreatedAt,
-			UpdatedAt:    chatCount.Chat.UpdatedAt,
-			ArchivedAt:   chatCount.Chat.ArchivedAt,
-			Settings:     settings,
-			MessageCount: int(chatCount.MessageCount),
+			ID:                *chatCount.Chat.ThreadID,
+			Title:             *chatCount.Chat.ThreadTitle,
+			CreatedAt:         chatCount.Chat.CreatedAt,
+			UpdatedAt:         chatCount.Chat.UpdatedAt,
+			ArchivedAt:        chatCount.Chat.ArchivedAt,
+			Settings:          settings,
+			MessageCount:      int(chatCount.MessageCount),
+			TotalInputTokens:  chatCount.Chat.TotalInputTokens,
+			TotalOutputTokens: chatCount.Chat.TotalOutputTokens,
 		}
 	}
 
@@ -672,9 +634,9 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 
 	// Get messages
 	var messages []ChatMessage
-	err = s.db.Where("chat_id = ?", chat.ChatID).
-		Order("created_at ASC").
-		Find(&messages).Error
+	query := s.db.Where("chat_id = ?", chat.ChatID)
+
+	err = query.Order("created_at ASC").Find(&messages).Error
 	if err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to fetch messages")
 		return
@@ -702,6 +664,14 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			MessageType: msg.MessageType,
 			ImageData:   imageData,
 			ImageName:   msg.Filename,
+
+			// Include meta information
+			InputTokens:    msg.InputTokens,
+			OutputTokens:   msg.OutputTokens,
+			TotalTokens:    msg.TotalTokens,
+			ModelUsed:      msg.ModelUsed,
+			ResponseTimeMs: msg.ResponseTimeMs,
+			FinishReason:   msg.FinishReason,
 		}
 	}
 
@@ -850,7 +820,12 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		IsLive:      true,
 		MessageType: messageType,
 		CreatedAt:   time.Now(),
+		ModelUsed:   &chat.ModelName,
 	}
+
+	// Estimate input tokens for user message (rough approximation)
+	inputTokenEstimate := s.estimateTokenCount(messageContent)
+	userMessage.InputTokens = &inputTokenEstimate
 
 	// Save user message to database immediately
 	if err := s.db.Create(&userMessage).Error; err != nil {
@@ -859,20 +834,20 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		return
 	}
 
+	// Update thread token counts
+	if inputTokenEstimate > 0 {
+		if err := s.updateThreadTokens(chat.ChatID, inputTokenEstimate, 0); err != nil {
+			Log.WithField("error", err).Warn("Failed to update thread tokens for user message")
+		}
+	}
+
 	// Check if context limit is exceeded and summarize if needed
 	if err := s.checkAndSummarizeContext(&chat); err != nil {
 		Log.WithField("error", err).Warn("Failed to summarize context")
 	}
 
-	// Process message synchronously with streaming response
-
-	if chat.Stream {
-		// Use Server-Sent Events for streaming response
-		s.handleStreamingResponse(w, r, &chat, &userMessage, isNewThread)
-	} else {
-		// Process synchronously and return complete response
-		s.handleSynchronousResponse(w, &chat, &userMessage, isNewThread)
-	}
+	// Always use streaming response for OpenAI models in miniapp
+	s.handleStreamingResponse(w, r, &chat, &userMessage, isNewThread)
 }
 
 func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, threadID string) {
@@ -1311,26 +1286,122 @@ func (s *Server) handleDraftMessages(w http.ResponseWriter, r *http.Request) {
 	s.chatInThread(w, r, "")
 }
 
-func (s *Server) getCSRFToken(w http.ResponseWriter, r *http.Request) {
+// Handle /api/messages/{id} (DELETE) - for message operations
+func (s *Server) handleMessagesWithID(w http.ResponseWriter, r *http.Request) {
+	messageIDStr := extractPathParam(r.URL.Path, "/api/messages")
+	if messageIDStr == "" {
+		s.writeJSONError(w, http.StatusBadRequest, "Message ID required")
+		return
+	}
+
+	messageID, err := validateNumericID(messageIDStr, "message ID")
+	if err != nil {
+		s.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		s.deleteMessage(w, r, uint(messageID))
+	default:
+		s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// Permanently delete a message
+func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request, messageID uint) {
 	user := getUserFromContext(r)
 	if user == nil {
 		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
 		return
 	}
 
-	token, err := csrfStore.getOrCreateCSRFToken(user.ID)
+	// Start transaction for consistent updates
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find the message and verify ownership through chat
+	var message ChatMessage
+	err := tx.Joins("JOIN chats ON chat_messages.chat_id = chats.chat_id").
+		Where("chat_messages.id = ? AND chats.user_id = ?", messageID, user.ID).
+		First(&message).Error
 	if err != nil {
-		Log.WithField("error", err).Error("Failed to generate CSRF token")
-		s.writeJSONError(w, http.StatusInternalServerError, "Failed to generate CSRF token")
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			s.writeJSONError(w, http.StatusNotFound, "Message not found")
+		} else {
+			s.writeJSONError(w, http.StatusInternalServerError, "Failed to find message")
+		}
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{
-		"csrf_token": token,
-	})
+	// Get the chat to update token counts
+	var chat Chat
+	err = tx.Where("chat_id = ?", message.ChatID).First(&chat).Error
+	if err != nil {
+		tx.Rollback()
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to find chat")
+		return
+	}
+
+	// Update thread token counts by subtracting this message's tokens
+	if message.InputTokens != nil {
+		chat.TotalInputTokens = max(0, chat.TotalInputTokens-*message.InputTokens)
+	}
+	if message.OutputTokens != nil {
+		chat.TotalOutputTokens = max(0, chat.TotalOutputTokens-*message.OutputTokens)
+	}
+
+	// Save updated chat
+	if err := tx.Save(&chat).Error; err != nil {
+		tx.Rollback()
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to update thread tokens")
+		return
+	}
+
+	// Permanently delete the message from database
+	if err := tx.Delete(&message).Error; err != nil {
+		tx.Rollback()
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to delete message")
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to commit deletion")
+		return
+	}
+
+	s.writeJSONSuccess(w, "Message deleted successfully", nil)
 }
 
 // Helper functions
+
+// max returns the larger of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// updateThreadTokens updates the thread's total token count when a message is added
+func (s *Server) updateThreadTokens(chatID int64, inputTokens, outputTokens int) error {
+	if inputTokens == 0 && outputTokens == 0 {
+		return nil // No tokens to add
+	}
+
+	return s.db.Model(&Chat{}).
+		Where("chat_id = ?", chatID).
+		UpdateColumns(map[string]interface{}{
+			"total_input_tokens":  gorm.Expr("total_input_tokens + ?", inputTokens),
+			"total_output_tokens": gorm.Expr("total_output_tokens + ?", outputTokens),
+		}).Error
+}
 
 func (s *Server) generateThreadTitle(initialMessage string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1388,128 +1459,162 @@ func (s *Server) generateThreadTitleFromConversation(question, response string) 
 	return "", fmt.Errorf("no title generated")
 }
 
+// TokenUsage holds token usage information
+type TokenUsage struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+	FinishReason string
+}
+
 // Generate response with streaming updates to SSE
-// Generate response with streaming updates to SSE (following Telegram bot pattern)
-func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, history []openai.ChatMessage, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, error) {
+func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, history []openai.ChatMessage, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, *TokenUsage, error) {
 	model := s.getModel(chat.ModelName)
 	if model == nil {
-		return "", fmt.Errorf("model %s not found", chat.ModelName)
+		return "", nil, fmt.Errorf("model %s not found", chat.ModelName)
 	}
 
-	switch model.Provider {
-	case "openai":
-		// Use the exact same pattern as getStreamAnswer in llm.go
-		type completion struct {
-			response openai.ChatCompletion
-			done     bool
-			err      error
+	if model.Provider != "openai" {
+		return "", nil, fmt.Errorf("only OpenAI models are supported in miniapp")
+	}
+
+	type completion struct {
+		event openai.ResponseStreamEvent
+		done  bool
+		err   error
+	}
+	ch := make(chan completion, 1)
+
+	var result strings.Builder
+	var usage *TokenUsage
+
+	messages := s.convertDialogToResponseMessages(history)
+
+	instructions := chat.MasterPrompt
+	if chat.RoleID != nil {
+		instructions = chat.Role.Prompt
+	}
+	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
+
+	options := openai.ResponseOptions{}
+	options.SetInstructions(instructions)
+	options.SetMaxOutputTokens(16000)
+	options.SetTemperature(chat.Temperature)
+	options.SetUser(fmt.Sprintf("webapp_user_%d", chat.UserID))
+	options.SetStore(false)
+
+	tools := s.getResponseTools()
+
+	if len(model.SearchTool) > 0 {
+		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
+	}
+
+	if len(tools) > 0 {
+		options.SetTools(tools)
+	}
+	aiClient := s.openAI
+
+	if err := aiClient.CreateResponseStreamWithContext(ctx, model.ModelID, messages, options,
+		func(event openai.ResponseStreamEvent, d bool, e error) {
+			ch <- completion{event: event, done: d, err: e}
+			if d {
+				close(ch)
+			}
+		}); err != nil {
+		return "", nil, fmt.Errorf("failed to start OpenAI stream: %v", err)
+	}
+
+	for comp := range ch {
+		if comp.err != nil {
+			return result.String(), usage, comp.err
 		}
-		ch := make(chan completion, 1)
+		event := comp.event
 
-		var result strings.Builder
-		tokenCount := 0
-
-		options := openai.ChatCompletionOptions{}.
-			SetTemperature(chat.Temperature).
-			SetStream(func(r openai.ChatCompletion, done bool, err error) {
-				ch <- completion{response: r, done: done, err: err}
-				if done {
-					close(ch)
+		if comp.done {
+			if event.Response != nil && event.Response.Usage != nil {
+				usage = &TokenUsage{
+					InputTokens:  event.Response.Usage.InputTokens,
+					OutputTokens: event.Response.Usage.OutputTokens,
+					TotalTokens:  event.Response.Usage.TotalTokens,
 				}
-			})
-
-		// Start the streaming request
-		if _, err := s.openAI.CreateChatCompletionWithContext(ctx, model.ModelID, history, options); err != nil {
-			return "", fmt.Errorf("failed to start OpenAI stream: %v", err)
-		}
-
-		// Process streaming responses (exact pattern from Telegram bot)
-		for comp := range ch {
-			if comp.err != nil {
-				return result.String(), nil
+				Log.WithFields(map[string]interface{}{
+					"input_tokens":  usage.InputTokens,
+					"output_tokens": usage.OutputTokens,
+					"total_tokens":  usage.TotalTokens,
+				}).Debug("Token usage extracted from response.done")
+			} else {
+				Log.Debug("No usage data found in response.done event")
 			}
 
-			if !comp.done {
-				// Extract token from delta (same as Telegram bot)
-				if len(comp.response.Choices) > 0 && comp.response.Choices[0].Delta.Content != nil {
-					if deltaStr, err := comp.response.Choices[0].Delta.ContentString(); err == nil && deltaStr != "" {
-						result.WriteString(deltaStr)
-						tokenCount++
+			return result.String(), usage, nil
+		}
 
-						// Send SSE update immediately for every token
-						if w != nil && flusher != nil {
-							currentContent := result.String()
-							updatedResponse := MessageResponse{
-								ID:          assistantMsg.ID,
-								Role:        "assistant",
-								Content:     &currentContent,
-								CreatedAt:   assistantMsg.CreatedAt,
-								IsLive:      true,
-								MessageType: "normal",
-							}
+		switch event.Type {
+		case "response.output_text.delta":
+			if event.Delta != nil {
+				result.WriteString(*event.Delta)
 
-							jsonData, _ := json.Marshal(updatedResponse)
-							fmt.Fprintf(w, "data: %s\n\n", jsonData)
-							flusher.Flush()
-						}
+				// Send SSE update immediately for every token
+				if w != nil && flusher != nil {
+					currentContent := result.String()
+					updatedResponse := MessageResponse{
+						ID:          assistantMsg.ID,
+						Role:        "assistant",
+						Content:     &currentContent,
+						CreatedAt:   assistantMsg.CreatedAt,
+						IsLive:      true,
+						MessageType: "normal",
 					}
+
+					jsonData, _ := json.Marshal(updatedResponse)
+					fmt.Fprintf(w, "data: %s\n\n", jsonData)
+					flusher.Flush()
+				}
+			}
+
+		case "response.output_item.added":
+			if event.Item != nil {
+				switch event.Item.Type {
+				case "function_call":
+					Log.WithField("function", event.Item.Name).Info("Function call started")
+				case "web_search_call":
+					currentContent := chat.t("Web search started, please wait...")
+					updatedResponse := MessageResponse{
+						ID:          assistantMsg.ID,
+						Role:        "assistant",
+						Content:     &currentContent,
+						CreatedAt:   assistantMsg.CreatedAt,
+						IsLive:      true,
+						MessageType: "normal",
+					}
+
+					jsonData, _ := json.Marshal(updatedResponse)
+					fmt.Fprintf(w, "data: %s\n\n", jsonData)
+					flusher.Flush()
+				}
+			}
+
+		case "response.output_item.done":
+			if event.Item != nil {
+				switch event.Item.Type {
+				case "message":
+					// Extract finish reason from completed message
+					if event.Item.Status != "" {
+						if usage == nil {
+							usage = &TokenUsage{}
+						}
+						usage.FinishReason = event.Item.Status
+					}
+				case "function_call":
+					Log.WithField("function", event.Item.Name).Info("Function call completed")
+					// Note: Function call handling would need to be implemented here
+					// For now, we're focusing on basic streaming
 				}
 			}
 		}
-
-		return result.String(), nil
-
-	case "anthropic":
-		// For Anthropic, fall back to non-streaming for now
-		response, err := s.generateResponseForThread(chat, history)
-		if err != nil {
-			return "", err
-		}
-
-		// Send complete response via SSE
-		if w != nil && flusher != nil {
-			updatedResponse := MessageResponse{
-				ID:          assistantMsg.ID,
-				Role:        "assistant",
-				Content:     &response,
-				CreatedAt:   assistantMsg.CreatedAt,
-				IsLive:      true,
-				MessageType: "normal",
-			}
-			jsonData, _ := json.Marshal(updatedResponse)
-			fmt.Fprintf(w, "data: %s\n\n", jsonData)
-			flusher.Flush()
-		}
-
-		return response, nil
-
-	case "gemini":
-		// For Gemini, fall back to non-streaming for now
-		response, err := s.generateResponseForThread(chat, history)
-		if err != nil {
-			return "", err
-		}
-
-		// Send complete response via SSE
-		if w != nil && flusher != nil {
-			updatedResponse := MessageResponse{
-				ID:          assistantMsg.ID,
-				Role:        "assistant",
-				Content:     &response,
-				CreatedAt:   assistantMsg.CreatedAt,
-				IsLive:      true,
-				MessageType: "normal",
-			}
-			jsonData, _ := json.Marshal(updatedResponse)
-			fmt.Fprintf(w, "data: %s\n\n", jsonData)
-			flusher.Flush()
-		}
-
-		return response, nil
-
-	default:
-		return "", fmt.Errorf("unsupported provider: %s", model.Provider)
 	}
+
+	return result.String(), usage, nil
 }
 
 // Handle image upload with enhanced security and validation
@@ -1519,27 +1624,23 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user from context (authentication already validated by middleware)
 	user := getUserFromContext(r)
 	if user == nil {
 		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
 		return
 	}
 
-	// Rate limiting check
 	if !s.rateLimiter.Allow(user.ID) {
 		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded")
 		return
 	}
 
-	// Parse multipart form data with size limit (10MB per image)
 	const maxUploadSize = 10 << 20 // 10MB
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "Failed to parse form data or file too large")
 		return
 	}
 
-	// Get the uploaded file
 	file, header, err := r.FormFile("image")
 	if err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "No image file found in request")
@@ -1876,7 +1977,10 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
 	flusher.Flush()
 
-	response, err := s.generateResponseWithStreamingUpdates(ctx, chat, history, &assistantMsg, w, flusher)
+	startTime := time.Now()
+	response, usage, err := s.generateResponseWithStreamingUpdates(ctx, chat, history, &assistantMsg, w, flusher)
+	responseTime := time.Since(startTime).Milliseconds()
+
 	if err != nil {
 		Log.WithField("error", err).Error("Failed to generate response")
 		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
@@ -1894,14 +1998,35 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		}
 		jsonData, _ := json.Marshal(errorResponse)
 		fmt.Fprintf(w, "data: %s\n\n", jsonData)
+
 		flusher.Flush()
 		return
 	}
 
-	// Final update with complete response - ONLY database update during streaming
+	// Final update with complete response and meta information
 	assistantMsg.Content = &response
+	assistantMsg.ResponseTimeMs = &responseTime
+	assistantMsg.ModelUsed = &chat.ModelName
+
+	// Add token usage information if available
+	if usage != nil {
+		assistantMsg.InputTokens = &usage.InputTokens
+		assistantMsg.OutputTokens = &usage.OutputTokens
+		assistantMsg.TotalTokens = &usage.TotalTokens
+		if usage.FinishReason != "" {
+			assistantMsg.FinishReason = &usage.FinishReason
+		}
+	}
+
 	if err := s.db.Save(&assistantMsg).Error; err != nil {
 		Log.WithField("error", err).Error("Failed to save final response to database")
+	}
+
+	// Update thread token counts for assistant message
+	if usage != nil {
+		if err := s.updateThreadTokens(chat.ChatID, usage.InputTokens, usage.OutputTokens); err != nil {
+			Log.WithField("error", err).Warn("Failed to update thread tokens for assistant message")
+		}
 	}
 
 	// Send thread data if this was a new thread
@@ -1916,13 +2041,15 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		}
 
 		threadResponse := ThreadResponse{
-			ID:           *chat.ThreadID,
-			Title:        *chat.ThreadTitle,
-			CreatedAt:    chat.CreatedAt,
-			UpdatedAt:    chat.UpdatedAt,
-			ArchivedAt:   chat.ArchivedAt,
-			Settings:     settings,
-			MessageCount: 1, // Will have one user message + one assistant message
+			ID:                *chat.ThreadID,
+			Title:             *chat.ThreadTitle,
+			CreatedAt:         chat.CreatedAt,
+			UpdatedAt:         chat.UpdatedAt,
+			ArchivedAt:        chat.ArchivedAt,
+			Settings:          settings,
+			MessageCount:      1, // Will have one user message + one assistant message
+			TotalInputTokens:  chat.TotalInputTokens,
+			TotalOutputTokens: chat.TotalOutputTokens,
 		}
 
 		threadData, _ := json.Marshal(threadResponse)
@@ -1930,150 +2057,28 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		flusher.Flush()
 	}
 
+	// Send final message with complete metadata
+	finalResponse := MessageResponse{
+		ID:             assistantMsg.ID,
+		Role:           "assistant",
+		Content:        assistantMsg.Content,
+		CreatedAt:      assistantMsg.CreatedAt,
+		IsLive:         true,
+		MessageType:    "normal",
+		InputTokens:    assistantMsg.InputTokens,
+		OutputTokens:   assistantMsg.OutputTokens,
+		TotalTokens:    assistantMsg.TotalTokens,
+		ModelUsed:      assistantMsg.ModelUsed,
+		ResponseTimeMs: assistantMsg.ResponseTimeMs,
+		FinishReason:   assistantMsg.FinishReason,
+	}
+	jsonData, _ = json.Marshal(finalResponse)
+	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	flusher.Flush()
+
 	// Send completion signal
 	fmt.Fprintf(w, "data: {\"type\": \"complete\"}\n\n")
 	flusher.Flush()
-}
-
-// Handle synchronous response without streaming
-func (s *Server) handleSynchronousResponse(w http.ResponseWriter, chat *Chat, userMessage *ChatMessage, isNewThread bool) {
-	// Load chat with full relationships
-	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
-
-	// Get live messages for context (now includes the saved user message)
-	var messages []ChatMessage
-	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
-		Order("created_at ASC").
-		Find(&messages)
-
-	// Convert to OpenAI format (user message is now in DB, no need to append)
-	history := s.convertMessagesToOpenAI(messages, chat)
-
-	// Generate AI response
-	response, err := s.generateResponseForThread(chat, history)
-	if err != nil {
-		Log.WithFields(map[string]interface{}{"thread_id": *chat.ThreadID, "error": err}).Error("Failed to generate response for thread")
-		s.writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to generate response: %v", err))
-		return
-	}
-
-	// Save AI response to database
-	assistantMsg := ChatMessage{
-		ChatID:      chat.ChatID,
-		Role:        "assistant",
-		Content:     &response,
-		IsLive:      true,
-		MessageType: "normal",
-	}
-
-	if err := s.db.Create(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save assistant message")
-		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save response")
-		return
-	}
-
-	// Return the complete response
-	msgResponse := MessageResponse{
-		ID:          assistantMsg.ID,
-		Role:        "assistant",
-		Content:     &response,
-		CreatedAt:   assistantMsg.CreatedAt,
-		IsLive:      true,
-		MessageType: "normal",
-	}
-
-	if isNewThread {
-		// Include thread data in response for new threads
-		settings := ThreadSettings{
-			ModelName:    chat.ModelName,
-			Temperature:  chat.Temperature,
-			RoleID:       chat.RoleID,
-			Lang:         chat.Lang,
-			MasterPrompt: chat.MasterPrompt,
-			ContextLimit: chat.ContextLimit,
-		}
-
-		threadResponse := ThreadResponse{
-			ID:           *chat.ThreadID,
-			Title:        *chat.ThreadTitle,
-			CreatedAt:    chat.CreatedAt,
-			UpdatedAt:    chat.UpdatedAt,
-			ArchivedAt:   chat.ArchivedAt,
-			Settings:     settings,
-			MessageCount: 2, // User message + assistant message
-		}
-
-		combinedResponse := ChatWithThreadResponse{
-			Message: &msgResponse,
-			Thread:  &threadResponse,
-		}
-
-		s.writeJSONSuccess(w, "Response generated successfully", combinedResponse)
-	} else {
-		s.writeJSONSuccess(w, "Response generated successfully", msgResponse)
-	}
-}
-
-// Helper methods for AI providers
-func (s *Server) callAnthropic(ctx context.Context, modelID string, history []openai.ChatMessage, temperature float64) (string, error) {
-	// For webapp integration, use fallback to OpenAI for now
-	return "", fmt.Errorf("anthropic integration not implemented for webapp - use OpenAI models")
-}
-
-func (s *Server) callGemini(ctx context.Context, modelID string, history []openai.ChatMessage, temperature float64) (string, error) {
-	// For webapp integration, use fallback to OpenAI for now
-	return "", fmt.Errorf("gemini integration not implemented for webapp - use OpenAI models")
-}
-
-func (s *Server) generateResponseForThread(chat *Chat, history []openai.ChatMessage) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	model := s.getModel(chat.ModelName)
-	if model == nil {
-		return "", fmt.Errorf("model %s not found", chat.ModelName)
-	}
-
-	options := openai.ChatCompletionOptions{}.SetTemperature(chat.Temperature)
-
-	switch model.Provider {
-	case "openai":
-		response, err := s.openAI.CreateChatCompletionWithContext(ctx, model.ModelID, history, options)
-		if err != nil {
-			return "", err
-		}
-		if len(response.Choices) > 0 {
-			if content, ok := response.Choices[0].Message.Content.(string); ok {
-				return content, nil
-			}
-		}
-		return "", fmt.Errorf("no response generated")
-
-	case "anthropic":
-		if s.anthropic == nil {
-			return "", fmt.Errorf("anthropic client not initialized")
-		}
-		// Convert OpenAI messages to Anthropic format and make the call
-		response, err := s.callAnthropic(ctx, model.ModelID, history, chat.Temperature)
-		if err != nil {
-			return "", err
-		}
-		return response, nil
-
-	case "gemini":
-		if s.gemini == nil {
-			return "", fmt.Errorf("gemini client not initialized")
-		}
-		// Convert OpenAI messages to Gemini format and make the call
-		response, err := s.callGemini(ctx, model.ModelID, history, chat.Temperature)
-		if err != nil {
-			return "", err
-		}
-		return response, nil
-
-	default:
-		return "", fmt.Errorf("unsupported provider: %s", model.Provider)
-	}
 }
 
 // Input validation and sanitization helpers
@@ -2186,54 +2191,22 @@ func validateUUID(uuidStr string) error {
 	return nil
 }
 
-// CSRF token management functions
+// estimateTokenCount provides a rough estimate of token count for text
+// This is an approximation - actual token count can vary significantly
+func (s *Server) estimateTokenCount(text string) int {
+	// Rough estimation: 1 token ≈ 4 characters or 0.75 words
+	// This is a simplified estimate - real tokenization is more complex
+	words := len(strings.Fields(text))
+	chars := len(text)
 
-// generateCSRFToken generates a cryptographically secure random token
-func generateCSRFToken() (string, error) {
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+	// Use the higher estimate between word-based and character-based
+	wordEstimate := int(float64(words) / 0.75)
+	charEstimate := chars / 4
+
+	if wordEstimate > charEstimate {
+		return wordEstimate
 	}
-	return base64.URLEncoding.EncodeToString(bytes), nil
-}
-
-// getOrCreateCSRFToken gets or creates a CSRF token for the user
-func (store *CSRFTokenStore) getOrCreateCSRFToken(userID uint) (string, error) {
-	store.mutex.Lock()
-	defer store.mutex.Unlock()
-
-	if token, exists := store.tokens[userID]; exists {
-		return token, nil
-	}
-
-	token, err := generateCSRFToken()
-	if err != nil {
-		return "", err
-	}
-
-	store.tokens[userID] = token
-	return token, nil
-}
-
-// validateCSRFToken validates a CSRF token for the user
-func (store *CSRFTokenStore) validateCSRFToken(userID uint, token string) bool {
-	store.mutex.RLock()
-	defer store.mutex.RUnlock()
-
-	expectedToken, exists := store.tokens[userID]
-	if !exists {
-		return false
-	}
-
-	// Use constant-time comparison to prevent timing attacks
-	return subtle.ConstantTimeCompare([]byte(expectedToken), []byte(token)) == 1
-}
-
-// removeCSRFToken removes a CSRF token (useful for cleanup)
-func (store *CSRFTokenStore) removeCSRFToken(userID uint) {
-	store.mutex.Lock()
-	defer store.mutex.Unlock()
-	delete(store.tokens, userID)
+	return charEstimate
 }
 
 // saveBase64Image saves base64 image data to a file and returns the URL

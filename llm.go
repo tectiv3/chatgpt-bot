@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -118,7 +120,7 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 
 	options := openai.ResponseOptions{}
 	options.SetInstructions(instructions)
-	options.SetMaxOutputTokens(4000)
+	options.SetMaxOutputTokens(10000)
 	if !model.Reasoning {
 		options.SetTemperature(chat.Temperature)
 	}
@@ -132,6 +134,9 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	// Add built-in search tool if configured
 	if len(model.SearchTool) > 0 {
 		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
+	}
+	if model.CodeInterpreter {
+		tools = append(tools, openai.NewBuiltinToolWithContainer("code_interpreter", "auto"))
 	}
 
 	if len(tools) > 0 {
@@ -162,6 +167,8 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 
 			return comp.err
 		}
+		event := comp.event
+		// Log.WithField("event", event.Type).Debug("Stream event")
 
 		if comp.done {
 			// Handle function calls if any
@@ -198,6 +205,11 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 				return nil
 			}
 
+			if event.Response != nil && event.Response.Usage != nil {
+				Log.WithField("usage", event.Response.Usage).Info("Response stream finished")
+				tokens = event.Response.Usage.TotalTokens
+			}
+
 			// Update token count and save history
 			if tokens > 0 {
 				chat.updateTotalTokens(tokens)
@@ -210,8 +222,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 
 			return nil
 		}
-
-		event := comp.event
 
 		switch event.Type {
 		case "response.output_item.added":
@@ -238,10 +248,13 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 				switch event.Item.Type {
 				case "message":
 					Log.WithField("user", c.Sender().Username).Info("Message output completed")
+					s.checkAnnotations(c, sentMessage, event.Item.Content)
 					s.updateReply(chat, reply, c)
+
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
 					Log.WithField("user", c.Sender().Username).WithField("function", event.Item.Name).Info("Function call completed")
+
 				}
 			}
 
@@ -255,6 +268,89 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	}
 
 	return nil
+}
+
+func (s *Server) checkAnnotations(c tele.Context, m *tele.Message, content []openai.OutputContent) {
+	for _, content := range content {
+		text := content.Text
+		if len(content.Annotations) == 1 {
+			s.processAnnotation(c, m, content.Annotations[0], "")
+		} else {
+			for _, annotation := range content.Annotations {
+				if annotation.Type != "container_file_citation" {
+					continue
+				}
+				s.processAnnotation(c, m, annotation, text)
+			}
+		}
+	}
+}
+
+func (s *Server) processAnnotation(c tele.Context, m *tele.Message, annotation openai.Annotation, text string) {
+	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
+	if err != nil {
+		Log.WithField("error", err).Error("Failed to retrieve container file")
+		return
+	}
+	Log.WithField("File", len(result)).Info(annotation.Filename)
+	// _ = c.Send(
+	//     &tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"},
+	//     replyMenu,
+	// )
+	// _ = c.Send(&tele.Photo{File: tele.FromReader(bytes.NewReader(result))})
+
+	ext := filepath.Ext(annotation.Filename)
+	switch strings.ToLower(ext) {
+	case ".png", ".jpg", ".jpeg", ".gif":
+		file := &tele.Photo{File: tele.FromReader(bytes.NewReader(result))}
+		if len(text) > 0 {
+			file.Caption = text
+			c.Bot().Edit(m, file)
+		} else {
+			c.Send(file)
+		}
+	default:
+		mimes := map[string]string{
+			".c":    "text/x-c",
+			".cs":   "text/x-csharp",
+			".cpp":  "text/x-c++",
+			".csv":  "text/csv",
+			".doc":  "application/msword",
+			".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			".html": "text/html",
+			".java": "text/x-java",
+			".json": "application/json",
+			".md":   "text/markdown",
+			".pdf":  "application/pdf",
+			".php":  "text/x-php",
+			".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			".py":   "text/x-python",
+			".rb":   "text/x-ruby",
+			".tex":  "text/x-tex",
+			".txt":  "text/plain",
+			".css":  "text/css",
+			".js":   "text/javascript",
+			".sh":   "application/x-sh",
+			".ts":   "application/typescript",
+			".pkl":  "application/octet-stream",
+			".tar":  "application/x-tar",
+			".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			".xml":  "application/xml",
+			".zip":  "application/zip",
+		}
+
+		file := &tele.Document{
+			File:     tele.FromReader(bytes.NewReader(result)),
+			FileName: annotation.Filename,
+			MIME:     mimes[strings.ToLower(ext)],
+		}
+		if len(text) > 0 {
+			file.Caption = text
+			c.Bot().Edit(m, file)
+		} else {
+			c.Send(file)
+		}
+	}
 }
 
 // getResponse uses the non-streaming Responses API

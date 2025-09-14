@@ -158,8 +158,7 @@ createApp({
             showSettings: false,
             showRoleManager: false,
             showRoleEditor: false,
-            showDeleteConfirm: false,
-            deleteThreadId: null,
+
             showArchivedSection: false,
 
             // Edit title modal state
@@ -375,14 +374,14 @@ createApp({
         hideInitialLoader() {
             const loader = document.getElementById('initial-loader')
             const app = document.getElementById('app')
-            
+
             if (loader && app) {
                 // Start fade out animation
                 loader.classList.add('fade-out')
-                
+
                 // Show Vue app
                 app.style.visibility = 'visible'
-                
+
                 // Remove loader after animation completes
                 setTimeout(() => {
                     if (loader.parentNode) {
@@ -543,7 +542,7 @@ createApp({
 
             if (savedThreadId) {
                 // Check if the saved thread still exists in active or archived threads
-                const threadExists = 
+                const threadExists =
                     this.threads.find(t => t.id === savedThreadId) ||
                     this.archivedThreads.find(t => t.id === savedThreadId)
 
@@ -869,90 +868,109 @@ createApp({
                     const lines = chunk.split('\n')
 
                     for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const jsonData = line.substring(6).trim()
-                            if (jsonData) {
-                                try {
-                                    const data = JSON.parse(jsonData)
+                        if (!line.startsWith('data: ')) continue
+                        const jsonData = line.substring(6).trim()
+                        if (!jsonData) continue
 
-                                    if (data.type === 'complete') {
-                                        this.streaming = false
+                        try {
+                            const data = JSON.parse(jsonData)
 
-                                        // Mark the streaming message as complete to stop indicator
-                                        if (streamingMessageId) {
-                                            const message = this.messages.find(
-                                                m => m.id === streamingMessageId
-                                            )
-                                            if (message) {
-                                                message.is_complete = true
-                                                message.isStreaming = false
-                                            }
+                            if (data.type === 'complete') {
+                                this.streaming = false
 
-                                            // Update thread title if this is the first message exchange
-                                            this.generateTitleFromConversation(
-                                                streamingMessageId
-                                            )
-                                        }
+                                if (streamingMessageId) {
+                                    const message = this.messages.find(
+                                        m => m.id === streamingMessageId
+                                    )
+                                    if (message) {
+                                        message.is_complete = true
+                                        message.isStreaming = false
+                                        console.log({ message })
 
-                                        return
-                                    }
+                                        // Update thread token totals if usage data is available
+                                        if (message.input_tokens || message.output_tokens) {
+                                            if (this.currentThread) {
+                                                this.currentThread.total_input_tokens =
+                                                    (this.currentThread.total_input_tokens ||
+                                                        0) + (message.input_tokens || 0)
+                                                this.currentThread.total_output_tokens =
+                                                    (this.currentThread.total_output_tokens ||
+                                                        0) + (message.output_tokens || 0)
 
-                                    // Handle streaming message updates
-                                    if (
-                                        data.role === 'assistant' &&
-                                        data.content !== undefined
-                                    ) {
-                                        // Find or create the streaming message
-                                        if (!streamingMessageId) {
-                                            // First update - create assistant message
-                                            const assistantMessage = {
-                                                id: data.id,
-                                                role: 'assistant',
-                                                content: data.content || '',
-                                                created_at:
-                                                    data.created_at ||
-                                                    new Date().toISOString(),
-                                                is_live: true,
-                                                message_type: 'normal',
-                                                is_complete: false,
-                                                isStreaming: true,
-                                            }
-                                            this.messages.push(assistantMessage)
-                                            streamingMessageId = data.id
-
-                                            this.$nextTick(() => this.scrollToBottom(false))
-                                        } else {
-                                            // Update streaming content with throttling
-                                            this.streamingBuffer = data.content || ''
-                                            const now = Date.now()
-
-                                            if (
-                                                now - lastUpdateTime >=
-                                                this.streamingThrottleMs
-                                            ) {
-                                                this.updateStreamingMessage(
-                                                    streamingMessageId,
-                                                    this.streamingBuffer
+                                                // Also update in threads array
+                                                const threadIndex = this.threads.findIndex(
+                                                    t => t.id === this.currentThreadId
                                                 )
-                                                lastUpdateTime = now
-                                            } else {
-                                                if (this.streamingUpdateTimer) {
-                                                    clearTimeout(this.streamingUpdateTimer)
+                                                if (threadIndex !== -1) {
+                                                    this.threads[
+                                                        threadIndex
+                                                    ].total_input_tokens =
+                                                        this.currentThread.total_input_tokens
+                                                    this.threads[
+                                                        threadIndex
+                                                    ].total_output_tokens =
+                                                        this.currentThread.total_output_tokens
                                                 }
-                                                this.streamingUpdateTimer = setTimeout(() => {
-                                                    this.updateStreamingMessage(
-                                                        streamingMessageId,
-                                                        this.streamingBuffer
-                                                    )
-                                                    lastUpdateTime = Date.now()
-                                                }, this.streamingThrottleMs - (now - lastUpdateTime))
                                             }
                                         }
                                     }
-                                } catch (e) {
-                                    // Error parsing streaming data
+
+                                    this.generateTitleFromConversation(streamingMessageId)
+                                }
+
+                                return
+                            }
+
+                            // Handle streaming message updates
+                            if (data.role === 'assistant' && data.content !== undefined) {
+                                if (!streamingMessageId) {
+                                    const assistantMessage = {
+                                        ...data,
+                                        role: 'assistant',
+                                        content: data.content || '',
+                                        created_at:
+                                            data.created_at || new Date().toISOString(),
+                                        is_live: true,
+                                        message_type: 'normal',
+                                        is_complete: false,
+                                        isStreaming: true,
+                                    }
+                                    this.messages.push(assistantMessage)
+                                    streamingMessageId = data.id
+
+                                    this.$nextTick(() => this.scrollToBottom(false))
+                                } else {
+                                    this.streamingBuffer = data.content || ''
+
+                                    // Update meta information if available
+                                    const message = this.messages.find(
+                                        m => m.id === streamingMessageId
+                                    )
+
+                                    const now = Date.now()
+
+                                    if (now - lastUpdateTime >= this.streamingThrottleMs) {
+                                        this.updateStreamingMessage(
+                                            streamingMessageId,
+                                            this.streamingBuffer
+                                        )
+                                        lastUpdateTime = now
+                                    } else {
+                                        if (this.streamingUpdateTimer) {
+                                            clearTimeout(this.streamingUpdateTimer)
+                                        }
+                                        this.streamingUpdateTimer = setTimeout(() => {
+                                            this.updateStreamingMessage(
+                                                streamingMessageId,
+                                                this.streamingBuffer
+                                            )
+                                            lastUpdateTime = Date.now()
+                                        }, this.streamingThrottleMs - (now - lastUpdateTime))
+                                    }
                                 }
                             }
+                        } catch (e) {
+                            // Error parsing streaming data
                         }
                     }
                 }
@@ -1221,34 +1239,25 @@ createApp({
         },
 
         // Thread management functions
-        confirmDeleteThread(threadId) {
-            // Show confirmation dialog for all threads
-            this.deleteThreadId = threadId
-            this.showDeleteConfirm = true
-        },
-
-        cancelDelete() {
-            this.showDeleteConfirm = false
-            this.deleteThreadId = null
-        },
-
-        async deleteThread() {
-            if (!this.deleteThreadId) return
+        async confirmDeleteThread(threadId) {
+            // Use browser confirm dialog
+            const confirmed = confirm(
+                'Are you sure you want to delete this thread? This cannot be undone.'
+            )
+            if (!confirmed) return
 
             try {
                 // Make API call to delete thread
-                await this.apiCall(`/api/threads/${this.deleteThreadId}`, {
+                await this.apiCall(`/api/threads/${threadId}`, {
                     method: 'DELETE',
                 })
 
                 // Remove from local arrays
-                this.threads = this.threads.filter(t => t.id !== this.deleteThreadId)
-                this.archivedThreads = this.archivedThreads.filter(
-                    t => t.id !== this.deleteThreadId
-                )
+                this.threads = this.threads.filter(t => t.id !== threadId)
+                this.archivedThreads = this.archivedThreads.filter(t => t.id !== threadId)
 
                 // If currently selected thread was deleted, clear selection
-                if (this.currentThreadId === this.deleteThreadId) {
+                if (this.currentThreadId === threadId) {
                     this.currentThreadId = null
                     this.currentThread = null
                     this.messages = []
@@ -1266,9 +1275,6 @@ createApp({
                         this.messages = []
                     }
                 }
-
-                this.showDeleteConfirm = false
-                this.deleteThreadId = null
 
                 // Thread deleted
             } catch (error) {
@@ -1357,11 +1363,12 @@ createApp({
                 message.content = content
                 // Add streaming cursor to the end of content during streaming
                 if (message.isStreaming && content && content.length > 0) {
-                    message.displayContent = content + '<span class="streaming-indicator">▌</span>'
+                    message.displayContent =
+                        content + '<span class="streaming-indicator">▌</span>'
                 } else {
                     message.displayContent = content
                 }
-                
+
                 this.$nextTick(() => {
                     const container = this.$refs.messagesContainer
                     if (container) {
@@ -1424,14 +1431,19 @@ createApp({
 
         // DeviceStorage integration methods
         async loadUserPreferences() {
-            const [selectedModel, selectedRole, defaultTemperature, enableStreaming, selectedThreadId] =
-                await Promise.all([
-                    this.deviceStorage.getItem('selectedModel', 'gpt-4o'),
-                    this.deviceStorage.getItem('selectedRole', null),
-                    this.deviceStorage.getItem('defaultTemperature', 1.0),
-                    this.deviceStorage.getItem('enableStreaming', true),
-                    this.deviceStorage.getItem('selectedThreadId', null),
-                ])
+            const [
+                selectedModel,
+                selectedRole,
+                defaultTemperature,
+                enableStreaming,
+                selectedThreadId,
+            ] = await Promise.all([
+                this.deviceStorage.getItem('selectedModel', 'gpt-4o'),
+                this.deviceStorage.getItem('selectedRole', null),
+                this.deviceStorage.getItem('defaultTemperature', 1.0),
+                this.deviceStorage.getItem('enableStreaming', true),
+                this.deviceStorage.getItem('selectedThreadId', null),
+            ])
 
             this.userPreferences = {
                 selectedModel,
@@ -1606,6 +1618,52 @@ createApp({
             } catch (error) {
                 console.error('Failed to copy message:', error)
                 this.showError('Failed to copy message to clipboard')
+            }
+        },
+
+        // Delete a message
+        async deleteMessage(messageId) {
+            if (!messageId) return
+
+            // Confirm deletion
+            if (!confirm('Are you sure you want to delete this message?')) {
+                return
+            }
+
+            try {
+                await this.apiCall(`/api/messages/${messageId}`, {
+                    method: 'DELETE',
+                })
+
+                // Remove message from local array
+                this.messages = this.messages.filter(m => m.id !== messageId)
+            } catch (error) {
+                console.error('Failed to delete message:', error)
+                this.showError('Failed to delete message')
+            }
+        },
+
+        // Format response time for display
+        formatResponseTime(ms) {
+            if (ms < 1000) {
+                return `${ms}ms`
+            } else {
+                return `${(ms / 1000).toFixed(1)}s`
+            }
+        },
+
+        // Format thread token totals for display
+        formatThreadTokens(thread) {
+            if (!thread.total_input_tokens && !thread.total_output_tokens) {
+                return '0'
+            }
+            const total = (thread.total_input_tokens || 0) + (thread.total_output_tokens || 0)
+            if (total < 1000) {
+                return total.toString()
+            } else if (total < 1000000) {
+                return `${(total / 1000).toFixed(1)}k`
+            } else {
+                return `${(total / 1000000).toFixed(1)}M`
             }
         },
 

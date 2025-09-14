@@ -128,6 +128,11 @@
                                             >
                                             <span>•</span>
                                             <span>[[ formatDate(thread.updated_at) ]]</span>
+                                            <span v-if="thread.total_input_tokens || thread.total_output_tokens">•</span>
+                                            <span v-if="thread.total_input_tokens || thread.total_output_tokens" class="text-tg-link">
+                                                <i class="fas fa-calculator text-xs"></i>
+                                                [[ formatThreadTokens(thread) ]]
+                                            </span>
                                         </div>
                                     </div>
                                     <div
@@ -448,7 +453,7 @@
                                         <!-- Copy button -->
                                         <button
                                             @click="copyMessage(message.content)"
-                                            class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs"
+                                            class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs z-10"
                                             :class="
                                                 message.role === 'user'
                                                     ? 'bg-white/20 hover:bg-white/30 text-white'
@@ -496,15 +501,55 @@
                                         :class="
                                             message.role === 'user'
                                                 ? 'justify-end'
-                                                : 'justify-start'
+                                                : 'justify-between'
                                         "
                                     >
-                                        <span>[[ formatTime(message.created_at) ]]</span>
-                                        <span
-                                            v-if="!message.is_live"
-                                            class="px-2 py-0.5 bg-tg-hint/20 rounded-full"
-                                            >Archived</span
+                                        <!-- Time and stats on left for assistant, right for user -->
+                                        <div class="flex items-center gap-2">
+                                            <span>[[ formatTime(message.created_at) ]]</span>
+                                            
+                                            <!-- Token and model info for assistant messages -->
+                                            <span v-if="message.role === 'assistant' && (message.total_tokens || (message.input_tokens && message.output_tokens))">
+                                                <i class="fas fa-calculator text-xs"></i>
+                                                [[ message.total_tokens || ((message.input_tokens || 0) + (message.output_tokens || 0)) ]] tokens
+                                            </span>
+                                            
+                                            <span v-if="message.role === 'assistant' && message.response_time_ms">
+                                                <i class="fas fa-clock text-xs"></i>
+                                                [[ formatResponseTime(message.response_time_ms) ]]
+                                            </span>
+                                            
+                                            <span v-if="message.role === 'assistant' && message.model_used">
+                                                <i class="fas fa-robot text-xs"></i>
+                                                [[ message.model_used ]]
+                                            </span>
+                                            
+                                            <span
+                                                v-if="!message.is_live"
+                                                class="px-2 py-0.5 bg-tg-hint/20 rounded-full"
+                                            >Archived</span>
+                                        </div>
+                                        
+                                        <!-- Delete button on the right for assistant messages -->
+                                        <button
+                                            v-if="message.role === 'assistant'"
+                                            @click="deleteMessage(message.id)"
+                                            class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 hover:text-red-500"
+                                            title="Delete message"
                                         >
+                                            <i class="fas fa-trash text-xs"></i>
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Delete button below metadata for user messages -->
+                                    <div v-if="message.role === 'user'" class="flex justify-end mt-1 px-1">
+                                        <button
+                                            @click="deleteMessage(message.id)"
+                                            class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 hover:text-red-500 text-xs"
+                                            title="Delete message"
+                                        >
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </div>
                                 </div>
 
@@ -904,59 +949,7 @@
                 </div>
             </div>
 
-            <!-- Delete Confirmation Dialog -->
-            <div
-                v-if="showDeleteConfirm"
-                class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-                @click="cancelDelete"
-            >
-                <div
-                    class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col"
-                    @click.stop
-                >
-                    <div
-                        class="flex-shrink-0 flex items-center justify-between p-6 border-b border-white/10 dark:border-white/10"
-                    >
-                        <h3 class="text-xl font-semibold text-tg-text">Delete Thread</h3>
-                        <button
-                            @click="cancelDelete"
-                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors"
-                        >
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
 
-                    <div class="flex-1 overflow-y-auto p-6 text-center">
-                        <div
-                            class="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center"
-                        >
-                            <i
-                                class="fas fa-exclamation-triangle text-2xl text-tg-destructive"
-                            ></i>
-                        </div>
-                        <p class="text-tg-text">
-                            Are you sure you want to delete this thread? This cannot be undone.
-                        </p>
-                    </div>
-
-                    <div
-                        class="flex-shrink-0 p-6 flex gap-3 border-t border-white/10 dark:border-white/10"
-                    >
-                        <button
-                            @click="cancelDelete"
-                            class="flex-1 py-2.5 px-4 rounded-lg bg-tg-secondary text-tg-text hover:bg-tg-hint/20 transition-colors font-medium"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            @click="deleteThread"
-                            class="flex-1 py-2.5 px-4 rounded-lg bg-tg-destructive text-white hover:bg-red-600 transition-colors font-medium"
-                        >
-                            Delete Thread
-                        </button>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <script src="/assets/js/app.js?777"></script>
