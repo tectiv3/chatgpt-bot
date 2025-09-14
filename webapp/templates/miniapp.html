@@ -484,11 +484,11 @@
                                         ></div>
 
                                         <!-- Annotations display -->
-                                        <div v-if="message.annotation_file_id" class="mt-3 pr-8">
+                                        <div v-if="message.annotation_container_id && message.annotation_file_id" class="mt-3 pr-8">
                                             <!-- Image annotation -->
                                             <div v-if="message.annotation_file_type === 'image'" class="annotation-image">
                                                 <img 
-                                                    :src="'/uploads/annotations/' + getAnnotationFilename(message.annotation_file_path)"
+                                                    :src="getAnnotationProxyUrl(message)"
                                                     :alt="message.annotation_filename"
                                                     class="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-white/10"
                                                     @click="viewImageFullscreen(message)"
@@ -504,7 +504,7 @@
                                             <!-- Document/other file annotation -->
                                             <div v-else class="annotation-file">
                                                 <a 
-                                                    :href="'/uploads/annotations/' + getAnnotationFilename(message.annotation_file_path)"
+                                                    :href="getAnnotationProxyUrl(message)"
                                                     :download="message.annotation_filename"
                                                     class="inline-flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
                                                     :class="message.role === 'user' 

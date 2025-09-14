@@ -91,10 +91,10 @@ type MessageResponse struct {
 	ResponseTimeMs *int64  `json:"response_time_ms,omitempty"`
 	FinishReason   *string `json:"finish_reason,omitempty"`
 
-	AnnotationFileID   *string `json:"annotation_file_id,omitempty"`
-	AnnotationFilename *string `json:"annotation_filename,omitempty"`
-	AnnotationFileType *string `json:"annotation_file_type,omitempty"`
-	AnnotationFilePath *string `json:"annotation_file_path,omitempty"`
+	AnnotationContainerID *string `json:"annotation_container_id,omitempty"`
+	AnnotationFileID      *string `json:"annotation_file_id,omitempty"`
+	AnnotationFilename    *string `json:"annotation_filename,omitempty"`
+	AnnotationFileType    *string `json:"annotation_file_type,omitempty"`
 }
 
 type ChatWithThreadResponse struct {
@@ -129,7 +129,7 @@ func (s *Server) setupWebServer() *http.ServeMux {
 
 	// Serve static files
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("webapp/assets"))))
-	// Serve uploaded images
+	// Serve uploaded images (user uploads only, not annotations)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
 
 	// Mini app route
@@ -145,6 +145,7 @@ func (s *Server) setupWebServer() *http.ServeMux {
 	mux.HandleFunc("/api/messages/", s.apiMiddleware(s.handleMessagesWithID)) // Message operations (delete, etc.)
 	mux.HandleFunc("/api/user", s.apiMiddleware(s.getUserInfo))
 	mux.HandleFunc("/api/upload-image", s.apiMiddleware(s.handleImageUpload))
+	mux.HandleFunc("/api/annotations/", s.apiMiddleware(s.handleAnnotationProxy))
 
 	return mux
 }
@@ -178,11 +179,15 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Authentication
+		// Authentication - check both header and query parameter
 		initDataString := r.Header.Get("Telegram-Init-Data")
 		if initDataString == "" {
-			s.writeJSONError(w, http.StatusUnauthorized, "Missing Telegram init data")
-			return
+			// For image/file requests, check query parameter
+			initDataString = r.URL.Query().Get("tg_init_data")
+			if initDataString == "" {
+				s.writeJSONError(w, http.StatusUnauthorized, "Missing Telegram init data")
+				return
+			}
 		}
 
 		if err := initdata.Validate(initDataString, s.conf.TelegramBotToken, 24*time.Hour); err != nil {
@@ -678,10 +683,10 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			ResponseTimeMs: msg.ResponseTimeMs,
 			FinishReason:   msg.FinishReason,
 
-			AnnotationFileID:   msg.AnnotationFileID,
-			AnnotationFilename: msg.AnnotationFilename,
-			AnnotationFileType: msg.AnnotationFileType,
-			AnnotationFilePath: msg.AnnotationFilePath,
+			AnnotationContainerID: msg.AnnotationContainerID,
+			AnnotationFileID:      msg.AnnotationFileID,
+			AnnotationFilename:    msg.AnnotationFilename,
+			AnnotationFileType:    msg.AnnotationFileType,
 		}
 	}
 
@@ -2100,10 +2105,10 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		ResponseTimeMs: assistantMsg.ResponseTimeMs,
 		FinishReason:   assistantMsg.FinishReason,
 
-		AnnotationFileID:   assistantMsg.AnnotationFileID,
-		AnnotationFilename: assistantMsg.AnnotationFilename,
-		AnnotationFileType: assistantMsg.AnnotationFileType,
-		AnnotationFilePath: assistantMsg.AnnotationFilePath,
+		AnnotationContainerID: assistantMsg.AnnotationContainerID,
+		AnnotationFileID:      assistantMsg.AnnotationFileID,
+		AnnotationFilename:    assistantMsg.AnnotationFilename,
+		AnnotationFileType:    assistantMsg.AnnotationFileType,
 	}
 	jsonData, _ = json.Marshal(finalResponse)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
@@ -2113,7 +2118,6 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	fmt.Fprintf(w, "data: {\"type\": \"complete\"}\n\n")
 	flusher.Flush()
 }
-
 
 // processWebappAnnotations processes annotations from OpenAI Response API
 func (s *Server) processWebappAnnotations(assistantMsg *ChatMessage, content []openai.OutputContent) {
@@ -2130,51 +2134,35 @@ func (s *Server) processWebappAnnotations(assistantMsg *ChatMessage, content []o
 	}
 }
 
-// processWebappAnnotation processes a single annotation and stores file data
+// processWebappAnnotation processes a single annotation and stores metadata only (no local files)
 func (s *Server) processWebappAnnotation(assistantMsg *ChatMessage, annotation openai.Annotation) {
-	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
-	if err != nil {
-		Log.WithField("error", err).Error("Failed to retrieve container file for webapp")
-		return
-	}
+	Log.WithField("container_id", annotation.ContainerID).WithField("file_id", annotation.FileID).
+		WithField("filename", annotation.Filename).Info("Processing annotation for webapp")
 
-	Log.WithField("File", len(result)).WithField("filename", annotation.Filename).Info("Processing annotation for webapp")
-
+	// Determine file type based on extension
 	ext := filepath.Ext(annotation.Filename)
 	var fileType string
 	switch strings.ToLower(ext) {
-	case ".png", ".jpg", ".jpeg", ".gif":
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
 		fileType = "image"
 	case ".txt", ".md", ".py", ".js", ".html", ".css", ".json":
 		fileType = "text"
 	case ".pdf":
 		fileType = "document"
+	case ".csv", ".xlsx", ".xls":
+		fileType = "spreadsheet"
 	default:
 		fileType = "document"
 	}
 
-	annotationsDir := "uploads/annotations"
-	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
-		Log.WithField("error", err).Error("Failed to create annotations directory")
-		return
-	}
-
-	timestamp := time.Now().Format("20060102-150405")
-	randomID := uuid.New().String()[:8]
-	filename := fmt.Sprintf("%s_%s_%s", timestamp, randomID, annotation.Filename)
-	filePath := filepath.Join(annotationsDir, filename)
-
-	if err := os.WriteFile(filePath, result, 0644); err != nil {
-		Log.WithField("error", err).Error("Failed to save annotation file")
-		return
-	}
-
+	// Store only metadata - no local file saving
+	assistantMsg.AnnotationContainerID = &annotation.ContainerID
 	assistantMsg.AnnotationFileID = &annotation.FileID
 	assistantMsg.AnnotationFilename = &annotation.Filename
 	assistantMsg.AnnotationFileType = &fileType
-	assistantMsg.AnnotationFilePath = &filePath
 
-	Log.WithField("filepath", filePath).WithField("type", fileType).Info("Saved annotation file for webapp")
+	Log.WithField("container_id", annotation.ContainerID).WithField("file_id", annotation.FileID).
+		WithField("type", fileType).Info("Stored annotation metadata for webapp (no local file)")
 }
 
 // Input validation and sanitization helpers
@@ -2344,4 +2332,133 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	// Return file system path for database storage
 	// The frontend will get the URL path from the API response
 	return filePath, nil
+}
+
+// handleAnnotationProxy securely serves annotation files from OpenAI without local storage
+func (s *Server) handleAnnotationProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	user := getUserFromContext(r)
+	if user == nil {
+		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
+		return
+	}
+
+	// Parse URL path: /api/annotations/{container_id}/{file_id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/annotations/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid annotation URL format")
+		return
+	}
+
+	containerID := parts[0]
+	fileID := parts[1]
+
+	// Validate parameters
+	if containerID == "" || fileID == "" {
+		s.writeJSONError(w, http.StatusBadRequest, "Container ID and file ID are required")
+		return
+	}
+
+	// Security: Verify user owns a message containing this annotation
+	var message ChatMessage
+	err := s.db.Joins("JOIN chats ON chat_messages.chat_id = chats.chat_id").
+		Where("chats.user_id = ? AND chat_messages.annotation_container_id = ? AND chat_messages.annotation_file_id = ?",
+			user.ID, containerID, fileID).
+		First(&message).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			s.writeJSONError(w, http.StatusNotFound, "Annotation not found or access denied")
+		} else {
+			s.writeJSONError(w, http.StatusInternalServerError, "Database error")
+		}
+		return
+	}
+
+	// Rate limiting for file downloads
+	if !s.rateLimiter.Allow(user.ID) {
+		s.writeJSONError(w, http.StatusTooManyRequests, "Rate limit exceeded")
+		return
+	}
+
+	// Fetch file from OpenAI
+	fileData, err := s.openAI.RetrieveContainerFile(containerID, fileID)
+	if err != nil {
+		Log.WithField("error", err).WithField("container_id", containerID).WithField("file_id", fileID).
+			Error("Failed to retrieve container file")
+		s.writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve file")
+		return
+	}
+
+	// Set appropriate content type and headers
+	filename := "file"
+	if message.AnnotationFilename != nil {
+		filename = *message.AnnotationFilename
+	}
+
+	// Determine content type based on file extension
+	contentType := "application/octet-stream"
+	if message.AnnotationFileType != nil {
+		switch *message.AnnotationFileType {
+		case "image":
+			ext := strings.ToLower(filepath.Ext(filename))
+			switch ext {
+			case ".png":
+				contentType = "image/png"
+			case ".jpg", ".jpeg":
+				contentType = "image/jpeg"
+			case ".gif":
+				contentType = "image/gif"
+			case ".webp":
+				contentType = "image/webp"
+			}
+		case "text":
+			contentType = "text/plain"
+		case "document":
+			if strings.ToLower(filepath.Ext(filename)) == ".pdf" {
+				contentType = "application/pdf"
+			}
+		case "spreadsheet":
+			ext := strings.ToLower(filepath.Ext(filename))
+			switch ext {
+			case ".csv":
+				contentType = "text/csv"
+			case ".xlsx":
+				contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(fileData)))
+
+	// Set appropriate disposition header
+	isImage := message.AnnotationFileType != nil && *message.AnnotationFileType == "image"
+	if isImage {
+		// For images, allow inline display
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+		// Add cache headers for images
+		w.Header().Set("Cache-Control", "private, max-age=3600") // Cache for 1 hour
+	} else {
+		// For other files, force download
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		w.Header().Set("Cache-Control", "private, no-cache")
+	}
+
+	// Security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+
+	// Stream file directly to client without saving to disk
+	w.WriteHeader(http.StatusOK)
+	w.Write(fileData)
+
+	Log.WithField("container_id", containerID).WithField("file_id", fileID).
+		WithField("filename", filename).WithField("user_id", user.ID).
+		Info("Served annotation file via secure proxy")
 }

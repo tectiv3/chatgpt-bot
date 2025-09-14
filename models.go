@@ -247,10 +247,10 @@ type ChatMessage struct {
 	FinishReason   *string `json:"finish_reason,omitempty" gorm:"size:50;nullable"`
 
 	// Annotation data for code interpreter outputs (nullable for backwards compatibility)
-	AnnotationFileID   *string `json:"annotation_file_id,omitempty" gorm:"size:100;nullable"`
-	AnnotationFilename *string `json:"annotation_filename,omitempty" gorm:"size:255;nullable"`
-	AnnotationFileType *string `json:"annotation_file_type,omitempty" gorm:"size:50;nullable"`  // image, document, etc.
-	AnnotationFilePath *string `json:"annotation_file_path,omitempty" gorm:"size:500;nullable"` // Local storage path
+	AnnotationContainerID *string `json:"annotation_container_id,omitempty" gorm:"size:100;nullable"` // OpenAI container ID
+	AnnotationFileID      *string `json:"annotation_file_id,omitempty" gorm:"size:100;nullable"`
+	AnnotationFilename    *string `json:"annotation_filename,omitempty" gorm:"size:255;nullable"`
+	AnnotationFileType    *string `json:"annotation_file_type,omitempty" gorm:"size:50;nullable"` // image, document, etc.
 
 	// for function call
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'

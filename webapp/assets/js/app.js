@@ -971,6 +971,9 @@ createApp({
                                     }
 
                                     // Update annotation metadata if provided
+                                    if (message && data.annotation_container_id !== undefined) {
+                                        message.annotation_container_id = data.annotation_container_id
+                                    }
                                     if (message && data.annotation_file_id !== undefined) {
                                         message.annotation_file_id = data.annotation_file_id
                                     }
@@ -979,9 +982,6 @@ createApp({
                                     }
                                     if (message && data.annotation_file_type !== undefined) {
                                         message.annotation_file_type = data.annotation_file_type
-                                    }
-                                    if (message && data.annotation_file_path !== undefined) {
-                                        message.annotation_file_path = data.annotation_file_path
                                     }
 
                                     const now = Date.now()
@@ -1761,20 +1761,26 @@ createApp({
             }
         },
 
-        // Annotation display methods
-        getAnnotationFilename(filePath) {
-            if (!filePath) return ''
-            // Extract just the filename from the full file path
-            return filePath.split('/').pop() || ''
+        // Annotation display methods - now use secure proxy URLs
+        getAnnotationProxyUrl(message) {
+            if (!message.annotation_container_id || !message.annotation_file_id) {
+                return null
+            }
+            // Include Telegram init data in URL for authentication
+            const initData = window.Telegram?.WebApp?.initData || ''
+            if (initData) {
+                return `/api/annotations/${message.annotation_container_id}/${message.annotation_file_id}?tg_init_data=${encodeURIComponent(initData)}`
+            }
+            return `/api/annotations/${message.annotation_container_id}/${message.annotation_file_id}`
         },
 
         viewImageFullscreen(message) {
-            if (!message.annotation_file_path || message.annotation_file_type !== 'image') {
+            if (!message.annotation_container_id || !message.annotation_file_id || message.annotation_file_type !== 'image') {
                 return
             }
             
             this.fullscreenImage = {
-                src: '/uploads/annotations/' + this.getAnnotationFilename(message.annotation_file_path),
+                src: this.getAnnotationProxyUrl(message),
                 filename: message.annotation_filename || 'annotation.png'
             }
         },
