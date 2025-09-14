@@ -471,6 +471,17 @@
                                             }"
                                             v-html="formatMessage(message.content)"
                                         ></div>
+
+                                        <!-- Streaming indicator -->
+                                        <div
+                                            v-if="message.isStreaming && (!message.content || message.content.length === 0)"
+                                            class="typing-indicator mt-2"
+                                        >
+                                            <div class="typing-dot"></div>
+                                            <div class="typing-dot"></div>
+                                            <div class="typing-dot"></div>
+                                            <span class="ml-2 text-sm">Thinking...</span>
+                                        </div>
                                     </div>
 
                                     <!-- Message metadata -->

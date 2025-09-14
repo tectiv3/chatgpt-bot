@@ -1154,6 +1154,14 @@ createApp({
             return this.markdownProcessor.render(content)
         },
 
+        // Helper method to get display content with streaming indicator
+        getMessageDisplayContent(message) {
+            if (message.isStreaming && message.displayContent) {
+                return message.displayContent
+            }
+            return message.content
+        },
+
         showError(message) {
             // You can integrate with Telegram's showAlert or implement your own notification system
             if (window.Telegram?.WebApp?.showAlert) {
@@ -1292,6 +1300,13 @@ createApp({
             const message = this.messages.find(m => m.id === messageId)
             if (message) {
                 message.content = content
+                // Add streaming cursor to the end of content during streaming
+                if (message.isStreaming && content && content.length > 0) {
+                    message.displayContent = content + '<span class="streaming-indicator">▌</span>'
+                } else {
+                    message.displayContent = content
+                }
+                
                 this.$nextTick(() => {
                     const container = this.$refs.messagesContainer
                     if (container) {
