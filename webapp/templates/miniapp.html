@@ -488,7 +488,7 @@
                                             <!-- Image annotation -->
                                             <div v-if="message.annotation_file_type === 'image'" class="annotation-image">
                                                 <img 
-                                                    :src="'/uploads/annotations/' + getAnnotationFilename(message.annotation_file_path)"
+                                                    :src="message.annotation_url"
                                                     :alt="message.annotation_filename"
                                                     class="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-white/10"
                                                     @click="viewImageFullscreen(message)"
@@ -504,7 +504,7 @@
                                             <!-- Document/other file annotation -->
                                             <div v-else class="annotation-file">
                                                 <a 
-                                                    :href="'/uploads/annotations/' + getAnnotationFilename(message.annotation_file_path)"
+                                                    :href="message.annotation_url"
                                                     :download="message.annotation_filename"
                                                     class="inline-flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
                                                     :class="message.role === 'user' 
@@ -1029,7 +1029,7 @@
 
         </div>
 
-        <script src="/assets/js/app.js?777"></script>
+        <script src="/assets/js/app.js?999"></script>
         
     </body>
 </html>

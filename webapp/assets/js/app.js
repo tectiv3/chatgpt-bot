@@ -983,8 +983,8 @@ createApp({
                                     if (message && data.annotation_file_type !== undefined) {
                                         message.annotation_file_type = data.annotation_file_type
                                     }
-                                    if (message && data.annotation_file_path !== undefined) {
-                                        message.annotation_file_path = data.annotation_file_path
+                                    if (message && data.annotation_url !== undefined) {
+                                        message.annotation_url = data.annotation_url
                                     }
 
                                     const now = Date.now()
@@ -1765,19 +1765,13 @@ createApp({
         },
 
         // Annotation display methods
-        getAnnotationFilename(filePath) {
-            if (!filePath) return ''
-            // Extract just the filename from the full file path
-            return filePath.split('/').pop() || ''
-        },
-
         viewImageFullscreen(message) {
-            if (!message.annotation_file_path || message.annotation_file_type !== 'image') {
+            if (!message.annotation_url || message.annotation_file_type !== 'image') {
                 return
             }
             
             this.fullscreenImage = {
-                src: '/uploads/annotations/' + this.getAnnotationFilename(message.annotation_file_path),
+                src: message.annotation_url,
                 filename: message.annotation_filename || 'annotation.png'
             }
         },

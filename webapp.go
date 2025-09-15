@@ -95,7 +95,7 @@ type MessageResponse struct {
 	AnnotationFileID      *string `json:"annotation_file_id,omitempty"`
 	AnnotationFilename    *string `json:"annotation_filename,omitempty"`
 	AnnotationFileType    *string `json:"annotation_file_type,omitempty"`
-	AnnotationFilePath    *string `json:"annotation_file_path,omitempty"`
+	AnnotationURL         *string `json:"annotation_url,omitempty"` // Ready-to-use URL for frontend
 }
 
 type ChatWithThreadResponse struct {
@@ -661,6 +661,18 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			imageData = &imageURL
 		}
 
+		// Construct annotation URL if file path exists
+		var annotationURL *string
+		if msg.AnnotationFilePath != nil && *msg.AnnotationFilePath != "" {
+			// Extract just the filename from the full path
+			parts := strings.Split(*msg.AnnotationFilePath, "/")
+			if len(parts) > 0 {
+				filename := parts[len(parts)-1]
+				url := "/uploads/annotations/" + filename
+				annotationURL = &url
+			}
+		}
+
 		response[i] = MessageResponse{
 			ID:          msg.ID,
 			Role:        string(msg.Role),
@@ -683,7 +695,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			AnnotationFileID:      msg.AnnotationFileID,
 			AnnotationFilename:    msg.AnnotationFilename,
 			AnnotationFileType:    msg.AnnotationFileType,
-			AnnotationFilePath:    msg.AnnotationFilePath,
+			AnnotationURL:         annotationURL,
 		}
 	}
 
@@ -2185,6 +2197,18 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		flusher.Flush()
 	}
 
+	// Construct annotation URL if file path exists
+	var annotationURL *string
+	if assistantMsg.AnnotationFilePath != nil && *assistantMsg.AnnotationFilePath != "" {
+		// Extract just the filename from the full path
+		parts := strings.Split(*assistantMsg.AnnotationFilePath, "/")
+		if len(parts) > 0 {
+			filename := parts[len(parts)-1]
+			url := "/uploads/annotations/" + filename
+			annotationURL = &url
+		}
+	}
+
 	// Send final message with complete metadata
 	finalResponse := MessageResponse{
 		ID:             assistantMsg.ID,
@@ -2204,7 +2228,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		AnnotationFileID:      assistantMsg.AnnotationFileID,
 		AnnotationFilename:    assistantMsg.AnnotationFilename,
 		AnnotationFileType:    assistantMsg.AnnotationFileType,
-		AnnotationFilePath:    assistantMsg.AnnotationFilePath,
+		AnnotationURL:         annotationURL,
 	}
 	jsonData, _ = json.Marshal(finalResponse)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
