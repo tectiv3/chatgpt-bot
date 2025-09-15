@@ -43,9 +43,14 @@
     </head>
     <body class="bg-tg-primary text-tg-text font-sans">
         <!-- Initial loading screen - visible before Vue loads -->
-        <div id="initial-loader" class="fixed inset-0 bg-tg-primary flex items-center justify-center z-50">
+        <div
+            id="initial-loader"
+            class="fixed inset-0 bg-tg-primary flex items-center justify-center z-50"
+        >
             <div class="text-center">
-                <div class="w-12 h-12 border-3 border-tg-link border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <div
+                    class="w-12 h-12 border-3 border-tg-link border-t-transparent rounded-full animate-spin mx-auto mb-4"
+                ></div>
                 <div class="text-tg-hint text-lg">Loading {{.BotName}}...</div>
             </div>
         </div>
@@ -144,18 +149,27 @@
                                         [[ thread.title ]]
                                     </div>
                                 </div>
-                                <div
-                                    class="flex items-center gap-2 text-xs text-tg-hint"
-                                >
+                                <div class="flex items-center gap-2 text-xs text-tg-hint">
                                     <span
-                                        >[[ thread.id === currentThreadId ?
-                                        currentMessageCount : thread.message_count ]]
-                                        messages</span
+                                        >[[ thread.id === currentThreadId ? currentMessageCount
+                                        : thread.message_count ]] messages</span
                                     >
                                     <span>•</span>
                                     <span>[[ formatDate(thread.updated_at) ]]</span>
-                                    <span v-if="thread.total_input_tokens || thread.total_output_tokens">•</span>
-                                    <span v-if="thread.total_input_tokens || thread.total_output_tokens" class="text-tg-link">
+                                    <span
+                                        v-if="
+                                            thread.total_input_tokens ||
+                                            thread.total_output_tokens
+                                        "
+                                        >•</span
+                                    >
+                                    <span
+                                        v-if="
+                                            thread.total_input_tokens ||
+                                            thread.total_output_tokens
+                                        "
+                                        class="text-tg-link"
+                                    >
                                         <i class="fas fa-calculator text-xs"></i>
                                         [[ formatThreadTokens(thread) ]]
                                     </span>
@@ -449,12 +463,7 @@
                                         <!-- Copy button -->
                                         <button
                                             @click="copyMessage(message.content)"
-                                            class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs z-10"
-                                            :class="
-                                                message.role === 'user'
-                                                    ? 'bg-white/20 hover:bg-white/30 text-white'
-                                                    : 'bg-tg-hint/20 hover:bg-tg-hint/30 text-tg-hint hover:text-tg-text'
-                                            "
+                                            class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs z-10 bg-white/20 hover:bg-white text-white hover:text-black"
                                             title="Copy message"
                                         >
                                             <i class="fas fa-copy"></i>
@@ -471,70 +480,148 @@
 
                                         <!-- Message text -->
                                         <div
-                                            class="prose prose-sm pr-8 break-words"
+                                            class="prose prose-sm break-words"
                                             :class="{
                                                 'streaming-text': message.isStreaming,
                                                 'text-white': message.role === 'user',
                                             }"
-                                            v-html="formatMessage(message.content, message.annotations)"
+                                            v-html="
+                                                formatMessage(
+                                                    message.content,
+                                                    message.annotations
+                                                )
+                                            "
                                         ></div>
 
                                         <!-- Annotations display -->
-                                        <div v-if="message.annotations && message.annotations.length > 0">
+                                        <div
+                                            v-if="
+                                                message.annotations &&
+                                                message.annotations.length > 0
+                                            "
+                                        >
                                             <!-- URL Citations -->
-                                            <div v-html="formatAnnotations(message.annotations)"
-                                                 class="pr-8"
-                                                 :class="message.role === 'user' ? 'text-white/70' : 'text-tg-text/70'"
+                                            <div
+                                                v-html="formatAnnotations(message.annotations)"
+                                                class="pr-8"
+                                                :class="
+                                                    message.role === 'user'
+                                                        ? 'text-white/70'
+                                                        : 'text-tg-text/70'
+                                                "
                                             ></div>
 
                                             <!-- File Citations -->
-                                            <div v-if="message.annotations.some(a => a.type === 'file_citation' || a.type === 'container_file_citation')" class="mt-3 pr-8">
-                                                <div v-for="(annotation, idx) in message.annotations.filter(a => a.type === 'file_citation' || a.type === 'container_file_citation')" :key="idx">
+                                            <div
+                                                v-if="
+                                                    message.annotations.some(
+                                                        a =>
+                                                            a.type === 'file_citation' ||
+                                                            a.type ===
+                                                                'container_file_citation'
+                                                    )
+                                                "
+                                                class="mt-3 pr-8"
+                                            >
+                                                <div
+                                                    v-for="(
+                                                        annotation, idx
+                                                    ) in message.annotations.filter(
+                                                        a =>
+                                                            a.type === 'file_citation' ||
+                                                            a.type ===
+                                                                'container_file_citation'
+                                                    )"
+                                                    :key="idx"
+                                                >
                                                     <!-- Image file -->
-                                                    <div v-if="annotation.local_file_path && annotation.local_file_path.match(/\.(png|jpg|jpeg|gif)$/i)" class="annotation-image mb-2">
+                                                    <div
+                                                        v-if="
+                                                            annotation.local_file_path &&
+                                                            annotation.local_file_path.match(
+                                                                /\.(png|jpg|jpeg|gif)$/i
+                                                            )
+                                                        "
+                                                        class="annotation-image mb-2"
+                                                    >
                                                         <img
                                                             :src="annotation.local_file_path"
-                                                            :alt="annotation.filename || 'Generated image'"
+                                                            :alt="
+                                                                annotation.filename ||
+                                                                'Generated image'
+                                                            "
                                                             class="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-white/10"
-                                                            @click="viewImageFullscreen({annotation_url: annotation.local_file_path, annotation_filename: annotation.filename})"
-                                                            :title="'Click to view ' + (annotation.filename || 'image') + ' in fullscreen'"
+                                                            @click="
+                                                                viewImageFullscreen({
+                                                                    annotation_url:
+                                                                        annotation.local_file_path,
+                                                                    annotation_filename:
+                                                                        annotation.filename,
+                                                                })
+                                                            "
+                                                            :title="
+                                                                'Click to view ' +
+                                                                (annotation.filename ||
+                                                                    'image') +
+                                                                ' in fullscreen'
+                                                            "
                                                         />
-                                                        <div class="text-xs text-opacity-70 mt-1"
-                                                             :class="message.role === 'user' ? 'text-white' : 'text-tg-hint'">
+                                                        <div
+                                                            class="text-xs text-opacity-70 mt-1"
+                                                            :class="
+                                                                message.role === 'user'
+                                                                    ? 'text-white'
+                                                                    : 'text-tg-hint'
+                                                            "
+                                                        >
                                                             <i class="fas fa-image mr-1"></i>
-                                                            [[ annotation.filename || 'Generated image' ]]
+                                                            [[ annotation.filename ||
+                                                            'Generated image' ]]
                                                         </div>
                                                     </div>
 
                                                     <!-- Document/other file -->
-                                                    <div v-else-if="annotation.local_file_path" class="annotation-file mb-2">
+                                                    <div
+                                                        v-else-if="annotation.local_file_path"
+                                                        class="annotation-file mb-2"
+                                                    >
                                                         <a
                                                             :href="annotation.local_file_path"
                                                             :download="annotation.filename"
                                                             class="inline-flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
-                                                            :class="message.role === 'user'
-                                                                ? 'bg-white/20 hover:bg-white/30 text-white'
-                                                                : 'bg-tg-link/10 hover:bg-tg-link/20 text-tg-link'"
-                                                            :title="'Download ' + (annotation.filename || 'file')"
+                                                            :class="
+                                                                message.role === 'user'
+                                                                    ? 'bg-white/20 hover:bg-white/30 text-white'
+                                                                    : 'bg-tg-link/10 hover:bg-tg-link/20 text-tg-link'
+                                                            "
+                                                            :title="
+                                                                'Download ' +
+                                                                (annotation.filename || 'file')
+                                                            "
                                                         >
                                                             <i class="fas fa-download"></i>
-                                                            <span class="text-sm font-medium">[[ annotation.filename || 'Download file' ]]</span>
+                                                            <span class="text-sm font-medium"
+                                                                >[[ annotation.filename ||
+                                                                'Download file' ]]</span
+                                                            >
                                                         </a>
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
 
-
                                         <!-- Streaming indicator -->
                                         <div
-                                            v-if="message.isStreaming && (!message.content || message.content.length === 0)"
+                                            v-if="
+                                                message.isStreaming &&
+                                                (!message.content ||
+                                                    message.content.length === 0)
+                                            "
                                             class="typing-indicator mt-2"
                                         >
                                             <div class="typing-dot"></div>
                                             <div class="typing-dot"></div>
                                             <div class="typing-dot"></div>
-                                            <span class="ml-2 text-sm">Thinking...</span>
                                         </div>
                                     </div>
 
@@ -550,48 +637,58 @@
                                         <!-- Time and stats on left for assistant, right for user -->
                                         <div class="flex items-center gap-2">
                                             <span>[[ formatTime(message.created_at) ]]</span>
-                                            
+
                                             <!-- Token and model info for assistant messages -->
-                                            <span v-if="message.role === 'assistant' && (message.total_tokens || (message.input_tokens && message.output_tokens))">
+                                            <span
+                                                v-if="
+                                                    message.role === 'assistant' &&
+                                                    (message.total_tokens ||
+                                                        (message.input_tokens &&
+                                                            message.output_tokens))
+                                                "
+                                            >
                                                 <i class="fas fa-calculator text-xs"></i>
-                                                [[ message.total_tokens || ((message.input_tokens || 0) + (message.output_tokens || 0)) ]] tokens
+                                                [[ message.total_tokens ||
+                                                ((message.input_tokens || 0) +
+                                                (message.output_tokens || 0)) ]] tokens
                                             </span>
-                                            
-                                            <span v-if="message.role === 'assistant' && message.response_time_ms">
+
+                                            <span
+                                                v-if="
+                                                    message.role === 'assistant' &&
+                                                    message.response_time_ms
+                                                "
+                                            >
                                                 <i class="fas fa-clock text-xs"></i>
-                                                [[ formatResponseTime(message.response_time_ms) ]]
+                                                [[ formatResponseTime(message.response_time_ms)
+                                                ]]
                                             </span>
-                                            
-                                            <span v-if="message.role === 'assistant' && message.model_used && message.model_used !== threadSettings.model_name">
+
+                                            <span
+                                                v-if="
+                                                    message.role === 'assistant' &&
+                                                    message.model_used &&
+                                                    message.model_used !==
+                                                        threadSettings.model_name
+                                                "
+                                            >
                                                 <i class="fas fa-robot text-xs"></i>
                                                 [[ message.model_used ]]
                                             </span>
-                                            
+
                                             <span
                                                 v-if="!message.is_live"
                                                 class="px-2 py-0.5 bg-tg-hint/20 rounded-full"
-                                            >Archived</span>
+                                                >Archived</span
+                                            >
                                         </div>
-                                        
-                                        <!-- Delete button on the right for assistant messages -->
+
                                         <button
-                                            v-if="message.role === 'assistant'"
                                             @click="deleteMessage(message.id)"
                                             class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 hover:text-red-500"
                                             title="Delete message"
                                         >
                                             <i class="fas fa-trash text-xs"></i>
-                                        </button>
-                                    </div>
-                                    
-                                    <!-- Delete button below metadata for user messages -->
-                                    <div v-if="message.role === 'user'" class="flex justify-end mt-1 px-1">
-                                        <button
-                                            @click="deleteMessage(message.id)"
-                                            class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 hover:text-red-500 text-xs"
-                                            title="Delete message"
-                                        >
-                                            <i class="fas fa-trash"></i>
                                         </button>
                                     </div>
                                 </div>
@@ -605,7 +702,7 @@
                                 </div>
                             </div>
                         </div>
-                        
+
                         <!-- <div v-else>
                             <div class="flex-1 flex items-center justify-center p-8">
                                 <div class="text-center">
@@ -652,7 +749,9 @@
                         </div>
 
                         <!-- Input wrapper -->
-                        <div class="py-4 px-2 flex items-center gap-2 max-w-4xl mx-auto w-full">
+                        <div
+                            class="py-4 px-2 flex items-center gap-2 max-w-4xl mx-auto w-full"
+                        >
                             <button
                                 @click="selectImage"
                                 class="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-colors"
@@ -1011,14 +1110,16 @@
             >
                 <div class="relative max-w-[90vw] max-h-[90vh] flex flex-col" @click.stop>
                     <!-- Image -->
-                    <img 
+                    <img
                         :src="fullscreenImage.src"
                         :alt="fullscreenImage.filename"
                         class="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
                     />
-                    
+
                     <!-- Image info and close button -->
-                    <div class="flex items-center justify-between mt-4 px-4 py-3 bg-black/50 rounded-lg">
+                    <div
+                        class="flex items-center justify-between mt-4 px-4 py-3 bg-black/50 rounded-lg"
+                    >
                         <div class="text-white">
                             <div class="font-medium">[[ fullscreenImage.filename ]]</div>
                             <div class="text-sm text-white/70">Code Interpreter Output</div>
@@ -1031,9 +1132,9 @@
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
-                    
+
                     <!-- Download link -->
-                    <a 
+                    <a
                         :href="fullscreenImage.src"
                         :download="fullscreenImage.filename"
                         class="mt-2 inline-flex items-center justify-center gap-2 px-4 py-2 bg-tg-button text-tg-button-text rounded-lg hover:opacity-90 transition-opacity"
@@ -1043,11 +1144,8 @@
                     </a>
                 </div>
             </div>
-
-
         </div>
 
         <script src="/assets/js/app.js?1003"></script>
-        
     </body>
 </html>
