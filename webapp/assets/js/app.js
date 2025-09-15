@@ -106,7 +106,6 @@ const useDeviceStorage = () => {
     }
 }
 
-// Simplified mobile detection
 const useMobileKeyboard = () => {
     const isMobile = computed(() => {
         return (
@@ -133,6 +132,7 @@ createApp({
     data() {
         return {
             loading: true,
+            messagesLoading: false,
             sidebarOpen: false,
 
             // Current state
@@ -207,9 +207,8 @@ createApp({
     },
 
     computed: {
-        // Use computed property for message count instead of manual updates
         currentMessageCount() {
-            return this.messages.length
+            return this.messagesLoading ? '...' : this.messages.length
         },
 
         // Computed property for getting current role name
@@ -283,11 +282,6 @@ createApp({
             return this.streaming && this.currentStreamController
         },
 
-        // Computed property for message count display in threads list
-        messageCount() {
-            return this.messages.length
-        },
-
         // Check if there are archived threads to show section
         hasArchivedThreads() {
             return this.archivedThreads.length > 0
@@ -300,12 +294,12 @@ createApp({
     },
 
     watch: {
-        // Watch message count and update thread accordingly
-        currentMessageCount(newCount) {
-            if (this.currentThread) {
-                this.currentThread.message_count = newCount
-            }
-        },
+        // // Watch message count and update thread accordingly
+        // currentMessageCount(newCount) {
+        //     if (this.currentThread) {
+        //         this.currentThread.message_count = newCount
+        //     }
+        // },
 
         // Watch sidebar state to handle mobile scroll prevention
         sidebarOpen(isOpen) {
@@ -634,6 +628,8 @@ createApp({
                 this.currentThread = newThread
                 this.messages = []
 
+                await this.saveUserPreference('selectedThreadId', threadId)
+
                 this.$nextTick(() => this.focusInput())
             } catch (error) {
                 this.showError(`Failed to create new thread: ${error.message}`)
@@ -646,10 +642,10 @@ createApp({
             if (this.currentThreadId === threadId) return
 
             // Stop any active streaming when switching threads
-            if (this.streaming) {
-                // this.stopStreaming() // why?
-            }
-
+            // if (this.streaming) {
+            // this.stopStreaming() // why?
+            // }
+            this.messagesLoading = true
             this.currentThreadId = threadId
             this.currentThread =
                 this.threads.find(t => t.id === threadId) ||
@@ -679,6 +675,7 @@ createApp({
                 } catch (error) {
                     console.error('Failed to load messages:', error)
                     this.showError('Failed to load thread messages')
+                } finally {
                 }
             } else {
                 console.error('Thread not found:', threadId)
@@ -697,6 +694,7 @@ createApp({
 
         async loadMessages() {
             if (!this.currentThreadId) return
+            this.messagesLoading = true
 
             try {
                 const response = await this.apiCall(
@@ -720,6 +718,8 @@ createApp({
                 this.$nextTick(() => this.focusInput())
             } catch (error) {
                 this.showError('Failed to load messages')
+            } finally {
+                this.messagesLoading = false
             }
         },
 
@@ -971,6 +971,13 @@ createApp({
                                     }
 
                                     // Update annotation metadata if provided
+                                    if (
+                                        message &&
+                                        data.annotation_container_id !== undefined
+                                    ) {
+                                        message.annotation_container_id =
+                                            data.annotation_container_id
+                                    }
                                     if (message && data.annotation_file_id !== undefined) {
                                         message.annotation_file_id = data.annotation_file_id
                                     }
@@ -978,10 +985,11 @@ createApp({
                                         message.annotation_filename = data.annotation_filename
                                     }
                                     if (message && data.annotation_file_type !== undefined) {
-                                        message.annotation_file_type = data.annotation_file_type
+                                        message.annotation_file_type =
+                                            data.annotation_file_type
                                     }
-                                    if (message && data.annotation_file_path !== undefined) {
-                                        message.annotation_file_path = data.annotation_file_path
+                                    if (message && data.annotation_url !== undefined) {
+                                        message.annotation_url = data.annotation_url
                                     }
 
                                     const now = Date.now()
@@ -1243,8 +1251,42 @@ createApp({
             })
         },
 
-        formatMessage(content) {
+        formatMessage(content, annotations) {
             if (!content) return ''
+
+            let processedContent = content
+            const urlCitations = []
+
+            if (annotations && annotations.length > 0) {
+                const urlAnnotations = annotations.filter(a => a.type === 'url_citation')
+
+                const sortedByPosition = [...urlAnnotations].sort(
+                    (a, b) => a.start_index - b.start_index
+                )
+
+                const citationMap = new Map()
+                sortedByPosition.forEach((annotation, index) => {
+                    citationMap.set(annotation, index + 1)
+                })
+
+                const sortedForReplacement = [...urlAnnotations].sort(
+                    (a, b) => b.start_index - a.start_index
+                )
+
+                sortedForReplacement.forEach(annotation => {
+                    const citationNumber = citationMap.get(annotation)
+
+                    if (annotation.start_index !== undefined && annotation.end_index !== undefined) {
+                        const before = processedContent.substring(0, annotation.start_index)
+                        const after = processedContent.substring(annotation.end_index)
+                        let url = annotation.url || '#'
+                        url = url.replace(/[?&]utm_source=openai(&|$)/, '$1').replace(/\?$/, '')
+                        processedContent = before + `[[${citationNumber}]](${url})` + after
+                    }
+                })
+
+                urlCitations.push(...sortedByPosition)
+            }
 
             if (!this.markdownProcessor) {
                 this.markdownProcessor = window.markdownit({
@@ -1255,7 +1297,43 @@ createApp({
                 })
             }
 
-            return this.markdownProcessor.render(content)
+            return this.markdownProcessor.render(processedContent)
+        },
+
+        formatAnnotations(annotations) {
+            if (!annotations || annotations.length === 0) return ''
+
+            const urlCitations = annotations.filter(a => a.type === 'url_citation')
+            if (urlCitations.length === 0) return ''
+
+            let html = '<div class="mt-3 pt-3 border-t border-white/10 text-sm">'
+            html += '<div class="text-xs text-tg-hint mb-2">References:</div>'
+
+            urlCitations.forEach((citation, index) => {
+                const num = index + 1
+                const title = citation.title || citation.url || 'Link'
+                let url = citation.url || '#'
+                url = url.replace(/[?&]utm_source=openai(&|$)/, '$1').replace(/\?$/, '')
+
+                html += `<div class="mb-1">
+                    <span class="text-tg-hint">[${num}]</span>
+                    <a href="${url}" target="_blank" rel="noopener noreferrer"
+                       class="text-tg-link hover:underline"
+                       title="${url}">
+                        ${this.escapeHtml(title)}
+                        <i class="fas fa-external-link-alt text-xs ml-1"></i>
+                    </a>
+                </div>`
+            })
+
+            html += '</div>'
+            return html
+        },
+
+        escapeHtml(text) {
+            const div = document.createElement('div')
+            div.textContent = text
+            return div.innerHTML
         },
 
         // Helper method to get display content with streaming indicator
@@ -1762,20 +1840,14 @@ createApp({
         },
 
         // Annotation display methods
-        getAnnotationFilename(filePath) {
-            if (!filePath) return ''
-            // Extract just the filename from the full file path
-            return filePath.split('/').pop() || ''
-        },
-
         viewImageFullscreen(message) {
-            if (!message.annotation_file_path || message.annotation_file_type !== 'image') {
+            if (!message.annotation_url || message.annotation_file_type !== 'image') {
                 return
             }
-            
+
             this.fullscreenImage = {
-                src: '/uploads/annotations/' + this.getAnnotationFilename(message.annotation_file_path),
-                filename: message.annotation_filename || 'annotation.png'
+                src: message.annotation_url,
+                filename: message.annotation_filename || 'annotation.png',
             }
         },
 
@@ -1790,13 +1862,13 @@ createApp({
                 event.preventDefault()
                 this.newThread()
             }
-            
+
             // ESC to close fullscreen image
             if (event.key === 'Escape' && this.fullscreenImage) {
                 event.preventDefault()
                 this.closeFullscreenImage()
             }
-            
+
             // ESC to stop streaming
             if (event.key === 'Escape' && this.streaming) {
                 event.preventDefault()

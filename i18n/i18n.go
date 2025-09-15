@@ -35,14 +35,12 @@ var localizations = map[string]string{
 	"ru.Temperature set to {{.temp}}":                        "Креативность модели установлена на {{.temp}}",
 	"ru.This bot will answer your messages with ChatGPT API": "Этот бот будет отвечать на ваши сообщения с помощью ChatGPT",
 	"ru._Transcript:_\\n%s\\n\\n_Answer:_ \\n\\n\"":          "_Транскрипт:_\n%s\n\n_Ответ:_ \n\n",
-	"ru.default":         "По умолчанию",
-	"ru.disabled":        "деактивировано",
-	"ru.enabled":         "активировано",
-	"ru.get_crypto_rate": "Запрос курса криптовалюты",
-	"ru.search_images":   "Поиск изображений",
-	"ru.set_reminder":    "Установка напоминания",
-	"ru.vector_search":   "Поиск по векторной базе данных",
-	"ru.web_search":      "Поиск в интернете",
+	"ru.default":       "По умолчанию",
+	"ru.disabled":      "деактивировано",
+	"ru.enabled":       "активировано",
+	"ru.search_images": "Поиск изображений",
+	"ru.set_reminder":  "Установка напоминания",
+	"ru.web_search":    "Поиск в интернете",
 }
 
 type Replacements map[string]interface{}

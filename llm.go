@@ -97,7 +97,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	ch := make(chan completion, 1)
 
 	history := chat.getDialog(question)
-	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Response Stream")
 
 	chat.removeMenu(c)
 	sentMessage := chat.getSentMessage(c)
@@ -206,7 +205,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 			}
 
 			if event.Response != nil && event.Response.Usage != nil {
-				Log.WithField("usage", event.Response.Usage).Info("Response stream finished")
 				tokens = event.Response.Usage.TotalTokens
 			}
 
@@ -226,11 +224,14 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 		switch event.Type {
 		case "response.output_item.added":
 			if event.Item != nil {
-				Log.WithField("item", event.Item.Type).Info("Output added")
 				switch event.Item.Type {
 				case "function_call":
 					Log.WithField("function", event.Item.Name).Info("Function call started")
 				case "web_search_call":
+					Log.WithField("item", event.Item).Info("Web search started")
+					if len(event.Item.Content) > 0 {
+						Log.WithField("content", event.Item.Content[0]).Info("Web search content")
+					}
 					_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
 				}
 			}
@@ -257,12 +258,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 
 				}
 			}
-
-		case "response.done":
-			if event.Response != nil && event.Response.Usage != nil {
-				tokens = event.Response.Usage.TotalTokens
-			}
-			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Response stream finished")
 		}
 
 	}
@@ -270,44 +265,38 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 	return nil
 }
 
-func (s *Server) checkAnnotations(c tele.Context, m *tele.Message, content []openai.OutputContent) {
-	for _, content := range content {
-		text := content.Text
-		if len(content.Annotations) == 1 {
-			s.processAnnotation(c, m, content.Annotations[0], "")
-		} else {
-			for _, annotation := range content.Annotations {
-				if annotation.Type != "container_file_citation" {
-					continue
-				}
-				s.processAnnotation(c, m, annotation, text)
-			}
-		}
-	}
+// TelegramAnnotationProcessor implements AnnotationProcessor for Telegram bot
+type TelegramAnnotationProcessor struct {
+	server  *Server
+	context tele.Context
+	message *tele.Message
 }
 
-func (s *Server) processAnnotation(c tele.Context, m *tele.Message, annotation openai.Annotation, text string) {
-	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
-	if err != nil {
-		Log.WithField("error", err).Error("Failed to retrieve container file")
-		return
+// ProcessFile saves the file locally AND sends it to Telegram user, then returns the local path
+func (p *TelegramAnnotationProcessor) ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error) {
+	annotationsDir := "uploads/annotations"
+	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create annotations directory: %w", err)
 	}
-	Log.WithField("File", len(result)).Info(annotation.Filename)
-	// _ = c.Send(
-	//     &tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"},
-	//     replyMenu,
-	// )
-	// _ = c.Send(&tele.Photo{File: tele.FromReader(bytes.NewReader(result))})
 
-	ext := filepath.Ext(annotation.Filename)
+	timestamp := time.Now().Unix()
+	localFilename := fmt.Sprintf("%d_%s", timestamp, filename)
+	localPath := filepath.Join(annotationsDir, localFilename)
+
+	if err := os.WriteFile(localPath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write annotation file: %w", err)
+	}
+
+	// Then, send file to Telegram user
+	ext := filepath.Ext(filename)
 	switch strings.ToLower(ext) {
 	case ".png", ".jpg", ".jpeg", ".gif":
-		file := &tele.Photo{File: tele.FromReader(bytes.NewReader(result))}
+		file := &tele.Photo{File: tele.FromReader(bytes.NewReader(data))}
 		if len(text) > 0 {
 			file.Caption = text
-			c.Bot().Edit(m, file)
+			p.context.Bot().Edit(p.message, file)
 		} else {
-			c.Send(file)
+			p.context.Send(file)
 		}
 	default:
 		mimes := map[string]string{
@@ -340,15 +329,39 @@ func (s *Server) processAnnotation(c tele.Context, m *tele.Message, annotation o
 		}
 
 		file := &tele.Document{
-			File:     tele.FromReader(bytes.NewReader(result)),
-			FileName: annotation.Filename,
+			File:     tele.FromReader(bytes.NewReader(data)),
+			FileName: filename,
 			MIME:     mimes[strings.ToLower(ext)],
 		}
 		if len(text) > 0 {
 			file.Caption = text
-			c.Bot().Edit(m, file)
+			p.context.Bot().Edit(p.message, file)
 		} else {
-			c.Send(file)
+			p.context.Send(file)
+		}
+	}
+
+	return localPath, nil
+}
+
+func (s *Server) checkAnnotations(c tele.Context, m *tele.Message, content []openai.OutputContent) {
+	chat := s.getChat(c.Chat(), c.Sender())
+
+	processor := &TelegramAnnotationProcessor{
+		server:  s,
+		context: c,
+		message: m,
+	}
+
+	annotations, err := ProcessAnnotations(s.openAI, content, processor)
+	if err != nil {
+		Log.WithField("error", err).Error("Failed to process annotations")
+		return
+	}
+
+	if len(annotations) > 0 {
+		if err := StoreAnnotations(s.db, chat, annotations); err != nil {
+			Log.WithField("error", err).Error("Failed to store annotations")
 		}
 	}
 }
@@ -358,7 +371,6 @@ func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error
 	_ = c.Notify(tele.Typing)
 
 	history := chat.getDialog(question)
-	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Response Non-Stream")
 
 	chat.removeMenu(c)
 
@@ -466,14 +478,21 @@ func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error
 
 	// No function calls - handle normal response
 	reply := ""
+	var messageContent []openai.OutputContent
 	for _, output := range response.Output {
 		if output.Type == "message" && len(output.Content) > 0 {
+			messageContent = output.Content
 			for _, content := range output.Content {
 				if content.Type == "text" && content.Text != "" {
 					reply += content.Text
 				}
 			}
 		}
+	}
+
+	if len(messageContent) > 0 {
+		sentMessage := chat.getSentMessage(c)
+		s.checkAnnotations(c, sentMessage, messageContent)
 	}
 
 	// Update token count and save history
@@ -722,7 +741,6 @@ func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
 	// s.ai.Verbose = s.conf.Verbose
 	// options.SetMaxTokens(3000)
 	history := chat.getDialog(question)
-	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Answer")
 
 	chat.removeMenu(c)
 
@@ -799,7 +817,6 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 	ch := make(chan completion, 1)
 
 	history := chat.getDialog(question)
-	Log.WithField("user", c.Sender().Username).WithField("history", len(history)).Info("Stream")
 
 	chat.removeMenu(c)
 
