@@ -142,3 +142,18 @@ func (s *Server) setChatLastMessageID(id *string, ChatID int64) {
 func (s *Server) resetUserState(user User) {
 	s.db.Model(&User{}).Where("id", user.ID).Update("State", nil)
 }
+
+// StoreAnnotations saves annotations directly to a specific message
+func (s *Server) StoreAnnotations(message *ChatMessage, annotations []AnnotationData) {
+	if len(annotations) == 0 {
+		return
+	}
+
+	message.Annotations = Annotations(annotations)
+
+	if message.ID > 0 {
+		if err := s.db.Save(message).Error; err != nil {
+			Log.Errorf("failed to save annotations to database: %w", err)
+		}
+	}
+}

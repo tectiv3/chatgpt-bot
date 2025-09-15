@@ -970,28 +970,6 @@ createApp({
                                         message.finish_reason = data.finish_reason
                                     }
 
-                                    // Update annotation metadata if provided
-                                    if (
-                                        message &&
-                                        data.annotation_container_id !== undefined
-                                    ) {
-                                        message.annotation_container_id =
-                                            data.annotation_container_id
-                                    }
-                                    if (message && data.annotation_file_id !== undefined) {
-                                        message.annotation_file_id = data.annotation_file_id
-                                    }
-                                    if (message && data.annotation_filename !== undefined) {
-                                        message.annotation_filename = data.annotation_filename
-                                    }
-                                    if (message && data.annotation_file_type !== undefined) {
-                                        message.annotation_file_type =
-                                            data.annotation_file_type
-                                    }
-                                    if (message && data.annotation_url !== undefined) {
-                                        message.annotation_url = data.annotation_url
-                                    }
-
                                     const now = Date.now()
 
                                     if (now - lastUpdateTime >= this.streamingThrottleMs) {
@@ -1276,11 +1254,16 @@ createApp({
                 sortedForReplacement.forEach(annotation => {
                     const citationNumber = citationMap.get(annotation)
 
-                    if (annotation.start_index !== undefined && annotation.end_index !== undefined) {
+                    if (
+                        annotation.start_index !== undefined &&
+                        annotation.end_index !== undefined
+                    ) {
                         const before = processedContent.substring(0, annotation.start_index)
                         const after = processedContent.substring(annotation.end_index)
                         let url = annotation.url || '#'
-                        url = url.replace(/[?&]utm_source=openai(&|$)/, '$1').replace(/\?$/, '')
+                        url = url
+                            .replace(/[?&]utm_source=openai(&|$)/, '$1')
+                            .replace(/\?$/, '')
                         processedContent = before + `[[${citationNumber}]](${url})` + after
                     }
                 })

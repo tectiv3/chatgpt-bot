@@ -90,7 +90,7 @@ func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	availableTools := []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
 			"make_summary",
-			"Make a summary of a web page.",
+			"Make a summary of a web page from an explicit summarization request.",
 			openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
 				SetRequiredParameters([]string{"url"}),
@@ -150,10 +150,8 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 		bot:  s.bot,
 	}
 
-	// Call the refactored core function
 	result, toolMessages, err := s.handleToolCallsCore(chat, toolCalls, notifier)
 
-	// Add tool messages to dialog
 	for _, msg := range toolMessages {
 		chat.addMessageToDialog(msg)
 	}
@@ -162,14 +160,15 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 	if len(result) > 0 {
 		model := s.getModel(chat.ModelName)
 		if model.Provider == pOpenAI {
-			// Save history and return - conversation ends with tool result
 			s.saveHistory(chat)
+
 			return result, nil
 		}
 
 		// For other providers, continue conversation
 		if chat.Stream {
 			_ = s.getStreamAnswer(chat, c, nil)
+
 			return "", nil
 		}
 
@@ -182,9 +181,10 @@ func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.
 			err := s.getAnswer(chat, c, nil)
 			return "", err
 		}
+
+		s.saveHistory(chat)
 	}
 
-	s.saveHistory(chat)
 	return "", err
 }
 
@@ -206,7 +206,6 @@ func (s *Server) handleToolCallsCore(chat *Chat, toolCalls []openai.ToolCall, no
 
 		Log.WithField("tools", toolCallsCount).WithField("tool", i).WithField("function", function.Name).Info("Function call")
 
-		// Process the function call
 		functionResult, err := s.executeToolCall(chat, toolCall, notifier)
 		if err != nil {
 			Log.WithField("function", function.Name).WithField("error", err).Error("Function call failed")
@@ -214,17 +213,14 @@ func (s *Server) handleToolCallsCore(chat *Chat, toolCalls []openai.ToolCall, no
 			resultErr = err
 		}
 
-		// Add result to list
 		if functionResult != "" {
 			results = append(results, functionResult)
 
-			// Create tool message for history
 			toolMessage := openai.NewChatToolMessage(functionResult, toolCall.ID)
 			toolMessages = append(toolMessages, toolMessage)
 		}
 	}
 
-	// Combine all results
 	combinedResult := ""
 	if len(results) > 0 {
 		combinedResult = strings.Join(results, "\n\n")

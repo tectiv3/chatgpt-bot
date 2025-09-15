@@ -1686,7 +1686,12 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 						usage.FinishReason = event.Item.Status
 					}
 					if event.Item.Content != nil && len(event.Item.Content) > 0 {
-						s.checkAnnotationsForWebapp(assistantMsg, event.Item.Content)
+						annotations := s.ProcessAnnotations(
+							event.Item.Content, &WebappAnnotationProcessor{server: s},
+						)
+						if len(annotations) > 0 {
+							s.StoreAnnotations(assistantMsg, annotations)
+						}
 					}
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
@@ -1701,11 +1706,9 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 // handleResponseFunctionCallsForWebapp processes function calls for the web app
 func (s *Server) handleResponseFunctionCallsForWebapp(chat *Chat, functions []openai.ResponseOutput) (string, error) {
-	// Convert ResponseOutput function calls to ToolCall format
 	var toolCalls []openai.ToolCall
 
 	for _, responseOutput := range functions {
-		// Only process function calls
 		if responseOutput.Type != "function_call" {
 			continue
 		}
@@ -1721,18 +1724,11 @@ func (s *Server) handleResponseFunctionCallsForWebapp(chat *Chat, functions []op
 		toolCalls = append(toolCalls, toolCall)
 	}
 
-	// Create webapp notifier
 	notifier := &WebappToolCallNotifier{}
-
-	// Call the refactored core function
 	result, toolMessages, err := s.handleToolCallsCore(chat, toolCalls, notifier)
-
-	// Add tool messages to dialog
 	for _, msg := range toolMessages {
 		chat.addMessageToDialog(msg)
 	}
-
-	// Save history with tool results
 	if len(result) > 0 {
 		s.saveHistory(chat)
 	}
@@ -2250,28 +2246,6 @@ func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, an
 	}
 
 	return localPath, nil
-}
-
-// checkAnnotationsForWebapp processes annotations for webapp streaming responses
-func (s *Server) checkAnnotationsForWebapp(assistantMsg *ChatMessage, content []openai.OutputContent) {
-	// Create webapp-specific annotation processor
-	processor := &WebappAnnotationProcessor{
-		server: s,
-	}
-
-	// Process annotations using the unified function
-	annotations, err := ProcessAnnotations(s.openAI, content, processor)
-	if err != nil {
-		Log.WithField("error", err).Error("Failed to process annotations")
-		return
-	}
-
-	// Store annotations in the message
-	if len(annotations) > 0 {
-		if err := StoreAnnotationsInMessage(s.db, assistantMsg, annotations); err != nil {
-			Log.WithField("error", err).Error("Failed to store annotations")
-		}
-	}
 }
 
 func validateString(input string, minLen, maxLen int) error {
