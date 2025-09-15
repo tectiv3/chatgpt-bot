@@ -238,7 +238,6 @@ type ChatMessage struct {
 	IsLive      bool   `json:"is_live" gorm:"default:true;index"`  // If false, not sent to model
 	MessageType string `json:"message_type" gorm:"default:normal"` // normal, summary, system
 
-	// Meta information (nullable for backwards compatibility)
 	InputTokens    *int    `json:"input_tokens,omitempty" gorm:"nullable"`
 	OutputTokens   *int    `json:"output_tokens,omitempty" gorm:"nullable"`
 	TotalTokens    *int    `json:"total_tokens,omitempty" gorm:"nullable"`
@@ -246,15 +245,45 @@ type ChatMessage struct {
 	ResponseTimeMs *int64  `json:"response_time_ms,omitempty" gorm:"nullable"`
 	FinishReason   *string `json:"finish_reason,omitempty" gorm:"size:50;nullable"`
 
-	// Annotation data for code interpreter outputs (nullable for backwards compatibility)
-	AnnotationContainerID *string `json:"annotation_container_id,omitempty" gorm:"size:100;nullable"` // OpenAI container ID
+	AnnotationContainerID *string `json:"annotation_container_id,omitempty" gorm:"size:100;nullable"`
 	AnnotationFileID      *string `json:"annotation_file_id,omitempty" gorm:"size:100;nullable"`
 	AnnotationFilename    *string `json:"annotation_filename,omitempty" gorm:"size:255;nullable"`
-	AnnotationFileType    *string `json:"annotation_file_type,omitempty" gorm:"size:50;nullable"`  // image, document, etc.
-	AnnotationFilePath    *string `json:"annotation_file_path,omitempty" gorm:"size:500;nullable"` // Local storage path
+	AnnotationFileType    *string `json:"annotation_file_type,omitempty" gorm:"size:50;nullable"`
+	AnnotationFilePath    *string `json:"annotation_file_path,omitempty" gorm:"size:500;nullable"`
 
-	// for function call
-	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"` // when role == 'assistant'
+	Annotations Annotations `json:"annotations,omitempty" gorm:"type:json"`
+
+	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"`
+}
+
+type Annotations []AnnotationData
+
+type AnnotationData struct {
+	openai.Annotation
+	LocalFilePath *string `json:"local_file_path,omitempty"`
+}
+
+// Value implements the driver.Valuer interface for database storage
+func (a Annotations) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
+}
+
+// Scan implements the sql.Scanner interface for database retrieval
+func (a *Annotations) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+
+	b, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("type assertion to []byte failed")
+	}
+
+	return json.Unmarshal(b, &a)
 }
 
 // ToolCalls is a custom type that will allow us to implement
@@ -352,6 +381,140 @@ type CoinCap struct {
 		PriceUsd string `json:"priceUsd"`
 	} `json:"data"`
 	Timestamp int64 `json:"timestamp"`
+}
+
+// AnnotationProcessor interface defines callbacks for platform-specific file handling
+type AnnotationProcessor interface {
+	// ProcessFile processes a file from an annotation and returns the local path
+	// Each platform implements this differently:
+	// - Telegram: saves file AND sends to user, returns path
+	// - Webapp: just saves file, returns path
+	ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error)
+}
+
+// ProcessAnnotations is a unified function that processes all annotation types
+func ProcessAnnotations(
+	openaiClient *openai.Client,
+	content []openai.OutputContent,
+	processor AnnotationProcessor,
+) ([]AnnotationData, error) {
+	var allAnnotations []AnnotationData
+
+	for _, content := range content {
+		text := content.Text
+
+		for _, annotation := range content.Annotations {
+			annotationData, err := processAnnotation(openaiClient, annotation, text, processor)
+			if err != nil {
+				// Log error but continue processing other annotations
+				continue
+			}
+			if annotationData != nil {
+				allAnnotations = append(allAnnotations, *annotationData)
+			}
+		}
+	}
+
+	return allAnnotations, nil
+}
+
+// processAnnotation handles individual annotation processing
+func processAnnotation(
+	openaiClient *openai.Client,
+	annotation openai.Annotation,
+	text string,
+	processor AnnotationProcessor,
+) (*AnnotationData, error) {
+	switch annotation.Type {
+	case "url_citation":
+		return processURLCitation(annotation)
+	case "file_citation", "container_file_citation":
+		return processFileCitation(openaiClient, annotation, text, processor)
+	default:
+		return nil, fmt.Errorf("unknown annotation type: %s", annotation.Type)
+	}
+}
+
+// processURLCitation handles url_citation annotations
+func processURLCitation(annotation openai.Annotation) (*AnnotationData, error) {
+	return &AnnotationData{
+		Annotation:    annotation,
+		LocalFilePath: nil,
+	}, nil
+}
+
+// processFileCitation handles file_citation and container_file_citation annotations
+func processFileCitation(
+	openaiClient *openai.Client,
+	annotation openai.Annotation,
+	text string,
+	processor AnnotationProcessor,
+) (*AnnotationData, error) {
+	result, err := openaiClient.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve container file: %w", err)
+	}
+
+	// Process file using the simplified interface
+	localPath, err := processor.ProcessFile(annotation.Filename, result, annotation, text)
+	var localPathPtr *string
+	if err == nil && localPath != "" {
+		localPathPtr = &localPath
+	}
+
+	annotationData := &AnnotationData{
+		Annotation:    annotation,
+		LocalFilePath: localPathPtr,
+	}
+
+	return annotationData, nil
+}
+
+// StoreAnnotations saves all annotations to the most recent assistant message in the chat
+func StoreAnnotations(db *gorm.DB, chat *Chat, annotations []AnnotationData) error {
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	// Find the most recent assistant message in the chat history
+	var lastAssistantMessage *ChatMessage
+	for i := len(chat.History) - 1; i >= 0; i-- {
+		if chat.History[i].Role == "assistant" {
+			lastAssistantMessage = &chat.History[i]
+			break
+		}
+	}
+
+	if lastAssistantMessage == nil {
+		return fmt.Errorf("no assistant message found to store annotations")
+	}
+
+	lastAssistantMessage.Annotations = Annotations(annotations)
+
+	if lastAssistantMessage.ID > 0 {
+		if err := db.Save(lastAssistantMessage).Error; err != nil {
+			return fmt.Errorf("failed to save annotations to database: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// StoreAnnotationsInMessage saves annotations directly to a specific message
+func StoreAnnotationsInMessage(db *gorm.DB, message *ChatMessage, annotations []AnnotationData) error {
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	message.Annotations = Annotations(annotations)
+
+	if message.ID > 0 {
+		if err := db.Save(message).Error; err != nil {
+			return fmt.Errorf("failed to save annotations to database: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func toBase64(b []byte) string {

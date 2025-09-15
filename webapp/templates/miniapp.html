@@ -476,44 +476,55 @@
                                                 'streaming-text': message.isStreaming,
                                                 'text-white': message.role === 'user',
                                             }"
-                                            v-html="formatMessage(message.content)"
+                                            v-html="formatMessage(message.content, message.annotations)"
                                         ></div>
 
                                         <!-- Annotations display -->
-                                        <div v-if="message.annotation_file_id" class="mt-3 pr-8">
-                                            <!-- Image annotation -->
-                                            <div v-if="message.annotation_file_type === 'image'" class="annotation-image">
-                                                <img 
-                                                    :src="message.annotation_url"
-                                                    :alt="message.annotation_filename"
-                                                    class="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-white/10"
-                                                    @click="viewImageFullscreen(message)"
-                                                    :title="'Click to view ' + message.annotation_filename + ' in fullscreen'"
-                                                />
-                                                <div class="text-xs text-opacity-70 mt-1" 
-                                                     :class="message.role === 'user' ? 'text-white' : 'text-tg-hint'">
-                                                    <i class="fas fa-image mr-1"></i>
-                                                    [[ message.annotation_filename ]]
+                                        <div v-if="message.annotations && message.annotations.length > 0">
+                                            <!-- URL Citations -->
+                                            <div v-html="formatAnnotations(message.annotations)"
+                                                 class="pr-8"
+                                                 :class="message.role === 'user' ? 'text-white/70' : 'text-tg-text/70'"
+                                            ></div>
+
+                                            <!-- File Citations -->
+                                            <div v-if="message.annotations.some(a => a.type === 'file_citation' || a.type === 'container_file_citation')" class="mt-3 pr-8">
+                                                <div v-for="(annotation, idx) in message.annotations.filter(a => a.type === 'file_citation' || a.type === 'container_file_citation')" :key="idx">
+                                                    <!-- Image file -->
+                                                    <div v-if="annotation.local_file_path && annotation.local_file_path.match(/\.(png|jpg|jpeg|gif)$/i)" class="annotation-image mb-2">
+                                                        <img
+                                                            :src="annotation.local_file_path"
+                                                            :alt="annotation.filename || 'Generated image'"
+                                                            class="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-white/10"
+                                                            @click="viewImageFullscreen({annotation_url: annotation.local_file_path, annotation_filename: annotation.filename})"
+                                                            :title="'Click to view ' + (annotation.filename || 'image') + ' in fullscreen'"
+                                                        />
+                                                        <div class="text-xs text-opacity-70 mt-1"
+                                                             :class="message.role === 'user' ? 'text-white' : 'text-tg-hint'">
+                                                            <i class="fas fa-image mr-1"></i>
+                                                            [[ annotation.filename || 'Generated image' ]]
+                                                        </div>
+                                                    </div>
+
+                                                    <!-- Document/other file -->
+                                                    <div v-else-if="annotation.local_file_path" class="annotation-file mb-2">
+                                                        <a
+                                                            :href="annotation.local_file_path"
+                                                            :download="annotation.filename"
+                                                            class="inline-flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
+                                                            :class="message.role === 'user'
+                                                                ? 'bg-white/20 hover:bg-white/30 text-white'
+                                                                : 'bg-tg-link/10 hover:bg-tg-link/20 text-tg-link'"
+                                                            :title="'Download ' + (annotation.filename || 'file')"
+                                                        >
+                                                            <i class="fas fa-download"></i>
+                                                            <span class="text-sm font-medium">[[ annotation.filename || 'Download file' ]]</span>
+                                                        </a>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            
-                                            <!-- Document/other file annotation -->
-                                            <div v-else class="annotation-file">
-                                                <a 
-                                                    :href="message.annotation_url"
-                                                    :download="message.annotation_filename"
-                                                    class="inline-flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
-                                                    :class="message.role === 'user' 
-                                                        ? 'bg-white/20 hover:bg-white/30 text-white' 
-                                                        : 'bg-tg-link/10 hover:bg-tg-link/20 text-tg-link'"
-                                                    :title="'Download ' + message.annotation_filename"
-                                                >
-                                                    <i class="fas fa-download text-sm"></i>
-                                                    <span class="text-sm font-medium">[[ message.annotation_filename ]]</span>
-                                                    <span class="text-xs opacity-70">([[ message.annotation_file_type ]])</span>
-                                                </a>
-                                            </div>
                                         </div>
+
 
                                         <!-- Streaming indicator -->
                                         <div
@@ -1036,7 +1047,7 @@
 
         </div>
 
-        <script src="/assets/js/app.js?1001"></script>
+        <script src="/assets/js/app.js?1003"></script>
         
     </body>
 </html>

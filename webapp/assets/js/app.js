@@ -628,6 +628,8 @@ createApp({
                 this.currentThread = newThread
                 this.messages = []
 
+                await this.saveUserPreference('selectedThreadId', threadId)
+
                 this.$nextTick(() => this.focusInput())
             } catch (error) {
                 this.showError(`Failed to create new thread: ${error.message}`)
@@ -1249,8 +1251,42 @@ createApp({
             })
         },
 
-        formatMessage(content) {
+        formatMessage(content, annotations) {
             if (!content) return ''
+
+            let processedContent = content
+            const urlCitations = []
+
+            if (annotations && annotations.length > 0) {
+                const urlAnnotations = annotations.filter(a => a.type === 'url_citation')
+
+                const sortedByPosition = [...urlAnnotations].sort(
+                    (a, b) => a.start_index - b.start_index
+                )
+
+                const citationMap = new Map()
+                sortedByPosition.forEach((annotation, index) => {
+                    citationMap.set(annotation, index + 1)
+                })
+
+                const sortedForReplacement = [...urlAnnotations].sort(
+                    (a, b) => b.start_index - a.start_index
+                )
+
+                sortedForReplacement.forEach(annotation => {
+                    const citationNumber = citationMap.get(annotation)
+
+                    if (annotation.start_index !== undefined && annotation.end_index !== undefined) {
+                        const before = processedContent.substring(0, annotation.start_index)
+                        const after = processedContent.substring(annotation.end_index)
+                        let url = annotation.url || '#'
+                        url = url.replace(/[?&]utm_source=openai(&|$)/, '$1').replace(/\?$/, '')
+                        processedContent = before + `[[${citationNumber}]](${url})` + after
+                    }
+                })
+
+                urlCitations.push(...sortedByPosition)
+            }
 
             if (!this.markdownProcessor) {
                 this.markdownProcessor = window.markdownit({
@@ -1261,7 +1297,43 @@ createApp({
                 })
             }
 
-            return this.markdownProcessor.render(content)
+            return this.markdownProcessor.render(processedContent)
+        },
+
+        formatAnnotations(annotations) {
+            if (!annotations || annotations.length === 0) return ''
+
+            const urlCitations = annotations.filter(a => a.type === 'url_citation')
+            if (urlCitations.length === 0) return ''
+
+            let html = '<div class="mt-3 pt-3 border-t border-white/10 text-sm">'
+            html += '<div class="text-xs text-tg-hint mb-2">References:</div>'
+
+            urlCitations.forEach((citation, index) => {
+                const num = index + 1
+                const title = citation.title || citation.url || 'Link'
+                let url = citation.url || '#'
+                url = url.replace(/[?&]utm_source=openai(&|$)/, '$1').replace(/\?$/, '')
+
+                html += `<div class="mb-1">
+                    <span class="text-tg-hint">[${num}]</span>
+                    <a href="${url}" target="_blank" rel="noopener noreferrer"
+                       class="text-tg-link hover:underline"
+                       title="${url}">
+                        ${this.escapeHtml(title)}
+                        <i class="fas fa-external-link-alt text-xs ml-1"></i>
+                    </a>
+                </div>`
+            })
+
+            html += '</div>'
+            return html
+        },
+
+        escapeHtml(text) {
+            const div = document.createElement('div')
+            div.textContent = text
+            return div.innerHTML
         },
 
         // Helper method to get display content with streaming indicator

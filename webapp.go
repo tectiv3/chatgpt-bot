@@ -83,7 +83,6 @@ type MessageResponse struct {
 	ImageData   *string   `json:"image_data,omitempty"` // URL to the image
 	ImageName   *string   `json:"image_name,omitempty"` // Original filename
 
-	// Meta information (optional for backwards compatibility)
 	InputTokens    *int    `json:"input_tokens,omitempty"`
 	OutputTokens   *int    `json:"output_tokens,omitempty"`
 	TotalTokens    *int    `json:"total_tokens,omitempty"`
@@ -91,11 +90,7 @@ type MessageResponse struct {
 	ResponseTimeMs *int64  `json:"response_time_ms,omitempty"`
 	FinishReason   *string `json:"finish_reason,omitempty"`
 
-	AnnotationContainerID *string `json:"annotation_container_id,omitempty"`
-	AnnotationFileID      *string `json:"annotation_file_id,omitempty"`
-	AnnotationFilename    *string `json:"annotation_filename,omitempty"`
-	AnnotationFileType    *string `json:"annotation_file_type,omitempty"`
-	AnnotationURL         *string `json:"annotation_url,omitempty"` // Ready-to-use URL for frontend
+	Annotations Annotations `json:"annotations,omitempty"`
 }
 
 type ChatWithThreadResponse struct {
@@ -661,16 +656,14 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			imageData = &imageURL
 		}
 
-		// Construct annotation URL if file path exists
-		var annotationURL *string
-		if msg.AnnotationFilePath != nil && *msg.AnnotationFilePath != "" {
-			// Extract just the filename from the full path
-			parts := strings.Split(*msg.AnnotationFilePath, "/")
-			if len(parts) > 0 {
-				filename := parts[len(parts)-1]
-				url := "/uploads/annotations/" + filename
-				annotationURL = &url
+		processedAnnotations := make(Annotations, 0, len(msg.Annotations))
+		for _, ann := range msg.Annotations {
+			processedAnn := ann
+			if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
+				url := s.filePathToURL(*ann.LocalFilePath)
+				processedAnn.LocalFilePath = &url
 			}
+			processedAnnotations = append(processedAnnotations, processedAnn)
 		}
 
 		response[i] = MessageResponse{
@@ -683,7 +676,6 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			ImageData:   imageData,
 			ImageName:   msg.Filename,
 
-			// Include meta information
 			InputTokens:    msg.InputTokens,
 			OutputTokens:   msg.OutputTokens,
 			TotalTokens:    msg.TotalTokens,
@@ -691,11 +683,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			ResponseTimeMs: msg.ResponseTimeMs,
 			FinishReason:   msg.FinishReason,
 
-			AnnotationContainerID: msg.AnnotationContainerID,
-			AnnotationFileID:      msg.AnnotationFileID,
-			AnnotationFilename:    msg.AnnotationFilename,
-			AnnotationFileType:    msg.AnnotationFileType,
-			AnnotationURL:         annotationURL,
+			Annotations: processedAnnotations,
 		}
 	}
 
@@ -821,7 +809,6 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		imageURL = url
 	}
 
-	// Create temporary user message for AI context (not saved to DB - frontend shows it)
 	messageType := "normal"
 	messageContent := req.Message
 	var imagePath, filename *string
@@ -1416,7 +1403,7 @@ func max(a, b int) int {
 // updateThreadTokens updates the thread's total token count when a message is added
 func (s *Server) updateThreadTokens(chatID int64, inputTokens, outputTokens int) error {
 	if inputTokens == 0 && outputTokens == 0 {
-		return nil // No tokens to add
+		return nil
 	}
 
 	return s.db.Model(&Chat{}).
@@ -1559,7 +1546,6 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 		event := comp.event
 
 		if comp.done {
-			// Handle function calls if any
 			if len(functionCalls) > 0 {
 				// First, add the assistant's message with tool calls to conversation history
 				assistantMsgContent := result.String()
@@ -1578,26 +1564,22 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					}
 				}
 
-				// Save tool calls to the assistant message
 				if len(toolCalls) > 0 {
 					assistantMsg.ToolCalls = toolCalls
 					assistantMsg.Content = &assistantMsgContent
 					s.db.Save(assistantMsg)
 				}
 
-				// Execute the tool calls
 				toolResults, err := s.handleResponseFunctionCallsForWebapp(chat, functionCalls)
 				if err != nil {
 					Log.WithField("error", err).Error("Failed to handle function calls")
 					return result.String(), usage, err
 				}
 
-				// Append tool results to the response
 				if toolResults != "" {
 					result.WriteString("\n\n")
 					result.WriteString(toolResults)
 
-					// Send final update with tool results
 					if w != nil && flusher != nil {
 						finalContent := result.String()
 						updatedResponse := MessageResponse{
@@ -1626,7 +1608,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					"input_tokens":  usage.InputTokens,
 					"output_tokens": usage.OutputTokens,
 					"total_tokens":  usage.TotalTokens,
-				}).Debug("Token usage extracted from response.done")
+				}).Debug("Done")
 			} else {
 				Log.Debug("No usage data found in response.done event")
 			}
@@ -1697,14 +1679,15 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 			if event.Item != nil {
 				switch event.Item.Type {
 				case "message":
-					// Extract finish reason from completed message
 					if event.Item.Status != "" {
 						if usage == nil {
 							usage = &TokenUsage{}
 						}
 						usage.FinishReason = event.Item.Status
 					}
-					s.processWebappAnnotations(assistantMsg, event.Item.Content)
+					if event.Item.Content != nil && len(event.Item.Content) > 0 {
+						s.checkAnnotationsForWebapp(assistantMsg, event.Item.Content)
+					}
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
 					Log.WithField("function", event.Item.Name).Info("Function call completed")
@@ -2197,16 +2180,20 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		flusher.Flush()
 	}
 
-	// Construct annotation URL if file path exists
-	var annotationURL *string
-	if assistantMsg.AnnotationFilePath != nil && *assistantMsg.AnnotationFilePath != "" {
-		// Extract just the filename from the full path
-		parts := strings.Split(*assistantMsg.AnnotationFilePath, "/")
-		if len(parts) > 0 {
-			filename := parts[len(parts)-1]
-			url := "/uploads/annotations/" + filename
-			annotationURL = &url
+	// IMPORTANT: Reload the message from database to ensure we have all annotations
+	// that were processed during the streaming response
+	if err := s.db.First(&assistantMsg, assistantMsg.ID).Error; err != nil {
+		Log.WithField("error", err).Error("Failed to reload message with annotations")
+	}
+
+	processedAnnotations := make(Annotations, 0, len(assistantMsg.Annotations))
+	for _, ann := range assistantMsg.Annotations {
+		processedAnn := ann
+		if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
+			url := s.filePathToURL(*ann.LocalFilePath)
+			processedAnn.LocalFilePath = &url
 		}
+		processedAnnotations = append(processedAnnotations, processedAnn)
 	}
 
 	// Send final message with complete metadata
@@ -2223,12 +2210,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		ModelUsed:      assistantMsg.ModelUsed,
 		ResponseTimeMs: assistantMsg.ResponseTimeMs,
 		FinishReason:   assistantMsg.FinishReason,
-
-		AnnotationContainerID: assistantMsg.AnnotationContainerID,
-		AnnotationFileID:      assistantMsg.AnnotationFileID,
-		AnnotationFilename:    assistantMsg.AnnotationFilename,
-		AnnotationFileType:    assistantMsg.AnnotationFileType,
-		AnnotationURL:         annotationURL,
+		Annotations:    processedAnnotations,
 	}
 	jsonData, _ = json.Marshal(finalResponse)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
@@ -2239,77 +2221,59 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	flusher.Flush()
 }
 
-// processWebappAnnotations processes annotations from OpenAI Response API
-func (s *Server) processWebappAnnotations(assistantMsg *ChatMessage, content []openai.OutputContent) {
-	for _, content := range content {
-		if len(content.Annotations) == 1 {
-			s.processWebappAnnotation(assistantMsg, content.Annotations[0])
-		} else {
-			for _, annotation := range content.Annotations {
-				if annotation.Type == "container_file_citation" {
-					s.processWebappAnnotation(assistantMsg, annotation)
-				}
-			}
+// Annotation processing for webapp
+
+// WebappAnnotationProcessor implements AnnotationProcessor for webapp
+type WebappAnnotationProcessor struct {
+	server *Server
+}
+
+// ProcessFile saves a file locally and returns the path for webapp
+func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error) {
+	// Log the file processing for webapp
+	Log.WithField("filename", filename).WithField("size", len(data)).Info("Annotation file processed for webapp")
+
+	// Create annotations directory if it doesn't exist
+	annotationsDir := "uploads/annotations"
+	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create annotations directory: %w", err)
+	}
+
+	// Generate unique filename to avoid conflicts
+	timestamp := time.Now().Unix()
+	localFilename := fmt.Sprintf("%d_%s", timestamp, filename)
+	localPath := filepath.Join(annotationsDir, localFilename)
+
+	// Write file to disk
+	if err := os.WriteFile(localPath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write annotation file: %w", err)
+	}
+
+	return localPath, nil
+}
+
+// checkAnnotationsForWebapp processes annotations for webapp streaming responses
+func (s *Server) checkAnnotationsForWebapp(assistantMsg *ChatMessage, content []openai.OutputContent) {
+	// Create webapp-specific annotation processor
+	processor := &WebappAnnotationProcessor{
+		server: s,
+	}
+
+	// Process annotations using the unified function
+	annotations, err := ProcessAnnotations(s.openAI, content, processor)
+	if err != nil {
+		Log.WithField("error", err).Error("Failed to process annotations")
+		return
+	}
+
+	// Store annotations in the message
+	if len(annotations) > 0 {
+		if err := StoreAnnotationsInMessage(s.db, assistantMsg, annotations); err != nil {
+			Log.WithField("error", err).Error("Failed to store annotations")
 		}
 	}
 }
 
-// processWebappAnnotation processes a single annotation and stores file data
-func (s *Server) processWebappAnnotation(assistantMsg *ChatMessage, annotation openai.Annotation) {
-	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
-	if err != nil {
-		Log.WithField("annotation", annotation).WithField("error", err).Error("Failed to retrieve container file for webapp")
-		return
-	}
-
-	Log.WithField("size", len(result)).WithField("file", annotation.Filename).Info("Processing annotation")
-
-	ext := filepath.Ext(annotation.Filename)
-	var fileType string
-	switch strings.ToLower(ext) {
-	case ".png", ".jpg", ".jpeg", ".gif":
-		fileType = "image"
-	case ".txt", ".md", ".py", ".js", ".html", ".css", ".json":
-		fileType = "text"
-	case ".pdf":
-		fileType = "document"
-	case ".csv", ".xlsx", ".xls":
-		fileType = "spreadsheet"
-	default:
-		fileType = "document"
-	}
-
-	annotationsDir := "uploads/annotations"
-	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
-		Log.WithField("error", err).Error("Failed to create annotations directory")
-		return
-	}
-
-	timestamp := time.Now().Format("20060102-150405")
-	randomID := uuid.New().String()[:8]
-	filename := fmt.Sprintf("%s_%s_%s", timestamp, randomID, annotation.Filename)
-	filePath := filepath.Join(annotationsDir, filename)
-
-	if err := os.WriteFile(filePath, result, 0644); err != nil {
-		Log.WithField("error", err).Error("Failed to save annotation file")
-		return
-	}
-
-	assistantMsg.AnnotationContainerID = &annotation.ContainerID
-	assistantMsg.AnnotationFileID = &annotation.FileID
-	assistantMsg.AnnotationFilename = &annotation.Filename
-	assistantMsg.AnnotationFileType = &fileType
-	assistantMsg.AnnotationFilePath = &filePath
-
-	Log.
-		WithField("filepath", filePath).
-		WithField("name", annotation.Filename).
-		Info("Saved annotation file")
-}
-
-// Input validation and sanitization helpers
-
-// validateString validates basic string input with length limits
 func validateString(input string, minLen, maxLen int) error {
 	if len(input) < minLen {
 		return fmt.Errorf("input too short (minimum %d characters)", minLen)
@@ -2415,6 +2379,17 @@ func validateUUID(uuidStr string) error {
 	}
 
 	return nil
+}
+
+// filePathToURL converts a file path to a URL path for serving
+func (s *Server) filePathToURL(filePath string) string {
+	// Extract just the filename from the full path
+	parts := strings.Split(filePath, "/")
+	if len(parts) > 0 {
+		filename := parts[len(parts)-1]
+		return "/uploads/annotations/" + filename
+	}
+	return filePath
 }
 
 // estimateTokenCount provides a rough estimate of token count for text

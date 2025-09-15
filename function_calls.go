@@ -89,14 +89,6 @@ func (s *Server) getResponseTools() []any {
 func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
 	availableTools := []openai.ChatCompletionTool{
 		openai.NewChatCompletionTool(
-			"set_reminder",
-			"Set a reminder to do something at a specific time.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("reminder", "string", "A reminder of what to do, e.g. 'buy groceries'").
-				AddPropertyWithDescription("time", "number", "A time at which to be reminded in minutes from now, e.g. 1440").
-				SetRequiredParameters([]string{"reminder", "time"}),
-		),
-		openai.NewChatCompletionTool(
 			"make_summary",
 			"Make a summary of a web page.",
 			openai.NewToolFunctionParameters().
@@ -312,28 +304,6 @@ func (s *Server) executeToolCall(chat *Chat, toolCall openai.ToolCall, notifier 
 		// TODO: Implement image generation and return URL for display
 		return fmt.Sprintf("Image generation for '%s' started", arguments.Text), nil
 
-	case "set_reminder":
-		type parsed struct {
-			Reminder string `json:"reminder"`
-			Minutes  int64  `json:"time"`
-		}
-		var arguments parsed
-		if err := toolCall.ArgumentsInto(&arguments); err != nil {
-			return "", fmt.Errorf("failed to parse arguments: %w", err)
-		}
-
-		// Current implementation only works for Telegram and is not persistent
-		// TODO: Implement proper reminder storage in database for both Telegram and webapp
-		if teleNotifier, ok := notifier.(*TelegramToolCallNotifier); ok {
-			if err := s.setReminder(teleNotifier.c.Chat().ID, arguments.Reminder, arguments.Minutes); err != nil {
-				return "", fmt.Errorf("failed to set reminder: %w", err)
-			}
-			return fmt.Sprintf("Reminder set for %d minutes from now (will be lost if bot restarts)", arguments.Minutes), nil
-		}
-
-		// For webapp, we need database storage implementation
-		return "Reminder feature not yet implemented for web interface", nil
-
 	case "make_summary":
 		type parsed struct {
 			URL string `json:"url"`
@@ -343,25 +313,18 @@ func (s *Server) executeToolCall(chat *Chat, toolCall openai.ToolCall, notifier 
 			return "", fmt.Errorf("failed to parse arguments: %w", err)
 		}
 
+		Log.Info("Making summary for URL: ", arguments.URL)
+
 		summary, err := s.getPageSummary(arguments.URL)
 		if err != nil {
 			return "", fmt.Errorf("failed to get page summary: %w", err)
 		}
+
 		return summary, nil
 
 	default:
 		return "", fmt.Errorf("unknown function: %s", function.Name)
 	}
-}
-
-func (s *Server) setReminder(chatID int64, reminder string, minutes int64) error {
-	timer := time.NewTimer(time.Minute * time.Duration(minutes))
-	go func() {
-		<-timer.C
-		_, _ = s.bot.Send(tele.ChatID(chatID), reminder)
-	}()
-
-	return nil
 }
 
 func (s *Server) pageToSpeech(c tele.Context, url string) {
@@ -403,11 +366,11 @@ func (s *Server) getPageSummary(url string) (string, error) {
 
 	msg := openai.NewChatUserMessage(article.TextContent)
 	// You are acting as a summarization AI, and for the input text please summarize it to the most important 3 to 5 bullet points for brevity:
-	system := openai.NewChatSystemMessage("Make a summary of the article. Try to be as brief as possible and highlight key points. Use markdown to annotate the summary.")
+	system := openai.NewChatSystemMessage("Make a summary of the article. Be brief but thorough and highlight key points. Use markdown to annotate the summary.")
 
 	history := []openai.ChatMessage{system, msg}
 
-	response, err := s.openAI.CreateChatCompletion(miniModel, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.2))
+	response, err := s.openAI.CreateChatCompletion(miniModel, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
 	if err != nil {
 		return "", fmt.Errorf("failed to create chat completion: %v", err)
 	}
