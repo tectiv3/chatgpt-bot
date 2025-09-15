@@ -366,11 +366,11 @@
                                         >
                                     </button>
 
-                                    <!-- Role selector button -->
+                                    <!-- Role selector button - hidden on mobile -->
                                     <button
                                         v-if="threadSettings.role_id || roles.length > 0"
                                         @click="showSettings = true"
-                                        class="flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
+                                        class="hidden sm:flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
                                         title="Click to change role"
                                     >
                                         <i class="fas fa-user-tag text-tg-link text-xs"></i>
@@ -379,8 +379,6 @@
                                         >
                                     </button>
 
-                                    <!-- Tool toggle buttons -->
-                                    <div class="flex items-center gap-1 sm:ml-2">
                                         <!-- Search tool -->
                                         <button
                                             @click="toggleTool('search')"
@@ -419,7 +417,7 @@
                                             <i class="fas fa-file-alt"></i>
                                             <span class="hidden lg:inline font-medium">Summary</span>
                                         </button>
-                                    </div>
+
                                 </div>
 
                                 <!-- Thread settings button -->
