@@ -319,6 +319,43 @@ body {
     animation-delay: 0.4s;
 }
 
+/* Pure CSS tool text display on mobile tap */
+@media (max-width: 1023px) {
+    .tool-text {
+        display: none;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+    
+    button:active .tool-text,
+    button:focus .tool-text {
+        display: inline;
+        opacity: 1;
+        animation: fadeInOut 1.5s ease-in-out;
+    }
+}
+
+@keyframes fadeInOut {
+    0% {
+        opacity: 0;
+        display: none;
+    }
+    10% {
+        opacity: 1;
+        display: inline;
+    }
+    90% {
+        opacity: 1;
+        display: inline;
+    }
+    100% {
+        opacity: 0;
+        display: none;
+    }
+}
+
+
+
 /* Focus styles for better accessibility */
 .focus-tg:focus {
   outline: 2px solid var(--tg-theme-link-color);

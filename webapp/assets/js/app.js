@@ -903,7 +903,6 @@ createApp({
                                             )
                                         }
 
-
                                         // Update thread token totals if usage data is available
                                         if (message.input_tokens || message.output_tokens) {
                                             if (this.currentThread) {
@@ -1101,32 +1100,34 @@ createApp({
             this.saveUserPreference('selectedModel', this.threadSettings.model_name)
             this.saveUserPreference('selectedRole', this.threadSettings.role_id)
 
-            this.$nextTick(() => this.focusInput())
+            if (!this.mobileKeyboard.isMobile.value) {
+                this.$nextTick(() => this.focusInput())
+            }
         },
 
-        // Toggle individual tools on/off
         toggleTool(toolName) {
+
             const tools = [...this.threadSettings.enabled_tools]
             const index = tools.indexOf(toolName)
-            
+
             if (index > -1) {
-                // Tool is enabled, remove it
                 tools.splice(index, 1)
             } else {
-                // Tool is disabled, add it
                 tools.push(toolName)
             }
-            
+
             this.threadSettings.enabled_tools = tools
-            
-            // Update current thread settings
+
             if (this.currentThread) {
                 this.currentThread.settings = { ...this.threadSettings }
             }
-            
-            // Save settings to backend if this is an existing thread
+
             if (this.currentThreadId) {
                 this.saveSettings()
+            }
+
+            if (!this.mobileKeyboard.isMobile.value) {
+                this.$nextTick(() => this.focusInput())
             }
         },
 
@@ -1134,7 +1135,9 @@ createApp({
             if (!this.currentThreadId) {
                 await this.saveUserPreferences()
                 this.showSettings = false
-                this.$nextTick(() => this.focusInput())
+                if (!this.mobileKeyboard.isMobile.value) {
+                    this.$nextTick(() => this.focusInput())
+                }
                 return
             }
 
@@ -1154,7 +1157,9 @@ createApp({
 
                 this.showSettings = false
 
-                this.$nextTick(() => this.focusInput())
+                if (!this.mobileKeyboard.isMobile.value) {
+                    this.$nextTick(() => this.focusInput())
+                }
             } catch (error) {
                 this.showError('Failed to save settings')
             }
@@ -1182,7 +1187,6 @@ createApp({
 
             try {
                 if (this.editingRole.id) {
-                    // Update existing role
                     await this.apiCall(`/api/roles/${this.editingRole.id}`, {
                         method: 'PUT',
                         body: JSON.stringify({
@@ -1191,7 +1195,6 @@ createApp({
                         }),
                     })
                 } else {
-                    // Create new role
                     await this.apiCall('/api/roles', {
                         method: 'POST',
                         body: JSON.stringify({
@@ -1201,7 +1204,6 @@ createApp({
                     })
                 }
 
-                // Reload roles
                 const response = await this.apiCall('/api/roles')
                 this.roles = response.roles || []
 
@@ -1221,10 +1223,8 @@ createApp({
                     method: 'DELETE',
                 })
 
-                // Remove from local array
                 this.roles = this.roles.filter(r => r.id !== roleId)
 
-                // If this role was selected in current thread, clear it
                 if (this.threadSettings.role_id === roleId) {
                     this.threadSettings.role_id = null
                     await this.saveSettings()
