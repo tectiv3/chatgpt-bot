@@ -106,7 +106,6 @@ const useDeviceStorage = () => {
     }
 }
 
-// Simplified mobile detection
 const useMobileKeyboard = () => {
     const isMobile = computed(() => {
         return (
@@ -133,6 +132,7 @@ createApp({
     data() {
         return {
             loading: true,
+            messagesLoading: false,
             sidebarOpen: false,
 
             // Current state
@@ -207,9 +207,8 @@ createApp({
     },
 
     computed: {
-        // Use computed property for message count instead of manual updates
         currentMessageCount() {
-            return this.messages.length
+            return this.messagesLoading ? '...' : this.messages.length
         },
 
         // Computed property for getting current role name
@@ -283,11 +282,6 @@ createApp({
             return this.streaming && this.currentStreamController
         },
 
-        // Computed property for message count display in threads list
-        messageCount() {
-            return this.messages.length
-        },
-
         // Check if there are archived threads to show section
         hasArchivedThreads() {
             return this.archivedThreads.length > 0
@@ -300,12 +294,12 @@ createApp({
     },
 
     watch: {
-        // Watch message count and update thread accordingly
-        currentMessageCount(newCount) {
-            if (this.currentThread) {
-                this.currentThread.message_count = newCount
-            }
-        },
+        // // Watch message count and update thread accordingly
+        // currentMessageCount(newCount) {
+        //     if (this.currentThread) {
+        //         this.currentThread.message_count = newCount
+        //     }
+        // },
 
         // Watch sidebar state to handle mobile scroll prevention
         sidebarOpen(isOpen) {
@@ -646,10 +640,10 @@ createApp({
             if (this.currentThreadId === threadId) return
 
             // Stop any active streaming when switching threads
-            if (this.streaming) {
-                // this.stopStreaming() // why?
-            }
-
+            // if (this.streaming) {
+            // this.stopStreaming() // why?
+            // }
+            this.messagesLoading = true
             this.currentThreadId = threadId
             this.currentThread =
                 this.threads.find(t => t.id === threadId) ||
@@ -679,6 +673,7 @@ createApp({
                 } catch (error) {
                     console.error('Failed to load messages:', error)
                     this.showError('Failed to load thread messages')
+                } finally {
                 }
             } else {
                 console.error('Thread not found:', threadId)
@@ -697,6 +692,7 @@ createApp({
 
         async loadMessages() {
             if (!this.currentThreadId) return
+            this.messagesLoading = true
 
             try {
                 const response = await this.apiCall(
@@ -720,6 +716,8 @@ createApp({
                 this.$nextTick(() => this.focusInput())
             } catch (error) {
                 this.showError('Failed to load messages')
+            } finally {
+                this.messagesLoading = false
             }
         },
 
@@ -971,8 +969,12 @@ createApp({
                                     }
 
                                     // Update annotation metadata if provided
-                                    if (message && data.annotation_container_id !== undefined) {
-                                        message.annotation_container_id = data.annotation_container_id
+                                    if (
+                                        message &&
+                                        data.annotation_container_id !== undefined
+                                    ) {
+                                        message.annotation_container_id =
+                                            data.annotation_container_id
                                     }
                                     if (message && data.annotation_file_id !== undefined) {
                                         message.annotation_file_id = data.annotation_file_id
@@ -981,7 +983,8 @@ createApp({
                                         message.annotation_filename = data.annotation_filename
                                     }
                                     if (message && data.annotation_file_type !== undefined) {
-                                        message.annotation_file_type = data.annotation_file_type
+                                        message.annotation_file_type =
+                                            data.annotation_file_type
                                     }
                                     if (message && data.annotation_url !== undefined) {
                                         message.annotation_url = data.annotation_url
@@ -1769,10 +1772,10 @@ createApp({
             if (!message.annotation_url || message.annotation_file_type !== 'image') {
                 return
             }
-            
+
             this.fullscreenImage = {
                 src: message.annotation_url,
-                filename: message.annotation_filename || 'annotation.png'
+                filename: message.annotation_filename || 'annotation.png',
             }
         },
 
@@ -1787,13 +1790,13 @@ createApp({
                 event.preventDefault()
                 this.newThread()
             }
-            
+
             // ESC to close fullscreen image
             if (event.key === 'Escape' && this.fullscreenImage) {
                 event.preventDefault()
                 this.closeFullscreenImage()
             }
-            
+
             // ESC to stop streaming
             if (event.key === 'Escape' && this.streaming) {
                 event.preventDefault()

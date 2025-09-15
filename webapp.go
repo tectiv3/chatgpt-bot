@@ -1523,7 +1523,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 	options := openai.ResponseOptions{}
 	options.SetInstructions(instructions)
-	options.SetMaxOutputTokens(16000)
+	options.SetMaxOutputTokens(10000)
 	options.SetTemperature(chat.Temperature)
 	options.SetUser(fmt.Sprintf("webapp_user_%d", chat.UserID))
 	options.SetStore(false)

@@ -109,60 +109,56 @@
                                 "
                                 @click="selectThread(thread.id)"
                             >
-                                <div class="flex items-start gap-3">
-                                    <div class="flex-1 min-w-0">
-                                        <div class="flex items-center gap-2 mb-1">
-                                            <div
-                                                class="font-medium text-sm text-tg-text truncate flex-1"
-                                            >
-                                                [[ thread.title ]]
-                                            </div>
-                                        </div>
-                                        <div
-                                            class="flex items-center gap-2 text-xs text-tg-hint"
-                                        >
-                                            <span
-                                                >[[ thread.id === currentThreadId ?
-                                                messageCount : thread.message_count ]]
-                                                messages</span
-                                            >
-                                            <span>•</span>
-                                            <span>[[ formatDate(thread.updated_at) ]]</span>
-                                            <span v-if="thread.total_input_tokens || thread.total_output_tokens">•</span>
-                                            <span v-if="thread.total_input_tokens || thread.total_output_tokens" class="text-tg-link">
-                                                <i class="fas fa-calculator text-xs"></i>
-                                                [[ formatThreadTokens(thread) ]]
-                                            </span>
-                                        </div>
-                                    </div>
+                                <div class="relative">
                                     <div
                                         v-if="thread.id"
-                                        class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        class="absolute top-0 right-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10"
                                     >
                                         <button
                                             @click.stop="
                                                 editThreadTitle(thread.id, thread.title)
                                             "
-                                            class="p-1.5 rounded hover:bg-tg-hint/20 text-tg-hint hover:text-tg-text transition-colors"
+                                            class="p-1.5 rounded hover:bg-tg-hint/20 transition-colors"
                                             title="Edit title"
                                         >
                                             <i class="fas fa-edit text-xs"></i>
                                         </button>
                                         <button
                                             @click.stop="archiveThread(thread.id)"
-                                            class="p-1.5 rounded hover:bg-tg-hint/20 text-tg-hint hover:text-tg-text transition-colors"
+                                            class="p-1.5 rounded hover:bg-tg-hint/20 text-tg-hint transition-colors"
                                             title="Archive thread"
                                         >
                                             <i class="fas fa-archive text-xs"></i>
                                         </button>
                                         <button
                                             @click.stop="confirmDeleteThread(thread.id)"
-                                            class="p-1.5 rounded hover:bg-red-200 text-tg-hint hover:text-tg-destructive transition-colors"
+                                            class="p-1.5 rounded hover:bg-red-500 text-tg-hint transition-colors"
                                             title="Delete thread"
                                         >
                                             <i class="fas fa-trash text-xs"></i>
                                         </button>
                                     </div>
+                                    <div
+                                        class="font-medium text-sm text-tg-text truncate pr-2 mb-1"
+                                    >
+                                        [[ thread.title ]]
+                                    </div>
+                                </div>
+                                <div
+                                    class="flex items-center gap-2 text-xs text-tg-hint"
+                                >
+                                    <span
+                                        >[[ thread.id === currentThreadId ?
+                                        currentMessageCount : thread.message_count ]]
+                                        messages</span
+                                    >
+                                    <span>•</span>
+                                    <span>[[ formatDate(thread.updated_at) ]]</span>
+                                    <span v-if="thread.total_input_tokens || thread.total_output_tokens">•</span>
+                                    <span v-if="thread.total_input_tokens || thread.total_output_tokens" class="text-tg-link">
+                                        <i class="fas fa-calculator text-xs"></i>
+                                        [[ formatThreadTokens(thread) ]]
+                                    </span>
                                 </div>
                             </div>
 
@@ -598,6 +594,17 @@
                                 </div>
                             </div>
                         </div>
+                        
+                        <!-- <div v-else>
+                            <div class="flex-1 flex items-center justify-center p-8">
+                                <div class="text-center">
+                                    <div
+                                        class="w-8 h-8 border-2 border-tg-link border-t-transparent rounded-full animate-spin mx-auto mb-4"
+                                    ></div>
+                                    <div class="text-tg-hint">Loading messages...</div>
+                                </div>
+                            </div>
+                        </div> -->
                     </div>
 
                     <!-- Input Area -->
@@ -1029,7 +1036,7 @@
 
         </div>
 
-        <script src="/assets/js/app.js?999"></script>
+        <script src="/assets/js/app.js?1001"></script>
         
     </body>
 </html>
