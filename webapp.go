@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/meinside/openai-go"
+	log "github.com/sirupsen/logrus"
 	initdata "github.com/telegram-mini-apps/init-data-golang"
 	"gorm.io/gorm"
 )
@@ -199,7 +200,11 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		userLogger := Log.WithField("user", user.Username)
+
 		ctx := context.WithValue(r.Context(), userContextKey, user)
+		ctx = context.WithValue(ctx, loggerContextKey, userLogger)
+
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -207,7 +212,19 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // Auth context
 type contextKey string
 
-const userContextKey contextKey = "user"
+const (
+	userContextKey   contextKey = "user"
+	loggerContextKey contextKey = "logger"
+)
+
+// Helper function to get logger from context
+func getLogger(ctx context.Context) *log.Entry {
+	if logger, ok := ctx.Value(loggerContextKey).(*log.Entry); ok {
+		return logger
+	}
+
+	return Log
+}
 
 // Helper functions for JSON responses
 func (s *Server) writeJSONError(w http.ResponseWriter, status int, message string) {
@@ -691,6 +708,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 
 func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID string) {
 	user := getUserFromContext(r)
+	logger := getLogger(r.Context())
 	if user == nil {
 		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
 		return
@@ -802,7 +820,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		// Save base64 image data to file
 		url, err := s.saveBase64Image(req.Image.Data, req.Image.Filename, req.Image.MimeType)
 		if err != nil {
-			Log.WithError(err).Error("Failed to save image")
+			logger.WithError(err).Error("Failed to save image")
 			s.writeJSONError(w, http.StatusInternalServerError, "Failed to save image")
 			return
 		}
@@ -840,7 +858,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 
 	// Save user message to database immediately
 	if err := s.db.Create(&userMessage).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save user message")
+		logger.WithField("error", err).Error("Failed to save user message")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save message")
 		return
 	}
@@ -848,13 +866,13 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	// Update thread token counts
 	if inputTokenEstimate > 0 {
 		if err := s.updateThreadTokens(chat.ChatID, inputTokenEstimate, 0); err != nil {
-			Log.WithField("error", err).Warn("Failed to update thread tokens for user message")
+			logger.WithField("error", err).Warn("Failed to update thread tokens for user message")
 		}
 	}
 
 	// Check if context limit is exceeded and summarize if needed
 	if err := s.checkAndSummarizeContext(&chat); err != nil {
-		Log.WithField("error", err).Warn("Failed to summarize context")
+		logger.WithField("error", err).Warn("Failed to summarize context")
 	}
 
 	// Always use streaming response for OpenAI models in miniapp
@@ -1483,6 +1501,7 @@ type TokenUsage struct {
 
 // Generate response with streaming updates to SSE
 func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, history []openai.ChatMessage, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, *TokenUsage, error) {
+	logger := getLogger(ctx)
 	model := s.getModel(chat.ModelName)
 	if model == nil {
 		return "", nil, fmt.Errorf("model %s not found", chat.ModelName)
@@ -1593,7 +1612,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 				toolResults, err := s.handleResponseFunctionCallsForWebapp(chat, functionCalls)
 				if err != nil {
-					Log.WithField("error", err).Error("Failed to handle function calls")
+					logger.WithField("error", err).Error("Failed to handle function calls")
 					return result.String(), usage, err
 				}
 
@@ -1625,13 +1644,13 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					OutputTokens: event.Response.Usage.OutputTokens,
 					TotalTokens:  event.Response.Usage.TotalTokens,
 				}
-				Log.WithFields(map[string]interface{}{
+				logger.WithFields(map[string]interface{}{
 					"input_tokens":  usage.InputTokens,
 					"output_tokens": usage.OutputTokens,
 					"total_tokens":  usage.TotalTokens,
 				}).Debug("Done")
 			} else {
-				Log.Debug("No usage data found in response.done event")
+				logger.Debug("No usage data found in response.done event")
 			}
 
 			return result.String(), usage, nil
@@ -1664,7 +1683,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 			if event.Item != nil {
 				switch event.Item.Type {
 				case "function_call":
-					Log.WithField("function", event.Item.Name).Info("Function call started")
+					logger.WithField("function", event.Item.Name).Info("Function call started")
 				case "web_search_call":
 					currentContent := chat.t("Web search started, please wait...")
 					updatedResponse := MessageResponse{
@@ -1708,15 +1727,49 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					}
 					if event.Item.Content != nil && len(event.Item.Content) > 0 {
 						annotations := s.ProcessAnnotations(
-							event.Item.Content, &WebappAnnotationProcessor{server: s},
+							event.Item.Content, &WebappAnnotationProcessor{server: s, logger: logger},
 						)
 						if len(annotations) > 0 {
 							s.StoreAnnotations(assistantMsg, annotations)
+
+							// Send immediate streaming update with annotations to frontend
+							if w != nil && flusher != nil {
+								// Reload message from database to get updated annotations
+								var updatedMsg ChatMessage
+								if err := s.db.First(&updatedMsg, assistantMsg.ID).Error; err == nil {
+									// Process annotations for response (convert file paths to URLs)
+									processedAnnotations := make(Annotations, 0, len(updatedMsg.Annotations))
+									for _, ann := range updatedMsg.Annotations {
+										processedAnn := ann
+										if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
+											url := s.filePathToURL(*ann.LocalFilePath)
+											processedAnn.LocalFilePath = &url
+										}
+										processedAnnotations = append(processedAnnotations, processedAnn)
+									}
+
+									// Send update with current content and annotations
+									currentContent := result.String()
+									annotationResponse := MessageResponse{
+										ID:          assistantMsg.ID,
+										Role:        "assistant",
+										Content:     &currentContent,
+										CreatedAt:   assistantMsg.CreatedAt,
+										IsLive:      true,
+										MessageType: "normal",
+										Annotations: processedAnnotations,
+									}
+
+									jsonData, _ := json.Marshal(annotationResponse)
+									fmt.Fprintf(w, "data: %s\n\n", jsonData)
+									flusher.Flush()
+								}
+							}
 						}
 					}
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
-					Log.WithField("function", event.Item.Name).Info("Function call completed")
+					logger.WithField("function", event.Item.Name).Info("Function call completed")
 				}
 			}
 		}
@@ -1765,6 +1818,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := getUserFromContext(r)
+	logger := getLogger(r.Context())
 	if user == nil {
 		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
 		return
@@ -1847,7 +1901,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Create uploads directory with proper permissions
 	if err := os.MkdirAll("uploads", 0755); err != nil {
-		Log.WithField("error", err).Error("Failed to create uploads directory")
+		logger.WithField("error", err).Error("Failed to create uploads directory")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create upload directory")
 		return
 	}
@@ -1975,7 +2029,7 @@ func (s *Server) createMessagesSummary(messages []ChatMessage) (string, error) {
 
 // Helper functions for thread message processing
 
-func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []openai.ChatMessage {
+func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat, logger *log.Entry) []openai.ChatMessage {
 	var history []openai.ChatMessage
 
 	// Add system prompt/role if exists
@@ -2003,7 +2057,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 		if msg.ImagePath != nil {
 			reader, err := os.Open(*msg.ImagePath)
 			if err != nil {
-				Log.Warn("Error opening image file", "error=", err)
+				logger.Warn("Error opening image file", "error=", err)
 				// Still add text content if available
 				if *msg.Content != "" {
 					history = append(history, openai.ChatMessage{
@@ -2017,7 +2071,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 
 			bytes, err := io.ReadAll(reader)
 			if err != nil {
-				Log.Warn("Error reading image file", "error=", err)
+				logger.Warn("Error reading image file", "error=", err)
 				// Still add text content if available
 				if *msg.Content != "" {
 					history = append(history, openai.ChatMessage{
@@ -2044,7 +2098,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 			}
 			content = append(content, openai.NewChatMessageContentWithBytes(bytes))
 
-			Log.Info("Adding image message to history", "filename=", filename)
+			logger.Info("Adding image message to history", "filename=", filename)
 			message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
 		} else {
 			// Regular text message
@@ -2062,6 +2116,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 
 // Handle streaming response with Server-Sent Events
 func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, userMessage *ChatMessage, isNewThread bool) {
+	logger := getLogger(r.Context())
 	// Set up Server-Sent Events headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2088,7 +2143,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		Find(&messages)
 
 	// Convert to OpenAI format (user message is now in DB, no need to append)
-	history := s.convertMessagesToOpenAI(messages, chat)
+	history := s.convertMessagesToOpenAI(messages, chat, logger)
 
 	// Create assistant message in database
 	assistantMsg := ChatMessage{
@@ -2100,7 +2155,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	}
 
 	if err := s.db.Create(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to create assistant message")
+		logger.WithField("error", err).Error("Failed to create assistant message")
 		return
 	}
 
@@ -2122,7 +2177,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	responseTime := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		Log.WithField("error", err).Error("Failed to generate response")
+		logger.WithField("error", err).Error("Failed to generate response")
 		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
 		assistantMsg.Content = &errorContent
 		s.db.Save(&assistantMsg)
@@ -2159,13 +2214,13 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	}
 
 	if err := s.db.Save(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save final response to database")
+		logger.WithField("error", err).Error("Failed to save final response to database")
 	}
 
 	// Update thread token counts for assistant message
 	if usage != nil {
 		if err := s.updateThreadTokens(chat.ChatID, usage.InputTokens, usage.OutputTokens); err != nil {
-			Log.WithField("error", err).Warn("Failed to update thread tokens for assistant message")
+			logger.WithField("error", err).Warn("Failed to update thread tokens for assistant message")
 		}
 	}
 
@@ -2201,7 +2256,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	// IMPORTANT: Reload the message from database to ensure we have all annotations
 	// that were processed during the streaming response
 	if err := s.db.First(&assistantMsg, assistantMsg.ID).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to reload message with annotations")
+		logger.WithField("error", err).Error("Failed to reload message with annotations")
 	}
 
 	processedAnnotations := make(Annotations, 0, len(assistantMsg.Annotations))
@@ -2244,14 +2299,13 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 // WebappAnnotationProcessor implements AnnotationProcessor for webapp
 type WebappAnnotationProcessor struct {
 	server *Server
+	logger *log.Entry
 }
 
 // ProcessFile saves a file locally and returns the path for webapp
 func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error) {
-	// Log the file processing for webapp
-	Log.WithField("filename", filename).WithField("size", len(data)).Info("Annotation file processed for webapp")
+	p.logger.WithField("filename", filename).WithField("size", len(data)).Info("Annotation file processed")
 
-	// Create annotations directory if it doesn't exist
 	annotationsDir := "uploads/annotations"
 	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create annotations directory: %w", err)
@@ -2262,7 +2316,6 @@ func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, an
 	localFilename := fmt.Sprintf("%d_%s", timestamp, filename)
 	localPath := filepath.Join(annotationsDir, localFilename)
 
-	// Write file to disk
 	if err := os.WriteFile(localPath, data, 0644); err != nil {
 		return "", fmt.Errorf("failed to write annotation file: %w", err)
 	}

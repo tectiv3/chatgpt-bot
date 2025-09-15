@@ -982,6 +982,16 @@ createApp({
                                     if (message && data.finish_reason !== undefined) {
                                         message.finish_reason = data.finish_reason
                                     }
+                                    
+                                    if (message && data.annotations !== undefined) {
+                                        message.annotations = data.annotations
+                                        if (data.annotations && data.annotations.length > 0) {
+                                            message.formattedContent = this.formatMessage(
+                                                message.content,
+                                                message.annotations
+                                            )
+                                        }
+                                    }
 
                                     const now = Date.now()
 
