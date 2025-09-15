@@ -35,7 +35,7 @@
                 },
             }
         </script>
-        <link rel="stylesheet" href="/assets/css/app.css?111" />
+        <link rel="stylesheet" href="/assets/css/app.css?222" />
         <link
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
             rel="stylesheet"
@@ -421,7 +421,7 @@
                                 :key="message.id"
                                 class="flex gap-3"
                                 :class="
-                                    message.role === 'user' ? 'justify-end' : 'justify-start'
+                                    message.role === 'user' ? 'justify-end user' : 'justify-start assistant'
                                 "
                             >
                                 <!-- Assistant Avatar -->
@@ -633,19 +633,14 @@
                                         <div class="flex items-center gap-2">
                                             <span>[[ formatTime(message.created_at) ]]</span>
 
-                                            <!-- Token and model info for assistant messages -->
                                             <span
                                                 v-if="
                                                     message.role === 'assistant' &&
-                                                    (message.total_tokens ||
-                                                        (message.input_tokens &&
-                                                            message.output_tokens))
+                                                    message.total_tokens
                                                 "
                                             >
                                                 <i class="fas fa-calculator text-xs"></i>
-                                                [[ message.total_tokens ||
-                                                ((message.input_tokens || 0) +
-                                                (message.output_tokens || 0)) ]] tokens
+                                                [[ message.total_tokens ]] tokens
                                             </span>
 
                                             <span

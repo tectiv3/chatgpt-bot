@@ -227,12 +227,12 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) 
 	json.NewEncoder(w).Encode(data)
 }
 
-// Extract path parameter from URL (e.g., /api/threads/123 -> 123)
+// extractPathParam extracts path parameter from URL (e.g., /api/threads/123 -> 123)
 func extractPathParam(path, prefix string) string {
 	if strings.HasPrefix(path, prefix) {
 		param := strings.TrimPrefix(path, prefix)
 		param = strings.TrimPrefix(param, "/")
-		// Remove any trailing path segments
+
 		if idx := strings.Index(param, "/"); idx != -1 {
 			param = param[:idx]
 		}
@@ -241,7 +241,7 @@ func extractPathParam(path, prefix string) string {
 	return ""
 }
 
-// Get user from request context
+// getUserFromContext Get user from request context
 func getUserFromContext(r *http.Request) *User {
 	user, ok := r.Context().Value(userContextKey).(*User)
 	if !ok {
@@ -1510,7 +1510,16 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	options.SetUser(fmt.Sprintf("webapp_user_%d", chat.UserID))
 	options.SetStore(false)
 
-	tools := s.getResponseTools()
+	tools := []any{
+		openai.ResponseTool{
+			Type:        "function",
+			Name:        "make_summary",
+			Description: "Make a summary of a web page from an explicit summarization request.",
+			Parameters: openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
+				SetRequiredParameters([]string{"url"}),
+		},
+	}
 
 	if len(model.SearchTool) > 0 {
 		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))

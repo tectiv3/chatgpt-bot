@@ -707,7 +707,7 @@ createApp({
                 const processedMessages = newMessages.map(message => ({
                     ...message,
                     is_complete: message.is_complete !== false, // Default to true if not explicitly false
-                    formattedContent: this.formatMessage(message.content, message.annotations)
+                    formattedContent: this.formatMessage(message.content, message.annotations),
                 }))
 
                 // Direct assignment for reactivity
@@ -889,7 +889,17 @@ createApp({
                                     if (message) {
                                         message.is_complete = true
                                         message.isStreaming = false
-                                        console.log({ message })
+
+                                        if (
+                                            message.annotations &&
+                                            message.annotations.length > 0
+                                        ) {
+                                            message.formattedContent = this.formatMessage(
+                                                message.content,
+                                                message.annotations
+                                            )
+                                        }
+
 
                                         // Update thread token totals if usage data is available
                                         if (message.input_tokens || message.output_tokens) {
@@ -1223,7 +1233,28 @@ createApp({
         },
 
         formatTime(dateStr) {
-            return new Date(dateStr).toLocaleTimeString('en-GB', {
+            const date = new Date(dateStr)
+            const now = new Date()
+            const diffMs = now - date
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+
+            if (diffHours >= 24) {
+                // Format: "Dec 15, 14:30"
+                return (
+                    date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                    }) +
+                    ', ' +
+                    date.toLocaleTimeString('en-GB', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                    })
+                )
+            }
+
+            return date.toLocaleTimeString('en-GB', {
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false,
