@@ -983,6 +983,9 @@ createApp({
                                     if (message && data.annotation_file_type !== undefined) {
                                         message.annotation_file_type = data.annotation_file_type
                                     }
+                                    if (message && data.annotation_file_path !== undefined) {
+                                        message.annotation_file_path = data.annotation_file_path
+                                    }
 
                                     const now = Date.now()
 
@@ -1761,26 +1764,20 @@ createApp({
             }
         },
 
-        // Annotation display methods - now use secure proxy URLs
-        getAnnotationProxyUrl(message) {
-            if (!message.annotation_container_id || !message.annotation_file_id) {
-                return null
-            }
-            // Include Telegram init data in URL for authentication
-            const initData = window.Telegram?.WebApp?.initData || ''
-            if (initData) {
-                return `/api/annotations/${message.annotation_container_id}/${message.annotation_file_id}?tg_init_data=${encodeURIComponent(initData)}`
-            }
-            return `/api/annotations/${message.annotation_container_id}/${message.annotation_file_id}`
+        // Annotation display methods
+        getAnnotationFilename(filePath) {
+            if (!filePath) return ''
+            // Extract just the filename from the full file path
+            return filePath.split('/').pop() || ''
         },
 
         viewImageFullscreen(message) {
-            if (!message.annotation_container_id || !message.annotation_file_id || message.annotation_file_type !== 'image') {
+            if (!message.annotation_file_path || message.annotation_file_type !== 'image') {
                 return
             }
             
             this.fullscreenImage = {
-                src: this.getAnnotationProxyUrl(message),
+                src: '/uploads/annotations/' + this.getAnnotationFilename(message.annotation_file_path),
                 filename: message.annotation_filename || 'annotation.png'
             }
         },
