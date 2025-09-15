@@ -35,14 +35,13 @@
                 },
             }
         </script>
-        <link rel="stylesheet" href="/assets/css/app.css?222" />
+        <link rel="stylesheet" href="/assets/css/app.css?101" />
         <link
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
             rel="stylesheet"
         />
     </head>
     <body class="bg-tg-primary text-tg-text font-sans">
-        <!-- Initial loading screen - visible before Vue loads -->
         <div
             id="initial-loader"
             class="fixed inset-0 bg-tg-primary flex items-center justify-center z-50"
@@ -362,15 +361,16 @@
                                             ]]</span
                                         >
                                         <span class="text-tg-text font-medium sm:hidden"
-                                            >[[ (threadSettings.model_name || 'Model').substring(0, 8) ]]</span
+                                            >[[ (threadSettings.model_name ||
+                                            'Model').substring(0, 8) ]]</span
                                         >
                                     </button>
 
-                                    <!-- Role selector button -->
+                                    <!-- Role selector button - hidden on mobile -->
                                     <button
                                         v-if="threadSettings.role_id || roles.length > 0"
                                         @click="showSettings = true"
-                                        class="flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
+                                        class="hidden sm:flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
                                         title="Click to change role"
                                     >
                                         <i class="fas fa-user-tag text-tg-link text-xs"></i>
@@ -379,47 +379,37 @@
                                         >
                                     </button>
 
-                                    <!-- Tool toggle buttons -->
-                                    <div class="flex items-center gap-1 sm:ml-2">
-                                        <!-- Search tool -->
+                                    <!-- Search tool -->
                                         <button
                                             @click="toggleTool('search')"
                                             class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
                                             :class="threadSettings.enabled_tools.includes('search') 
                                                 ? 'bg-tg-link text-white' 
-                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
-                                            title="Web Search"
-                                        >
+                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'">
                                             <i class="fas fa-search"></i>
-                                            <span class="hidden lg:inline font-medium">Search</span>
+                                            <span class="tool-text hidden lg:inline font-medium">Search</span>
                                         </button>
 
-                                        <!-- Code tool -->
+                                    <!-- Code tool -->
                                         <button
                                             @click="toggleTool('code')"
                                             class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
                                             :class="threadSettings.enabled_tools.includes('code') 
                                                 ? 'bg-tg-link text-white' 
-                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
-                                            title="Code Interpreter"
-                                        >
+                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'">
                                             <i class="fas fa-code"></i>
-                                            <span class="hidden lg:inline font-medium">Code</span>
+                                            <span class="tool-text hidden lg:inline font-medium">Code</span>
                                         </button>
 
-                                        <!-- Summary tool -->
-                                        <button
+                                    <button
                                             @click="toggleTool('summary')"
                                             class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
                                             :class="threadSettings.enabled_tools.includes('summary') 
                                                 ? 'bg-tg-link text-white' 
-                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
-                                            title="Page Summary"
-                                        >
+                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'">
                                             <i class="fas fa-file-alt"></i>
-                                            <span class="hidden lg:inline font-medium">Summary</span>
+                                            <span class="tool-text hidden lg:inline font-medium">Summary</span>
                                         </button>
-                                    </div>
                                 </div>
 
                                 <!-- Thread settings button -->
@@ -463,7 +453,9 @@
                                 :key="message.id"
                                 class="flex gap-3"
                                 :class="
-                                    message.role === 'user' ? 'justify-end user' : 'justify-start assistant'
+                                    message.role === 'user'
+                                        ? 'justify-end user'
+                                        : 'justify-start assistant'
                                 "
                             >
                                 <!-- Assistant Avatar -->
@@ -527,7 +519,9 @@
                                                 'streaming-text': message.isStreaming,
                                                 'text-white': message.role === 'user',
                                             }"
-                                            v-html="message.formattedContent || message.content"
+                                            v-html="
+                                                message.formattedContent || message.content
+                                            "
                                         ></div>
 
                                         <!-- Annotations display -->
@@ -1178,6 +1172,6 @@
             </div>
         </div>
 
-        <script src="/assets/js/app.js?1003"></script>
+        <script src="/assets/js/app.js?101"></script>
     </body>
 </html>

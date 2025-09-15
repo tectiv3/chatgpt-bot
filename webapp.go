@@ -504,9 +504,7 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		if req.Settings.ContextLimit > 0 {
 			chat.ContextLimit = req.Settings.ContextLimit
 		}
-		if len(req.Settings.EnabledTools) > 0 {
-			chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
-		}
+		chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
 	}
 
 	if err := s.db.Create(&chat).Error; err != nil {
@@ -776,9 +774,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 			if req.Settings.ContextLimit > 0 {
 				chat.ContextLimit = req.Settings.ContextLimit
 			}
-			if len(req.Settings.EnabledTools) > 0 {
-				chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
-			}
+			chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
 		}
 
 		if err := s.db.Create(&chat).Error; err != nil {
@@ -902,10 +898,8 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 		"context_limit": settings.ContextLimit,
 	}
 
-	if len(settings.EnabledTools) > 0 {
-		enabledToolsStr := strings.Join(settings.EnabledTools, ",")
-		updates["enabled_tools"] = enabledToolsStr
-	}
+	enabledToolsStr := strings.Join(settings.EnabledTools, ",")
+	updates["enabled_tools"] = enabledToolsStr
 
 	if err := s.db.Model(&chat).Updates(updates).Error; err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to update settings")
@@ -1524,21 +1518,30 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	options.SetUser(fmt.Sprintf("webapp_user_%d", chat.UserID))
 	options.SetStore(false)
 
-	tools := []any{
-		openai.ResponseTool{
+	tools := []any{}
+
+	enabledTools := chat.GetEnabledToolsArray()
+	enabledToolsMap := make(map[string]bool)
+	for _, tool := range enabledTools {
+		enabledToolsMap[tool] = true
+	}
+
+	if enabledToolsMap["summary"] {
+		tools = append(tools, openai.ResponseTool{
 			Type:        "function",
 			Name:        "make_summary",
 			Description: "Make a summary of a web page from an explicit summarization request.",
 			Parameters: openai.NewToolFunctionParameters().
 				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
 				SetRequiredParameters([]string{"url"}),
-		},
+		})
 	}
 
-	if len(model.SearchTool) > 0 {
+	if enabledToolsMap["search"] {
 		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
 	}
-	if model.CodeInterpreter {
+
+	if enabledToolsMap["code"] {
 		tools = append(tools, openai.NewBuiltinToolWithContainer("code_interpreter", "auto"))
 	}
 
