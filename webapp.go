@@ -23,12 +23,13 @@ import (
 
 // Thread settings structure
 type ThreadSettings struct {
-	ModelName    string  `json:"model_name"`
-	Temperature  float64 `json:"temperature"`
-	RoleID       *uint   `json:"role_id"`
-	Lang         string  `json:"lang"`
-	MasterPrompt string  `json:"master_prompt"`
-	ContextLimit int     `json:"context_limit"`
+	ModelName    string   `json:"model_name"`
+	Temperature  float64  `json:"temperature"`
+	RoleID       *uint    `json:"role_id"`
+	Lang         string   `json:"lang"`
+	MasterPrompt string   `json:"master_prompt"`
+	ContextLimit int      `json:"context_limit"`
+	EnabledTools []string `json:"enabled_tools"`
 }
 
 // API request/response structures
@@ -174,7 +175,6 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Authentication
 		initDataString := r.Header.Get("Telegram-Init-Data")
 		if initDataString == "" {
 			s.writeJSONError(w, http.StatusUnauthorized, "Missing Telegram init data")
@@ -194,11 +194,11 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		user, err := s.getOrCreateUserFromInitData(parsed)
 		if err != nil {
-			s.writeJSONError(w, http.StatusInternalServerError, "Failed to get user")
+			Log.WithField("error", err).Warn("User authorization failed")
+			s.writeJSONError(w, http.StatusForbidden, "User not authorized")
 			return
 		}
 
-		// Add user to context and proceed
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next(w, r.WithContext(ctx))
 	}
@@ -228,12 +228,12 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) 
 	json.NewEncoder(w).Encode(data)
 }
 
-// Extract path parameter from URL (e.g., /api/threads/123 -> 123)
+// extractPathParam extracts path parameter from URL (e.g., /api/threads/123 -> 123)
 func extractPathParam(path, prefix string) string {
 	if strings.HasPrefix(path, prefix) {
 		param := strings.TrimPrefix(path, prefix)
 		param = strings.TrimPrefix(param, "/")
-		// Remove any trailing path segments
+
 		if idx := strings.Index(param, "/"); idx != -1 {
 			param = param[:idx]
 		}
@@ -242,7 +242,7 @@ func extractPathParam(path, prefix string) string {
 	return ""
 }
 
-// Get user from request context
+// getUserFromContext Get user from request context
 func getUserFromContext(r *http.Request) *User {
 	user, ok := r.Context().Value(userContextKey).(*User)
 	if !ok {
@@ -263,16 +263,19 @@ func (s *Server) getOrCreateUserFromInitData(initData initdata.InitData) (*User,
 			return &user, nil
 		}
 
-		telegramID := int64(initData.User.ID)
-		// Create new user
-		user = User{
-			TelegramID: &telegramID,
-			Username:   initData.User.Username,
+		if in_array(initData.User.Username, s.conf.AllowedTelegramUsers) {
+			telegramID := int64(initData.User.ID)
+			user = User{
+				TelegramID: &telegramID,
+				Username:   initData.User.Username,
+			}
+			if err := s.db.Create(&user).Error; err != nil {
+				return nil, err
+			}
+			return &user, nil
 		}
 
-		if err := s.db.Create(&user).Error; err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("user not authorized")
 	}
 
 	return &user, nil
@@ -342,6 +345,7 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 			Lang:         chatCount.Chat.Lang,
 			MasterPrompt: chatCount.Chat.MasterPrompt,
 			ContextLimit: chatCount.Chat.ContextLimit,
+			EnabledTools: chatCount.Chat.GetEnabledToolsArray(),
 		}
 
 		threads[i] = ThreadResponse{
@@ -390,6 +394,7 @@ func (s *Server) getArchivedThreads(w http.ResponseWriter, r *http.Request) {
 			Lang:         chatCount.Chat.Lang,
 			MasterPrompt: chatCount.Chat.MasterPrompt,
 			ContextLimit: chatCount.Chat.ContextLimit,
+			EnabledTools: chatCount.Chat.GetEnabledToolsArray(),
 		}
 
 		threads[i] = ThreadResponse{
@@ -499,15 +504,15 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		if req.Settings.ContextLimit > 0 {
 			chat.ContextLimit = req.Settings.ContextLimit
 		}
+		if len(req.Settings.EnabledTools) > 0 {
+			chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
+		}
 	}
 
 	if err := s.db.Create(&chat).Error; err != nil {
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create thread")
 		return
 	}
-
-	// Don't save initial message here - let the subsequent chat request handle it
-	// This prevents duplicate messages when images are involved
 
 	s.writeJSONSuccess(w, "Thread created successfully", map[string]interface{}{
 		"thread_id": threadID,
@@ -519,14 +524,10 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 	threadID := extractPathParam(r.URL.Path, "/api/threads")
 
-	// Allow empty thread ID for draft threads (will be handled in individual endpoints)
 	if threadID != "" {
-		// Validate thread ID format (UUID) only if provided
-		if !strings.HasPrefix(threadID, "temp_") { // Allow temp thread IDs
-			if err := validateUUID(threadID); err != nil {
-				s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
-				return
-			}
+		if err := validateUUID(threadID); err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
+			return
 		}
 	}
 
@@ -604,7 +605,7 @@ func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for thread operations")
 			return
 		}
-		// Main thread operations
+
 		switch r.Method {
 		case http.MethodDelete:
 			s.deleteThread(w, r, threadID)
@@ -775,6 +776,9 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 			if req.Settings.ContextLimit > 0 {
 				chat.ContextLimit = req.Settings.ContextLimit
 			}
+			if len(req.Settings.EnabledTools) > 0 {
+				chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
+			}
 		}
 
 		if err := s.db.Create(&chat).Error; err != nil {
@@ -896,6 +900,11 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 		"lang":          settings.Lang,
 		"master_prompt": settings.MasterPrompt,
 		"context_limit": settings.ContextLimit,
+	}
+
+	if len(settings.EnabledTools) > 0 {
+		enabledToolsStr := strings.Join(settings.EnabledTools, ",")
+		updates["enabled_tools"] = enabledToolsStr
 	}
 
 	if err := s.db.Model(&chat).Updates(updates).Error; err != nil {
@@ -1515,7 +1524,16 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	options.SetUser(fmt.Sprintf("webapp_user_%d", chat.UserID))
 	options.SetStore(false)
 
-	tools := s.getResponseTools()
+	tools := []any{
+		openai.ResponseTool{
+			Type:        "function",
+			Name:        "make_summary",
+			Description: "Make a summary of a web page from an explicit summarization request.",
+			Parameters: openai.NewToolFunctionParameters().
+				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
+				SetRequiredParameters([]string{"url"}),
+		},
+	}
 
 	if len(model.SearchTool) > 0 {
 		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
@@ -1686,7 +1704,12 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 						usage.FinishReason = event.Item.Status
 					}
 					if event.Item.Content != nil && len(event.Item.Content) > 0 {
-						s.checkAnnotationsForWebapp(assistantMsg, event.Item.Content)
+						annotations := s.ProcessAnnotations(
+							event.Item.Content, &WebappAnnotationProcessor{server: s},
+						)
+						if len(annotations) > 0 {
+							s.StoreAnnotations(assistantMsg, annotations)
+						}
 					}
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
@@ -1701,11 +1724,9 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 // handleResponseFunctionCallsForWebapp processes function calls for the web app
 func (s *Server) handleResponseFunctionCallsForWebapp(chat *Chat, functions []openai.ResponseOutput) (string, error) {
-	// Convert ResponseOutput function calls to ToolCall format
 	var toolCalls []openai.ToolCall
 
 	for _, responseOutput := range functions {
-		// Only process function calls
 		if responseOutput.Type != "function_call" {
 			continue
 		}
@@ -1721,18 +1742,11 @@ func (s *Server) handleResponseFunctionCallsForWebapp(chat *Chat, functions []op
 		toolCalls = append(toolCalls, toolCall)
 	}
 
-	// Create webapp notifier
 	notifier := &WebappToolCallNotifier{}
-
-	// Call the refactored core function
 	result, toolMessages, err := s.handleToolCallsCore(chat, toolCalls, notifier)
-
-	// Add tool messages to dialog
 	for _, msg := range toolMessages {
 		chat.addMessageToDialog(msg)
 	}
-
-	// Save history with tool results
 	if len(result) > 0 {
 		s.saveHistory(chat)
 	}
@@ -2161,6 +2175,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 			Lang:         chat.Lang,
 			MasterPrompt: chat.MasterPrompt,
 			ContextLimit: chat.ContextLimit,
+			EnabledTools: chat.GetEnabledToolsArray(),
 		}
 
 		threadResponse := ThreadResponse{
@@ -2250,28 +2265,6 @@ func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, an
 	}
 
 	return localPath, nil
-}
-
-// checkAnnotationsForWebapp processes annotations for webapp streaming responses
-func (s *Server) checkAnnotationsForWebapp(assistantMsg *ChatMessage, content []openai.OutputContent) {
-	// Create webapp-specific annotation processor
-	processor := &WebappAnnotationProcessor{
-		server: s,
-	}
-
-	// Process annotations using the unified function
-	annotations, err := ProcessAnnotations(s.openAI, content, processor)
-	if err != nil {
-		Log.WithField("error", err).Error("Failed to process annotations")
-		return
-	}
-
-	// Store annotations in the message
-	if len(annotations) > 0 {
-		if err := StoreAnnotationsInMessage(s.db, assistantMsg, annotations); err != nil {
-			Log.WithField("error", err).Error("Failed to store annotations")
-		}
-	}
 }
 
 func validateString(input string, minLen, maxLen int) error {

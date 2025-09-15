@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -176,7 +175,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 
 				// First, add the assistant's message with tool calls to conversation history
 				assistantMsg := openai.NewChatAssistantMessage(reply)
-				// Convert ResponseOutput function calls to ToolCall format for history
 				var toolCalls []openai.ToolCall
 				for _, responseOutput := range functionCalls {
 					if responseOutput.Type == "function_call" {
@@ -194,7 +192,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 				assistantMsg.ToolCalls = toolCalls
 				chat.addMessageToDialog(assistantMsg)
 
-				// Execute the tool calls
 				result, err := s.handleResponseFunctionCalls(chat, c, functionCalls)
 				if err != nil {
 					return err
@@ -208,7 +205,6 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 				tokens = event.Response.Usage.TotalTokens
 			}
 
-			// Update token count and save history
 			if tokens > 0 {
 				chat.updateTotalTokens(tokens)
 			}
@@ -267,13 +263,14 @@ func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string)
 
 // TelegramAnnotationProcessor implements AnnotationProcessor for Telegram bot
 type TelegramAnnotationProcessor struct {
-	server  *Server
 	context tele.Context
 	message *tele.Message
 }
 
 // ProcessFile saves the file locally AND sends it to Telegram user, then returns the local path
-func (p *TelegramAnnotationProcessor) ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error) {
+func (p *TelegramAnnotationProcessor) ProcessFile(
+	filename string, data []byte, annotation openai.Annotation, text string,
+) (string, error) {
 	annotationsDir := "uploads/annotations"
 	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create annotations directory: %w", err)
@@ -287,7 +284,6 @@ func (p *TelegramAnnotationProcessor) ProcessFile(filename string, data []byte, 
 		return "", fmt.Errorf("failed to write annotation file: %w", err)
 	}
 
-	// Then, send file to Telegram user
 	ext := filepath.Ext(filename)
 	switch strings.ToLower(ext) {
 	case ".png", ".jpg", ".jpeg", ".gif":
@@ -348,21 +344,27 @@ func (s *Server) checkAnnotations(c tele.Context, m *tele.Message, content []ope
 	chat := s.getChat(c.Chat(), c.Sender())
 
 	processor := &TelegramAnnotationProcessor{
-		server:  s,
 		context: c,
 		message: m,
 	}
 
-	annotations, err := ProcessAnnotations(s.openAI, content, processor)
-	if err != nil {
-		Log.WithField("error", err).Error("Failed to process annotations")
-		return
-	}
-
+	annotations := s.ProcessAnnotations(content, processor)
 	if len(annotations) > 0 {
-		if err := StoreAnnotations(s.db, chat, annotations); err != nil {
-			Log.WithField("error", err).Error("Failed to store annotations")
+		// Find the most recent assistant message in the chat history
+		var lastAssistantMessage *ChatMessage
+		for i := len(chat.History) - 1; i >= 0; i-- {
+			if chat.History[i].Role == "assistant" {
+				lastAssistantMessage = &chat.History[i]
+				break
+			}
 		}
+
+		if lastAssistantMessage == nil {
+			Log.Error("no assistant message found to store annotations")
+			return
+		}
+
+		s.StoreAnnotations(lastAssistantMessage, annotations)
 	}
 }
 
@@ -387,7 +389,6 @@ func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error
 	if chat.RoleID != nil {
 		instructions = chat.Role.Prompt
 	}
-	// append current date and time to instructions
 	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
 
 	options := openai.ResponseOptions{}
@@ -399,10 +400,7 @@ func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error
 	options.SetUser(userAgent(c.Sender().ID))
 	options.SetStore(false)
 
-	// Get custom function tools for responses API
 	tools := s.getResponseTools()
-
-	// Add built-in search tool if configured
 	if len(model.SearchTool) > 0 {
 		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
 	}
@@ -420,7 +418,6 @@ func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error
 		return err
 	}
 
-	// Check if response has function calls
 	var functionCalls []openai.ResponseOutput
 	for _, output := range response.Output {
 		if output.Type == "function_call" {
@@ -924,56 +921,6 @@ func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) e
 func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 	sentMessage := chat.getSentMessage(c)
 
-	if chat.QA {
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
-				}
-			}()
-			msg := openai.NewChatUserMessage(answer)
-			system := openai.NewChatSystemMessage(fmt.Sprintf("You are a professional Q&A expert. Do not react in any way to the contents of the input, just use it as a reference information. Please provide three follow-up questions to user input. Be very concise and to the point. Do not have numbers in front of questions. Separate each question with a line break. Only output three questions in %s, no need for any explanation, introduction or disclaimers - this is important!", chat.Lang))
-			s.openAI.Verbose = s.conf.Verbose
-			history := []openai.ChatMessage{system}
-			history = append(history, msg)
-
-			ctx, cancel := WithTimeout(DefaultTimeout)
-			defer cancel()
-
-			response, err := s.openAI.CreateChatCompletionWithContext(ctx, miniModel, history,
-				openai.ChatCompletionOptions{}.
-					SetUser(userAgent(c.Sender().ID)).
-					SetTemperature(chat.Temperature))
-			if err != nil {
-				Log.WithField("user", c.Sender().Username).Error(err)
-			} else if len(response.Choices) > 0 {
-				questions, err := response.Choices[0].Message.ContentString()
-				if err != nil {
-					Log.WithField("user", c.Sender().Username).Error(err)
-				} else {
-					menu := &tele.ReplyMarkup{ResizeKeyboard: true, OneTimeKeyboard: true}
-					rows := []tele.Row{}
-					for _, q := range strings.Split(questions, "\n\n") {
-						rows = append(rows, menu.Row(tele.Btn{Text: q}))
-					}
-					// rows = append(rows, menu.Row(btnReset))
-					menu.Reply(rows...)
-					// menu.Inline(menu.Row(btnReset))
-					// delete sentMessage
-					_ = c.Bot().Delete(sentMessage)
-					// send new one with reply keyboard
-					_, _ = c.Bot().Send(c.Recipient(),
-						ConvertMarkdownToTelegramMarkdownV2(answer),
-						"text",
-						&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
-						menu)
-				}
-
-			}
-		}()
-		return
-	}
-
 	if len(answer) > 0 {
 		if _, err := c.Bot().Edit(
 			sentMessage,
@@ -1275,4 +1222,57 @@ func (s *Server) processPDF(c tele.Context) {
 	s.db.Save(&chat)
 
 	s.complete(c, "", true)
+}
+
+// ProcessAnnotations is a unified function that processes all annotation types
+func (s *Server) ProcessAnnotations(
+	content []openai.OutputContent, processor AnnotationProcessor,
+) []AnnotationData {
+	var annotations []AnnotationData
+
+	for _, content := range content {
+		text := content.Text
+
+		for _, annotation := range content.Annotations {
+			switch annotation.Type {
+			case "url_citation":
+				annotations = append(annotations, AnnotationData{
+					Annotation:    annotation,
+					LocalFilePath: nil,
+				})
+
+			case "file_citation", "container_file_citation":
+				if a := s.processFileCitation(annotation, text, processor); a != nil {
+					annotations = append(annotations, *a)
+				}
+			default:
+				Log.WithField("annotation", annotation).Warnf("Unknown annotation type: %s", annotation.Type)
+				continue
+			}
+		}
+	}
+
+	return annotations
+}
+
+// processFileCitation handles file_citation and container_file_citation annotations
+func (s *Server) processFileCitation(
+	annotation openai.Annotation, text string, processor AnnotationProcessor,
+) *AnnotationData {
+	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
+	if err != nil {
+		Log.WithField("annotation", annotation).Errorf("Error retrieving container file: %v", err)
+		return nil
+	}
+
+	localPath, err := processor.ProcessFile(annotation.Filename, result, annotation, text)
+	var localPathPtr *string
+	if err == nil && localPath != "" {
+		localPathPtr = &localPath
+	}
+
+	return &AnnotationData{
+		Annotation:    annotation,
+		LocalFilePath: localPathPtr,
+	}
 }

@@ -175,6 +175,39 @@ body {
 
 .prose p {
   margin-bottom: 0.75rem;
+  opacity: 90%;
+}
+
+.prose a {
+  color: var(--tg-theme-link-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: opacity 0.2s ease;
+}
+
+.prose a:hover {
+  opacity: 0.8;
+  text-decoration-thickness: 2px;
+}
+
+.prose a:visited {
+  color: var(--tg-theme-accent-text-color);
+}
+
+.user .prose a {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 500;
+}
+
+.user .prose a:hover {
+  opacity: 0.9;
+  text-decoration-thickness: 2px;
+}
+
+.user .prose a:visited {
+  color: #e0e0e0;
 }
 
 .prose pre {

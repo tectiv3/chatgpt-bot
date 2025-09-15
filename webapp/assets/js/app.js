@@ -177,6 +177,7 @@ createApp({
                 lang: 'en',
                 master_prompt: '',
                 context_limit: 40000,
+                enabled_tools: ['search'],
             },
 
             // Persistent user preferences
@@ -596,6 +597,7 @@ createApp({
                     master_prompt:
                         "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
                     context_limit: 40000,
+                    enabled_tools: ['search'],
                 }
 
                 const response = await this.apiCall('/api/threads', {
@@ -666,6 +668,7 @@ createApp({
                     master_prompt:
                         "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
                     context_limit: 40000,
+                    enabled_tools: ['search'],
                     ...this.currentThread.settings,
                 }
 
@@ -707,6 +710,7 @@ createApp({
                 const processedMessages = newMessages.map(message => ({
                     ...message,
                     is_complete: message.is_complete !== false, // Default to true if not explicitly false
+                    formattedContent: this.formatMessage(message.content, message.annotations),
                 }))
 
                 // Direct assignment for reactivity
@@ -888,7 +892,17 @@ createApp({
                                     if (message) {
                                         message.is_complete = true
                                         message.isStreaming = false
-                                        console.log({ message })
+
+                                        if (
+                                            message.annotations &&
+                                            message.annotations.length > 0
+                                        ) {
+                                            message.formattedContent = this.formatMessage(
+                                                message.content,
+                                                message.annotations
+                                            )
+                                        }
+
 
                                         // Update thread token totals if usage data is available
                                         if (message.input_tokens || message.output_tokens) {
@@ -968,28 +982,6 @@ createApp({
                                     }
                                     if (message && data.finish_reason !== undefined) {
                                         message.finish_reason = data.finish_reason
-                                    }
-
-                                    // Update annotation metadata if provided
-                                    if (
-                                        message &&
-                                        data.annotation_container_id !== undefined
-                                    ) {
-                                        message.annotation_container_id =
-                                            data.annotation_container_id
-                                    }
-                                    if (message && data.annotation_file_id !== undefined) {
-                                        message.annotation_file_id = data.annotation_file_id
-                                    }
-                                    if (message && data.annotation_filename !== undefined) {
-                                        message.annotation_filename = data.annotation_filename
-                                    }
-                                    if (message && data.annotation_file_type !== undefined) {
-                                        message.annotation_file_type =
-                                            data.annotation_file_type
-                                    }
-                                    if (message && data.annotation_url !== undefined) {
-                                        message.annotation_url = data.annotation_url
                                     }
 
                                     const now = Date.now()
@@ -1110,6 +1102,32 @@ createApp({
             this.saveUserPreference('selectedRole', this.threadSettings.role_id)
 
             this.$nextTick(() => this.focusInput())
+        },
+
+        // Toggle individual tools on/off
+        toggleTool(toolName) {
+            const tools = [...this.threadSettings.enabled_tools]
+            const index = tools.indexOf(toolName)
+            
+            if (index > -1) {
+                // Tool is enabled, remove it
+                tools.splice(index, 1)
+            } else {
+                // Tool is disabled, add it
+                tools.push(toolName)
+            }
+            
+            this.threadSettings.enabled_tools = tools
+            
+            // Update current thread settings
+            if (this.currentThread) {
+                this.currentThread.settings = { ...this.threadSettings }
+            }
+            
+            // Save settings to backend if this is an existing thread
+            if (this.currentThreadId) {
+                this.saveSettings()
+            }
         },
 
         async saveSettings() {
@@ -1244,7 +1262,28 @@ createApp({
         },
 
         formatTime(dateStr) {
-            return new Date(dateStr).toLocaleTimeString('en-GB', {
+            const date = new Date(dateStr)
+            const now = new Date()
+            const diffMs = now - date
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+
+            if (diffHours >= 24) {
+                // Format: "Dec 15, 14:30"
+                return (
+                    date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                    }) +
+                    ', ' +
+                    date.toLocaleTimeString('en-GB', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                    })
+                )
+            }
+
+            return date.toLocaleTimeString('en-GB', {
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false,
@@ -1276,11 +1315,16 @@ createApp({
                 sortedForReplacement.forEach(annotation => {
                     const citationNumber = citationMap.get(annotation)
 
-                    if (annotation.start_index !== undefined && annotation.end_index !== undefined) {
+                    if (
+                        annotation.start_index !== undefined &&
+                        annotation.end_index !== undefined
+                    ) {
                         const before = processedContent.substring(0, annotation.start_index)
                         const after = processedContent.substring(annotation.end_index)
                         let url = annotation.url || '#'
-                        url = url.replace(/[?&]utm_source=openai(&|$)/, '$1').replace(/\?$/, '')
+                        url = url
+                            .replace(/[?&]utm_source=openai(&|$)/, '$1')
+                            .replace(/\?$/, '')
                         processedContent = before + `[[${citationNumber}]](${url})` + after
                     }
                 })
