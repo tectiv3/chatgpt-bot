@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/meinside/openai-go"
@@ -333,4 +334,22 @@ func (c *Chat) removeMenu(context tele.Context) {
 		c.MessageID = nil
 	}
 	c.mutex.Unlock()
+}
+
+// GetEnabledToolsArray returns the enabled tools as an array
+func (c *Chat) GetEnabledToolsArray() []string {
+	if c.EnabledTools == "" {
+		return []string{}
+	}
+
+	return strings.Split(c.EnabledTools, ",")
+}
+
+// SetEnabledToolsFromArray sets the enabled tools from an array
+func (c *Chat) SetEnabledToolsFromArray(tools []string) {
+	if len(tools) == 0 {
+		c.EnabledTools = ""
+		return
+	}
+	c.EnabledTools = strings.Join(tools, ",")
 }

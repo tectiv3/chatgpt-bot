@@ -23,12 +23,13 @@ import (
 
 // Thread settings structure
 type ThreadSettings struct {
-	ModelName    string  `json:"model_name"`
-	Temperature  float64 `json:"temperature"`
-	RoleID       *uint   `json:"role_id"`
-	Lang         string  `json:"lang"`
-	MasterPrompt string  `json:"master_prompt"`
-	ContextLimit int     `json:"context_limit"`
+	ModelName    string   `json:"model_name"`
+	Temperature  float64  `json:"temperature"`
+	RoleID       *uint    `json:"role_id"`
+	Lang         string   `json:"lang"`
+	MasterPrompt string   `json:"master_prompt"`
+	ContextLimit int      `json:"context_limit"`
+	EnabledTools []string `json:"enabled_tools"`
 }
 
 // API request/response structures
@@ -344,6 +345,7 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 			Lang:         chatCount.Chat.Lang,
 			MasterPrompt: chatCount.Chat.MasterPrompt,
 			ContextLimit: chatCount.Chat.ContextLimit,
+			EnabledTools: chatCount.Chat.GetEnabledToolsArray(),
 		}
 
 		threads[i] = ThreadResponse{
@@ -392,6 +394,7 @@ func (s *Server) getArchivedThreads(w http.ResponseWriter, r *http.Request) {
 			Lang:         chatCount.Chat.Lang,
 			MasterPrompt: chatCount.Chat.MasterPrompt,
 			ContextLimit: chatCount.Chat.ContextLimit,
+			EnabledTools: chatCount.Chat.GetEnabledToolsArray(),
 		}
 
 		threads[i] = ThreadResponse{
@@ -500,6 +503,9 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Settings.ContextLimit > 0 {
 			chat.ContextLimit = req.Settings.ContextLimit
+		}
+		if len(req.Settings.EnabledTools) > 0 {
+			chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
 		}
 	}
 
@@ -770,6 +776,9 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 			if req.Settings.ContextLimit > 0 {
 				chat.ContextLimit = req.Settings.ContextLimit
 			}
+			if len(req.Settings.EnabledTools) > 0 {
+				chat.SetEnabledToolsFromArray(req.Settings.EnabledTools)
+			}
 		}
 
 		if err := s.db.Create(&chat).Error; err != nil {
@@ -891,6 +900,11 @@ func (s *Server) updateThreadSettings(w http.ResponseWriter, r *http.Request, th
 		"lang":          settings.Lang,
 		"master_prompt": settings.MasterPrompt,
 		"context_limit": settings.ContextLimit,
+	}
+
+	if len(settings.EnabledTools) > 0 {
+		enabledToolsStr := strings.Join(settings.EnabledTools, ",")
+		updates["enabled_tools"] = enabledToolsStr
 	}
 
 	if err := s.db.Model(&chat).Updates(updates).Error; err != nil {
@@ -2161,6 +2175,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 			Lang:         chat.Lang,
 			MasterPrompt: chat.MasterPrompt,
 			ContextLimit: chat.ContextLimit,
+			EnabledTools: chat.GetEnabledToolsArray(),
 		}
 
 		threadResponse := ThreadResponse{

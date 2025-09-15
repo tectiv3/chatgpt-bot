@@ -177,6 +177,7 @@ createApp({
                 lang: 'en',
                 master_prompt: '',
                 context_limit: 40000,
+                enabled_tools: ['search'],
             },
 
             // Persistent user preferences
@@ -596,6 +597,7 @@ createApp({
                     master_prompt:
                         "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
                     context_limit: 40000,
+                    enabled_tools: ['search'],
                 }
 
                 const response = await this.apiCall('/api/threads', {
@@ -666,6 +668,7 @@ createApp({
                     master_prompt:
                         "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
                     context_limit: 40000,
+                    enabled_tools: ['search'],
                     ...this.currentThread.settings,
                 }
 
@@ -1099,6 +1102,32 @@ createApp({
             this.saveUserPreference('selectedRole', this.threadSettings.role_id)
 
             this.$nextTick(() => this.focusInput())
+        },
+
+        // Toggle individual tools on/off
+        toggleTool(toolName) {
+            const tools = [...this.threadSettings.enabled_tools]
+            const index = tools.indexOf(toolName)
+            
+            if (index > -1) {
+                // Tool is enabled, remove it
+                tools.splice(index, 1)
+            } else {
+                // Tool is disabled, add it
+                tools.push(toolName)
+            }
+            
+            this.threadSettings.enabled_tools = tools
+            
+            // Update current thread settings
+            if (this.currentThread) {
+                this.currentThread.settings = { ...this.threadSettings }
+            }
+            
+            // Save settings to backend if this is an existing thread
+            if (this.currentThreadId) {
+                this.saveSettings()
+            }
         },
 
         async saveSettings() {

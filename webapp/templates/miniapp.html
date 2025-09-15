@@ -349,34 +349,76 @@
                                 </div>
 
                                 <!-- Show current settings badges after first message -->
-                                <div v-else class="flex items-center gap-2 flex-1">
-                                    <div
-                                        class="flex items-center gap-1 bg-tg-secondary px-3 py-1.5 rounded-full text-sm"
+                                <div v-else class="flex flex-wrap items-center gap-1.5 flex-1">
+                                    <!-- Model selector button -->
+                                    <button
+                                        @click="showSettings = true"
+                                        class="flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
+                                        title="Click to change model"
                                     >
-                                        <i class="fas fa-brain text-tg-link"></i>
-                                        <span class="text-tg-text font-medium"
+                                        <i class="fas fa-brain text-tg-link text-xs"></i>
+                                        <span class="text-tg-text font-medium hidden sm:inline"
                                             >[[ threadSettings.model_name || 'No model'
                                             ]]</span
                                         >
-                                    </div>
-
-                                    <div
-                                        v-if="threadSettings.role_id"
-                                        class="flex items-center gap-1 bg-tg-secondary px-3 py-1.5 rounded-full text-sm"
-                                    >
-                                        <i class="fas fa-user-tag text-tg-link"></i>
-                                        <span class="text-tg-text font-medium"
-                                            >[[ currentRoleName ]]</span
+                                        <span class="text-tg-text font-medium sm:hidden"
+                                            >[[ (threadSettings.model_name || 'Model').substring(0, 8) ]]</span
                                         >
-                                    </div>
+                                    </button>
 
-                                    <div
-                                        class="flex items-center gap-1 bg-tg-secondary px-3 py-1.5 rounded-full text-sm"
+                                    <!-- Role selector button -->
+                                    <button
+                                        v-if="threadSettings.role_id || roles.length > 0"
+                                        @click="showSettings = true"
+                                        class="flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
+                                        title="Click to change role"
                                     >
-                                        <i class="fas fa-thermometer-half text-tg-link"></i>
-                                        <span class="text-tg-text font-medium"
-                                            >[[ threadSettings.temperature || 1.0 ]]</span
+                                        <i class="fas fa-user-tag text-tg-link text-xs"></i>
+                                        <span class="text-tg-text font-medium hidden lg:inline"
+                                            >[[ currentRoleName || 'Default Role' ]]</span
                                         >
+                                    </button>
+
+                                    <!-- Tool toggle buttons -->
+                                    <div class="flex items-center gap-1 sm:ml-2">
+                                        <!-- Search tool -->
+                                        <button
+                                            @click="toggleTool('search')"
+                                            class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
+                                            :class="threadSettings.enabled_tools.includes('search') 
+                                                ? 'bg-tg-link text-white' 
+                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
+                                            title="Web Search"
+                                        >
+                                            <i class="fas fa-search"></i>
+                                            <span class="hidden lg:inline font-medium">Search</span>
+                                        </button>
+
+                                        <!-- Code tool -->
+                                        <button
+                                            @click="toggleTool('code')"
+                                            class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
+                                            :class="threadSettings.enabled_tools.includes('code') 
+                                                ? 'bg-tg-link text-white' 
+                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
+                                            title="Code Interpreter"
+                                        >
+                                            <i class="fas fa-code"></i>
+                                            <span class="hidden lg:inline font-medium">Code</span>
+                                        </button>
+
+                                        <!-- Summary tool -->
+                                        <button
+                                            @click="toggleTool('summary')"
+                                            class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
+                                            :class="threadSettings.enabled_tools.includes('summary') 
+                                                ? 'bg-tg-link text-white' 
+                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'"
+                                            title="Page Summary"
+                                        >
+                                            <i class="fas fa-file-alt"></i>
+                                            <span class="hidden lg:inline font-medium">Summary</span>
+                                        </button>
                                     </div>
                                 </div>
 

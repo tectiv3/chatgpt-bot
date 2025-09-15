@@ -220,6 +220,8 @@ type Chat struct {
 	// Thread-level token tracking
 	TotalInputTokens  int `json:"total_input_tokens" gorm:"default:0"`
 	TotalOutputTokens int `json:"total_output_tokens" gorm:"default:0"`
+
+	EnabledTools string `json:"enabled_tools" gorm:"type:text;default:'search'"`
 }
 
 type ChatMessage struct {
