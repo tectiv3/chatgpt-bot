@@ -26,7 +26,7 @@ sudo apt-get install libmp3lame0 libopus0 libopusfile0 libogg0 libmp3lame-dev li
 
 ## Architecture Overview
 
-This is a sophisticated Telegram chatbot written in Go that integrates with multiple AI providers (OpenAI, Anthropic, AWS Nova, Gemini) and provides advanced features including voice processing, image generation, web search, and vector database capabilities.
+This is a sophisticated Telegram chatbot written in Go that integrates with multiple AI providers (OpenAI, Anthropic, AWS Nova, Gemini) and provides advanced features including voice processing, image generation and web search capabilities.
 
 ### Core Components
 
@@ -45,7 +45,7 @@ This is a sophisticated Telegram chatbot written in Go that integrates with mult
 **Function/Tool Calling System**
 - Implemented in `function_calls.go`
 - Supports multiple providers (OpenAI, Anthropic, AWS Nova)
-- Built-in tools: web search, crypto rates, reminders, image generation
+- Built-in tools: web search, reminders, image generation
 - Tool results are processed and conversation continues automatically
 
 **Voice Processing Pipeline**
@@ -73,11 +73,6 @@ This is a sophisticated Telegram chatbot written in Go that integrates with mult
 - Anthropic: `github.com/tectiv3/anthropic-go`
 - AWS Nova: `github.com/tectiv3/awsnova-go`
 - All clients are initialized in `main.go` and stored in the Server struct
-
-**Vector Database** (`vectordb/`)
-- ChromaDB integration for semantic search
-- Web content indexing and retrieval
-- Document embedding with configurable collections
 
 ## Configuration
 

@@ -95,6 +95,7 @@ type MessageResponse struct {
 	AnnotationFileID      *string `json:"annotation_file_id,omitempty"`
 	AnnotationFilename    *string `json:"annotation_filename,omitempty"`
 	AnnotationFileType    *string `json:"annotation_file_type,omitempty"`
+	AnnotationFilePath    *string `json:"annotation_file_path,omitempty"`
 }
 
 type ChatWithThreadResponse struct {
@@ -682,6 +683,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			AnnotationFileID:      msg.AnnotationFileID,
 			AnnotationFilename:    msg.AnnotationFilename,
 			AnnotationFileType:    msg.AnnotationFileType,
+			AnnotationFilePath:    msg.AnnotationFilePath,
 		}
 	}
 
@@ -1497,6 +1499,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 	var result strings.Builder
 	var usage *TokenUsage
+	var functionCalls []openai.ResponseOutput
 
 	messages := s.convertDialogToResponseMessages(history)
 
@@ -1544,6 +1547,63 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 		event := comp.event
 
 		if comp.done {
+			// Handle function calls if any
+			if len(functionCalls) > 0 {
+				// First, add the assistant's message with tool calls to conversation history
+				assistantMsgContent := result.String()
+				var toolCalls ToolCalls
+				for _, responseOutput := range functionCalls {
+					if responseOutput.Type == "function_call" {
+						toolCall := ToolCall{
+							ID:   responseOutput.CallID,
+							Type: "function",
+							Function: openai.ToolCallFunction{
+								Name:      responseOutput.Name,
+								Arguments: responseOutput.Arguments,
+							},
+						}
+						toolCalls = append(toolCalls, toolCall)
+					}
+				}
+
+				// Save tool calls to the assistant message
+				if len(toolCalls) > 0 {
+					assistantMsg.ToolCalls = toolCalls
+					assistantMsg.Content = &assistantMsgContent
+					s.db.Save(assistantMsg)
+				}
+
+				// Execute the tool calls
+				toolResults, err := s.handleResponseFunctionCallsForWebapp(chat, functionCalls)
+				if err != nil {
+					Log.WithField("error", err).Error("Failed to handle function calls")
+					return result.String(), usage, err
+				}
+
+				// Append tool results to the response
+				if toolResults != "" {
+					result.WriteString("\n\n")
+					result.WriteString(toolResults)
+
+					// Send final update with tool results
+					if w != nil && flusher != nil {
+						finalContent := result.String()
+						updatedResponse := MessageResponse{
+							ID:          assistantMsg.ID,
+							Role:        "assistant",
+							Content:     &finalContent,
+							CreatedAt:   assistantMsg.CreatedAt,
+							IsLive:      false,
+							MessageType: "normal",
+						}
+
+						jsonData, _ := json.Marshal(updatedResponse)
+						fmt.Fprintf(w, "data: %s\n\n", jsonData)
+						flusher.Flush()
+					}
+				}
+			}
+
 			if event.Response != nil && event.Response.Usage != nil {
 				usage = &TokenUsage{
 					InputTokens:  event.Response.Usage.InputTokens,
@@ -1634,15 +1694,55 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					}
 					s.processWebappAnnotations(assistantMsg, event.Item.Content)
 				case "function_call":
+					functionCalls = append(functionCalls, *event.Item)
 					Log.WithField("function", event.Item.Name).Info("Function call completed")
-					// Note: Function call handling would need to be implemented here
-					// For now, we're focusing on basic streaming
 				}
 			}
 		}
 	}
 
 	return result.String(), usage, nil
+}
+
+// handleResponseFunctionCallsForWebapp processes function calls for the web app
+func (s *Server) handleResponseFunctionCallsForWebapp(chat *Chat, functions []openai.ResponseOutput) (string, error) {
+	// Convert ResponseOutput function calls to ToolCall format
+	var toolCalls []openai.ToolCall
+
+	for _, responseOutput := range functions {
+		// Only process function calls
+		if responseOutput.Type != "function_call" {
+			continue
+		}
+
+		toolCall := openai.ToolCall{
+			ID:   responseOutput.CallID,
+			Type: "function",
+			Function: openai.ToolCallFunction{
+				Name:      responseOutput.Name,
+				Arguments: responseOutput.Arguments,
+			},
+		}
+		toolCalls = append(toolCalls, toolCall)
+	}
+
+	// Create webapp notifier
+	notifier := &WebappToolCallNotifier{}
+
+	// Call the refactored core function
+	result, toolMessages, err := s.handleToolCallsCore(chat, toolCalls, notifier)
+
+	// Add tool messages to dialog
+	for _, msg := range toolMessages {
+		chat.addMessageToDialog(msg)
+	}
+
+	// Save history with tool results
+	if len(result) > 0 {
+		s.saveHistory(chat)
+	}
+
+	return result, err
 }
 
 // Handle image upload with enhanced security and validation
@@ -2104,6 +2204,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		AnnotationFileID:      assistantMsg.AnnotationFileID,
 		AnnotationFilename:    assistantMsg.AnnotationFilename,
 		AnnotationFileType:    assistantMsg.AnnotationFileType,
+		AnnotationFilePath:    assistantMsg.AnnotationFilePath,
 	}
 	jsonData, _ = json.Marshal(finalResponse)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
