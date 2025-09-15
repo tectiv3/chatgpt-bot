@@ -174,7 +174,6 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Authentication
 		initDataString := r.Header.Get("Telegram-Init-Data")
 		if initDataString == "" {
 			s.writeJSONError(w, http.StatusUnauthorized, "Missing Telegram init data")
@@ -194,11 +193,11 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		user, err := s.getOrCreateUserFromInitData(parsed)
 		if err != nil {
-			s.writeJSONError(w, http.StatusInternalServerError, "Failed to get user")
+			Log.WithField("error", err).Warn("User authorization failed")
+			s.writeJSONError(w, http.StatusForbidden, "User not authorized")
 			return
 		}
 
-		// Add user to context and proceed
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next(w, r.WithContext(ctx))
 	}
@@ -263,16 +262,19 @@ func (s *Server) getOrCreateUserFromInitData(initData initdata.InitData) (*User,
 			return &user, nil
 		}
 
-		telegramID := int64(initData.User.ID)
-		// Create new user
-		user = User{
-			TelegramID: &telegramID,
-			Username:   initData.User.Username,
+		if in_array(initData.User.Username, s.conf.AllowedTelegramUsers) {
+			telegramID := int64(initData.User.ID)
+			user = User{
+				TelegramID: &telegramID,
+				Username:   initData.User.Username,
+			}
+			if err := s.db.Create(&user).Error; err != nil {
+				return nil, err
+			}
+			return &user, nil
 		}
 
-		if err := s.db.Create(&user).Error; err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("user not authorized")
 	}
 
 	return &user, nil
@@ -506,9 +508,6 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Don't save initial message here - let the subsequent chat request handle it
-	// This prevents duplicate messages when images are involved
-
 	s.writeJSONSuccess(w, "Thread created successfully", map[string]interface{}{
 		"thread_id": threadID,
 		"title":     title,
@@ -519,14 +518,10 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 	threadID := extractPathParam(r.URL.Path, "/api/threads")
 
-	// Allow empty thread ID for draft threads (will be handled in individual endpoints)
 	if threadID != "" {
-		// Validate thread ID format (UUID) only if provided
-		if !strings.HasPrefix(threadID, "temp_") { // Allow temp thread IDs
-			if err := validateUUID(threadID); err != nil {
-				s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
-				return
-			}
+		if err := validateUUID(threadID); err != nil {
+			s.writeJSONError(w, http.StatusBadRequest, "Invalid thread ID format")
+			return
 		}
 	}
 
@@ -604,7 +599,7 @@ func (s *Server) handleThreadsWithID(w http.ResponseWriter, r *http.Request) {
 			s.writeJSONError(w, http.StatusBadRequest, "Thread ID required for thread operations")
 			return
 		}
-		// Main thread operations
+
 		switch r.Method {
 		case http.MethodDelete:
 			s.deleteThread(w, r, threadID)

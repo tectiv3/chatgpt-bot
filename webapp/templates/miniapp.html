@@ -35,7 +35,7 @@
                 },
             }
         </script>
-        <link rel="stylesheet" href="/assets/css/app.css" />
+        <link rel="stylesheet" href="/assets/css/app.css?111" />
         <link
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
             rel="stylesheet"
@@ -485,12 +485,7 @@
                                                 'streaming-text': message.isStreaming,
                                                 'text-white': message.role === 'user',
                                             }"
-                                            v-html="
-                                                formatMessage(
-                                                    message.content,
-                                                    message.annotations
-                                                )
-                                            "
+                                            v-html="message.formattedContent || message.content"
                                         ></div>
 
                                         <!-- Annotations display -->

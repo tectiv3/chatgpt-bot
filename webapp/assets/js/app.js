@@ -707,6 +707,7 @@ createApp({
                 const processedMessages = newMessages.map(message => ({
                     ...message,
                     is_complete: message.is_complete !== false, // Default to true if not explicitly false
+                    formattedContent: this.formatMessage(message.content, message.annotations)
                 }))
 
                 // Direct assignment for reactivity
