@@ -893,17 +893,11 @@ createApp({
                                         message.is_complete = true
                                         message.isStreaming = false
 
-                                        if (
-                                            message.annotations &&
-                                            message.annotations.length > 0
-                                        ) {
-                                            message.formattedContent = this.formatMessage(
-                                                message.content,
-                                                message.annotations
-                                            )
-                                        }
+                                        message.formattedContent = this.formatMessage(
+                                            message.content,
+                                            message.annotations
+                                        )
 
-                                        // Update thread token totals if usage data is available
                                         if (message.input_tokens || message.output_tokens) {
                                             if (this.currentThread) {
                                                 this.currentThread.total_input_tokens =
@@ -982,17 +976,14 @@ createApp({
                                     if (message && data.finish_reason !== undefined) {
                                         message.finish_reason = data.finish_reason
                                     }
-                                    
+
                                     if (message && data.annotations !== undefined) {
                                         message.annotations = data.annotations
-                                        if (data.annotations && data.annotations.length > 0) {
-                                            message.formattedContent = this.formatMessage(
-                                                message.content,
-                                                message.annotations
-                                            )
-                                        }
                                     }
-
+                                    message.formattedContent = this.formatMessage(
+                                        message.content,
+                                        message.annotations
+                                    )
                                     const now = Date.now()
 
                                     if (now - lastUpdateTime >= this.streamingThrottleMs) {
@@ -1116,7 +1107,6 @@ createApp({
         },
 
         toggleTool(toolName) {
-
             const tools = [...this.threadSettings.enabled_tools]
             const index = tools.indexOf(toolName)
 
