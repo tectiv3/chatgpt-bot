@@ -225,7 +225,7 @@ createApp({
                 if (this.activePane) {
                     this.activePane.messageInput = value
                 }
-            }
+            },
         },
 
         attachedFile: {
@@ -236,7 +236,7 @@ createApp({
                 if (this.activePane) {
                     this.activePane.attachedFile = value
                 }
-            }
+            },
         },
 
         sending() {
@@ -429,7 +429,8 @@ createApp({
                 temperature: this.userPreferences?.defaultTemperature || 1.0,
                 role_id: this.userPreferences?.selectedRole || null,
                 lang: 'en',
-                master_prompt: "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
+                master_prompt:
+                    "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
                 context_limit: 40000,
                 enabled_tools: ['search'],
             }
@@ -606,13 +607,14 @@ createApp({
                 for (const paneData of layout) {
                     // Create pane WITHOUT threadId (we'll set it via selectThreadInPane)
                     const pane = this.createPane()
-                    pane.widthPercent = paneData.widthPercent || (100 / layout.length)
+                    pane.widthPercent = paneData.widthPercent || 100 / layout.length
                     this.panes.push(pane)
 
                     // Load thread data if threadId exists and thread is valid
                     if (paneData.threadId) {
-                        const threadExists = this.threads.find(t => t.id === paneData.threadId) ||
-                                           this.archivedThreads.find(t => t.id === paneData.threadId)
+                        const threadExists =
+                            this.threads.find(t => t.id === paneData.threadId) ||
+                            this.archivedThreads.find(t => t.id === paneData.threadId)
                         if (threadExists) {
                             await this.selectThreadInPane(pane.id, paneData.threadId)
                         }
@@ -626,8 +628,9 @@ createApp({
                 // Try to restore last selected thread
                 const savedThreadId = this.userPreferences.selectedThreadId
                 if (savedThreadId) {
-                    const threadExists = this.threads.find(t => t.id === savedThreadId) ||
-                                        this.archivedThreads.find(t => t.id === savedThreadId)
+                    const threadExists =
+                        this.threads.find(t => t.id === savedThreadId) ||
+                        this.archivedThreads.find(t => t.id === savedThreadId)
                     if (threadExists) {
                         await this.selectThreadInPane(this.panes[0].id, savedThreadId)
                     }
@@ -675,11 +678,12 @@ createApp({
         // Check if message can be sent for a specific pane
         canSendInPane(pane) {
             if (!pane) return false
+            const hasContent = pane.messageInput.trim().length > 0 || !!pane.attachedFile
             return (
                 !pane.sending &&
                 !pane.streaming &&
                 !this.creatingThread &&
-                pane.messageInput.trim().length > 0 &&
+                hasContent &&
                 pane.threadId !== null
             )
         },
@@ -781,13 +785,13 @@ createApp({
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Init-Data': this.initData
+                    'X-Init-Data': this.initData,
                 },
                 body: JSON.stringify({
                     model_name: pane.settings.model_name,
                     role_id: pane.settings.role_id,
                     enabled_tools: pane.settings.enabled_tools,
-                })
+                }),
             }).catch(err => console.error('Error saving pane settings:', err))
         },
 
@@ -970,8 +974,9 @@ createApp({
 
             pane.messagesLoading = true
             pane.threadId = threadId
-            pane.thread = this.threads.find(t => t.id === threadId) ||
-                         this.archivedThreads.find(t => t.id === threadId)
+            pane.thread =
+                this.threads.find(t => t.id === threadId) ||
+                this.archivedThreads.find(t => t.id === threadId)
 
             // Close sidebar on mobile
             this.sidebarOpen = false
@@ -1009,9 +1014,7 @@ createApp({
             pane.messagesLoading = true
 
             try {
-                const response = await this.apiCall(
-                    `/api/threads/${pane.threadId}/messages`
-                )
+                const response = await this.apiCall(`/api/threads/${pane.threadId}/messages`)
                 const newMessages = response.messages || []
 
                 // Process messages
@@ -1146,7 +1149,6 @@ createApp({
         },
 
         async loadMessages() {
-            // Load messages for the active pane
             if (!this.activePane || !this.activePane.threadId) return
             await this.loadPaneMessages(this.activePaneId)
             this.$nextTick(() => this.focusInput())
@@ -1156,9 +1158,21 @@ createApp({
             const pane = this.activePane
             if (!pane) return
 
-            // Simple validation - thread must exist
+            const paneId = pane.id
+
+            const attachedFileSnapshot = pane.attachedFile
+                ? {
+                      preview: pane.attachedFile.preview,
+                      name: pane.attachedFile.name,
+                      file: pane.attachedFile.file,
+                      isImage: !!pane.attachedFile.isImage,
+                      mimeType: pane.attachedFile.mimeType,
+                  }
+                : null
+            const hasFile = attachedFileSnapshot !== null
+
             if (
-                (!pane.messageInput.trim() && !pane.attachedFile) ||
+                (!pane.messageInput.trim() && !hasFile) ||
                 pane.sending ||
                 !pane.threadId ||
                 !pane.thread
@@ -1170,18 +1184,10 @@ createApp({
             }
 
             const message = pane.messageInput.trim()
-            const hasFile = !!pane.attachedFile
-            let attachedFileData = null
 
-            // Store file data before clearing
+            let messageType = 'normal'
             if (hasFile) {
-                attachedFileData = {
-                    preview: pane.attachedFile.preview,
-                    name: pane.attachedFile.name,
-                    file: pane.attachedFile.file,
-                    isImage: pane.attachedFile.isImage,
-                    mimeType: pane.attachedFile.mimeType,
-                }
+                messageType = attachedFileSnapshot.isImage ? 'image' : 'file'
             }
 
             const userMessage = {
@@ -1190,69 +1196,61 @@ createApp({
                 content: message,
                 created_at: new Date().toISOString(),
                 is_live: true,
-                message_type: hasFile ? (attachedFileData.isImage ? 'image' : 'file') : 'normal',
-                image_data: hasFile && attachedFileData.isImage ? attachedFileData.preview : null,
-                image_name: hasFile ? attachedFileData.name : null,
-                file_type: hasFile ? attachedFileData.mimeType : null,
+                message_type: messageType,
+                image_data:
+                    hasFile && attachedFileSnapshot.isImage
+                        ? attachedFileSnapshot.preview
+                        : null,
+                image_name: hasFile ? attachedFileSnapshot.name : null,
+                file_type: hasFile ? attachedFileSnapshot.mimeType : null,
                 is_complete: true,
             }
 
-            pane.messages.push(userMessage)
+            const targetPane = this.getPaneById(paneId)
+            if (!targetPane) return
 
-            this.$nextTick(() => {
-                this.scrollToBottom(true)
-            })
+            targetPane.messages.push(userMessage)
+            this.$nextTick(() => this.scrollToBottom(true))
 
-            pane.messageInput = ''
-            pane.attachedFile = null
-            pane.sending = true
+            targetPane.messageInput = ''
+            targetPane.attachedFile = null
+            targetPane.sending = true
 
             try {
-                // Update thread title on first message if still "New Conversation" or "New Thread"
+                const titleSource = message || (hasFile ? attachedFileSnapshot.name : '')
                 if (
-                    pane.thread &&
-                    (pane.thread.title === 'New Conversation' || pane.thread.title === 'New Thread') &&
-                    message.trim()
+                    targetPane.thread &&
+                    (targetPane.thread.title === 'New Conversation' ||
+                        targetPane.thread.title === 'New Thread') &&
+                    titleSource
                 ) {
                     const newTitle =
-                        message.substring(0, 50) + (message.length > 50 ? '...' : '')
-                    pane.thread.title = newTitle
-
-                    // Find and update in threads array
+                        titleSource.substring(0, 50) + (titleSource.length > 50 ? '...' : '')
+                    targetPane.thread.title = newTitle
                     const threadIndex = this.threads.findIndex(
-                        t => t.id === pane.threadId
+                        t => t.id === targetPane.threadId
                     )
                     if (threadIndex !== -1) {
                         this.threads[threadIndex].title = newTitle
                     }
                 }
 
-                // Prepare message payload with file data if present
-                const messagePayload = {
-                    message: message,
-                }
-
-                if (hasFile && attachedFileData) {
-                    // Send file data (works for images, PDFs, text files)
+                const messagePayload = { message }
+                if (hasFile && attachedFileSnapshot) {
                     messagePayload.image = {
-                        data: attachedFileData.preview.split(',')[1], // Base64 data only
-                        filename: attachedFileData.name,
-                        mime_type: attachedFileData.mimeType,
+                        data: attachedFileSnapshot.preview.split(',')[1],
+                        filename: attachedFileSnapshot.name,
+                        mime_type: attachedFileSnapshot.mimeType,
                     }
                 }
 
-                // Always use streaming for better UX
-                await this.sendMessageWithStreamingInPane(pane.id, messagePayload)
+                await this.sendMessageWithStreamingInPane(paneId, messagePayload)
             } catch (error) {
                 this.showError(`Failed to send message: ${error.message}`)
             } finally {
-                pane.sending = false
-                pane.streaming = false
-
-                // Keep focus on mobile to prevent keyboard closing
-                this.$nextTick(() => {
-                    this.focusInput()
-                })
+                targetPane.sending = false
+                targetPane.streaming = false
+                this.$nextTick(() => this.focusInput())
             }
         },
 
@@ -1338,11 +1336,11 @@ createApp({
                                         if (message.input_tokens || message.output_tokens) {
                                             if (pane.thread) {
                                                 pane.thread.total_input_tokens =
-                                                    (pane.thread.total_input_tokens ||
-                                                        0) + (message.input_tokens || 0)
+                                                    (pane.thread.total_input_tokens || 0) +
+                                                    (message.input_tokens || 0)
                                                 pane.thread.total_output_tokens =
-                                                    (pane.thread.total_output_tokens ||
-                                                        0) + (message.output_tokens || 0)
+                                                    (pane.thread.total_output_tokens || 0) +
+                                                    (message.output_tokens || 0)
 
                                                 // Also update in threads array
                                                 const threadIndex = this.threads.findIndex(
@@ -1362,7 +1360,10 @@ createApp({
                                         }
                                     }
 
-                                    this.generateTitleFromConversationInPane(paneId, streamingMessageId)
+                                    this.generateTitleFromConversationInPane(
+                                        paneId,
+                                        streamingMessageId
+                                    )
                                 }
 
                                 return
@@ -1481,7 +1482,11 @@ createApp({
 
                 if (streamingMessageId && pane.streamingBuffer) {
                     // Final update with any remaining buffer content
-                    this.updateStreamingMessageInPane(paneId, streamingMessageId, pane.streamingBuffer)
+                    this.updateStreamingMessageInPane(
+                        paneId,
+                        streamingMessageId,
+                        pane.streamingBuffer
+                    )
                 }
 
                 if (streamingMessageId) {
@@ -2049,7 +2054,9 @@ createApp({
                 // Auto-scroll if this is the active pane
                 if (pane.id === this.activePaneId) {
                     this.$nextTick(() => {
-                        const container = this.$refs[`messagesContainer_${paneId}`]?.[0] || this.$refs.messagesContainer
+                        const container =
+                            this.$refs[`messagesContainer_${paneId}`]?.[0] ||
+                            this.$refs.messagesContainer
                         if (container) {
                             const isNearBottom =
                                 container.scrollHeight -
@@ -2065,29 +2072,29 @@ createApp({
             }
         },
 
-        // Pane-aware title generation
+        // Pane-aware title generation - only on first message exchange
         async generateTitleFromConversationInPane(paneId, assistantMessageId) {
             const pane = this.getPaneById(paneId)
-            if (!pane) return
+            if (!pane?.thread) return
 
-            // Only update if this is the first message exchange and title is still "New Thread"
-            if (!pane.thread || pane.thread.title !== 'New Thread') return
+            // Only generate title on first exchange (2 messages: user + assistant)
+            const userMessages = pane.messages.filter(m => m.role === 'user')
+            const assistantMessages = pane.messages.filter(m => m.role === 'assistant')
+            if (userMessages.length !== 1 || assistantMessages.length !== 1) return
 
-            // Check if we have exactly 2 messages (user question + assistant response)
-            if (pane.messages.length !== 2) return
-
-            const userMessage = pane.messages.find(m => m.role === 'user')
+            const userMessage = userMessages[0]
             const assistantMessage = pane.messages.find(m => m.id === assistantMessageId)
-
             if (!userMessage || !assistantMessage) return
 
+            const question = userMessage.content || userMessage.image_name || ''
+            if (!question) return
             try {
                 const response = await this.apiCall(
                     `/api/threads/${pane.threadId}/generate-title`,
                     {
                         method: 'POST',
                         body: JSON.stringify({
-                            question: userMessage.content,
+                            question,
                             response: assistantMessage.content,
                         }),
                     }
@@ -2097,9 +2104,7 @@ createApp({
                 if (newTitle) {
                     pane.thread.title = newTitle
 
-                    const threadIndex = this.threads.findIndex(
-                        t => t.id === pane.threadId
-                    )
+                    const threadIndex = this.threads.findIndex(t => t.id === pane.threadId)
                     if (threadIndex !== -1) {
                         this.threads[threadIndex].title = newTitle
                     }
@@ -2212,26 +2217,27 @@ createApp({
             const input = document.createElement('input')
             input.type = 'file'
             // Combine MIME types and extensions for best browser support
-            input.setAttribute('accept', 
+            input.setAttribute(
+                'accept',
                 'image/jpeg,image/png,image/gif,image/webp,' +
-                'application/pdf,text/plain,text/csv,' +
-                '.jpg,.jpeg,.png,.gif,.webp,' +
-                '.pdf,.txt,.csv,' +
-                '.py,.php,.go,.js,.vue,.ts,.tsx,' +
-                '.md,.json,.yaml,.yml,.xml,.html,.css,.sql,.sh'
+                    'application/pdf,text/plain,text/csv,' +
+                    '.jpg,.jpeg,.png,.gif,.webp,' +
+                    '.pdf,.txt,.csv,' +
+                    '.py,.php,.go,.js,.vue,.ts,.tsx,' +
+                    '.md,.json,.yaml,.yml,.xml,.html,.css,.sql,.sh'
             )
             input.style.display = 'none'
             document.body.appendChild(input)
-            
+
             input.addEventListener('change', event => {
                 this.handleFileSelect(event)
                 document.body.removeChild(input)
             })
-            
+
             input.addEventListener('cancel', () => {
                 document.body.removeChild(input)
             })
-            
+
             input.click()
         },
 
@@ -2268,24 +2274,24 @@ createApp({
         getEffectiveMimeType(file) {
             const ext = file.name.split('.').pop()?.toLowerCase()
             const extToMime = {
-                'py': 'text/x-python',
-                'php': 'text/x-php',
-                'go': 'text/x-go',
-                'js': 'text/javascript',
-                'vue': 'text/x-vue',
-                'ts': 'text/typescript',
-                'tsx': 'text/typescript',
-                'csv': 'text/csv',
-                'md': 'text/markdown',
-                'json': 'application/json',
-                'yaml': 'text/yaml',
-                'yml': 'text/yaml',
-                'xml': 'text/xml',
-                'html': 'text/html',
-                'css': 'text/css',
-                'sql': 'text/x-sql',
-                'sh': 'text/x-shellscript',
-                'bash': 'text/x-shellscript',
+                py: 'text/x-python',
+                php: 'text/x-php',
+                go: 'text/x-go',
+                js: 'text/javascript',
+                vue: 'text/x-vue',
+                ts: 'text/typescript',
+                tsx: 'text/typescript',
+                csv: 'text/csv',
+                md: 'text/markdown',
+                json: 'application/json',
+                yaml: 'text/yaml',
+                yml: 'text/yaml',
+                xml: 'text/xml',
+                html: 'text/html',
+                css: 'text/css',
+                sql: 'text/x-sql',
+                sh: 'text/x-shellscript',
+                bash: 'text/x-shellscript',
             }
             return extToMime[ext] || file.type
         },
@@ -2318,27 +2324,55 @@ createApp({
             ]
             // Also check by extension for code files (browsers may report as text/plain or octet-stream)
             const allowedExtensions = [
-                'jpg', 'jpeg', 'png', 'gif', 'webp',
-                'pdf', 'txt', 'csv',
-                'py', 'php', 'go', 'js', 'vue', 'ts', 'tsx',
-                'md', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'sql', 'sh', 'bash'
+                'jpg',
+                'jpeg',
+                'png',
+                'gif',
+                'webp',
+                'pdf',
+                'txt',
+                'csv',
+                'py',
+                'php',
+                'go',
+                'js',
+                'vue',
+                'ts',
+                'tsx',
+                'md',
+                'json',
+                'yaml',
+                'yml',
+                'xml',
+                'html',
+                'css',
+                'sql',
+                'sh',
+                'bash',
             ]
             const ext = file.name.split('.').pop()?.toLowerCase()
-            
+
             if (!allowedMimeTypes.includes(file.type) && !allowedExtensions.includes(ext)) {
-                this.showError('File type not supported. Allowed: images, PDF, text, CSV, and source code files.')
+                this.showError(
+                    'File type not supported. Allowed: images, PDF, text, CSV, and source code files.'
+                )
                 return false
             }
 
-            const isImageOrPdf = file.type.startsWith('image/') || 
-                                 file.type === 'application/pdf' || 
-                                 ext === 'pdf' ||
-                                 ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+            const isImageOrPdf =
+                file.type.startsWith('image/') ||
+                file.type === 'application/pdf' ||
+                ext === 'pdf' ||
+                ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
             const maxSize = isImageOrPdf ? 10 * 1024 * 1024 : 2 * 1024 * 1024
             const maxSizeLabel = isImageOrPdf ? '10MB' : '2MB'
 
             if (file.size > maxSize) {
-                this.showError(`File is too large. Maximum size for ${isImageOrPdf ? 'images/PDFs' : 'text files'} is ${maxSizeLabel}.`)
+                this.showError(
+                    `File is too large. Maximum size for ${
+                        isImageOrPdf ? 'images/PDFs' : 'text files'
+                    } is ${maxSizeLabel}.`
+                )
                 return false
             }
 
@@ -2364,7 +2398,8 @@ createApp({
             if (mimeType === 'text/csv') return 'fas fa-file-csv'
             if (mimeType?.includes('python')) return 'fab fa-python'
             if (mimeType?.includes('php')) return 'fab fa-php'
-            if (mimeType?.includes('javascript') || mimeType?.includes('typescript')) return 'fab fa-js'
+            if (mimeType?.includes('javascript') || mimeType?.includes('typescript'))
+                return 'fab fa-js'
             if (mimeType?.includes('json')) return 'fas fa-brackets-curly'
             if (mimeType?.includes('html')) return 'fab fa-html5'
             if (mimeType?.includes('css')) return 'fab fa-css3'
@@ -2385,20 +2420,28 @@ createApp({
             }
 
             // Check by extension first
-            if (ext === 'pdf' || input === 'application/pdf') return 'fas fa-file-pdf text-red-500'
+            if (ext === 'pdf' || input === 'application/pdf')
+                return 'fas fa-file-pdf text-red-500'
             if (ext === 'csv' || input === 'text/csv') return 'fas fa-file-csv text-green-500'
-            if (ext === 'py' || input?.includes('python')) return 'fab fa-python text-yellow-500'
+            if (ext === 'py' || input?.includes('python'))
+                return 'fab fa-python text-yellow-500'
             if (ext === 'php' || input?.includes('php')) return 'fab fa-php text-purple-500'
-            if (['js', 'jsx'].includes(ext) || input?.includes('javascript')) return 'fab fa-js text-yellow-400'
-            if (['ts', 'tsx'].includes(ext) || input?.includes('typescript')) return 'fas fa-code text-blue-500'
+            if (['js', 'jsx'].includes(ext) || input?.includes('javascript'))
+                return 'fab fa-js text-yellow-400'
+            if (['ts', 'tsx'].includes(ext) || input?.includes('typescript'))
+                return 'fas fa-code text-blue-500'
             if (ext === 'vue' || input?.includes('vue')) return 'fab fa-vuejs text-green-500'
             if (ext === 'go' || input?.includes('go')) return 'fas fa-code text-cyan-500'
-            if (ext === 'json' || input?.includes('json')) return 'fas fa-file-code text-yellow-600'
-            if (ext === 'html' || input?.includes('html')) return 'fab fa-html5 text-orange-500'
+            if (ext === 'json' || input?.includes('json'))
+                return 'fas fa-file-code text-yellow-600'
+            if (ext === 'html' || input?.includes('html'))
+                return 'fab fa-html5 text-orange-500'
             if (ext === 'css' || input?.includes('css')) return 'fab fa-css3 text-blue-400'
             if (ext === 'sql' || input?.includes('sql')) return 'fas fa-database text-blue-600'
-            if (ext === 'sh' || input?.includes('shell')) return 'fas fa-terminal text-gray-400'
-            if (['md', 'markdown'].includes(ext) || input?.includes('markdown')) return 'fas fa-file-alt text-tg-hint'
+            if (ext === 'sh' || input?.includes('shell'))
+                return 'fas fa-terminal text-gray-400'
+            if (['md', 'markdown'].includes(ext) || input?.includes('markdown'))
+                return 'fas fa-file-alt text-tg-hint'
             if (['xml', 'yaml', 'yml'].includes(ext)) return 'fas fa-file-code text-orange-400'
             if (input?.startsWith('text/')) return 'fas fa-file-code text-tg-hint'
             return 'fas fa-file text-tg-hint'
