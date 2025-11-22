@@ -491,9 +491,9 @@
                                                 </div>
 
                                                 <!-- File attachment -->
-                                                <div v-if="message.image_data && message.message_type === 'file'" class="mb-3 flex items-center gap-2 p-2 rounded-lg" :class="message.role === 'user' ? 'bg-white/10' : 'bg-tg-bg'">
+                                                <div v-if="message.message_type === 'file' && message.image_name" class="mb-3 flex items-center gap-2 p-2 rounded-lg" :class="message.role === 'user' ? 'bg-white/10' : 'bg-tg-bg'">
                                                     <i :class="getFileIconClass(message.image_name)" class="text-xl"></i>
-                                                    <span class="text-sm truncate">[[ message.image_name || 'File' ]]</span>
+                                                    <span class="text-sm truncate">[[ message.image_name ]]</span>
                                                 </div>
 
                                                 <!-- Message text -->
@@ -1002,6 +1002,6 @@
             </div>
         </div>
 
-        <script src="/assets/js/app.js?105"></script>
+        <script src="/assets/js/app.js?107"></script>
     </body>
 </html>
