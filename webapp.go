@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/meinside/openai-go"
+	log "github.com/sirupsen/logrus"
 	initdata "github.com/telegram-mini-apps/init-data-golang"
 	"gorm.io/gorm"
 )
@@ -199,7 +200,11 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		userLogger := Log.WithField("user", user.Username)
+
 		ctx := context.WithValue(r.Context(), userContextKey, user)
+		ctx = context.WithValue(ctx, loggerContextKey, userLogger)
+
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -207,7 +212,19 @@ func (s *Server) apiMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // Auth context
 type contextKey string
 
-const userContextKey contextKey = "user"
+const (
+	userContextKey   contextKey = "user"
+	loggerContextKey contextKey = "logger"
+)
+
+// Helper function to get logger from context
+func getLogger(ctx context.Context) *log.Entry {
+	if logger, ok := ctx.Value(loggerContextKey).(*log.Entry); ok {
+		return logger
+	}
+
+	return Log
+}
 
 // Helper functions for JSON responses
 func (s *Server) writeJSONError(w http.ResponseWriter, status int, message string) {
@@ -691,6 +708,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 
 func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID string) {
 	user := getUserFromContext(r)
+	logger := getLogger(r.Context())
 	if user == nil {
 		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
 		return
@@ -802,7 +820,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		// Save base64 image data to file
 		url, err := s.saveBase64Image(req.Image.Data, req.Image.Filename, req.Image.MimeType)
 		if err != nil {
-			Log.WithError(err).Error("Failed to save image")
+			logger.WithError(err).Error("Failed to save image")
 			s.writeJSONError(w, http.StatusInternalServerError, "Failed to save image")
 			return
 		}
@@ -814,10 +832,14 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	var imagePath, filename *string
 
 	if imageURL != "" {
-		messageType = "image"
 		imagePath = &imageURL
 		if req.Image != nil {
-			filename = &req.Image.Filename
+			if strings.HasPrefix(req.Image.MimeType, "image/") {
+				messageType = "image"
+			} else {
+				messageType = "file"
+				filename = &req.Image.Filename
+			}
 		}
 	}
 
@@ -840,7 +862,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 
 	// Save user message to database immediately
 	if err := s.db.Create(&userMessage).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save user message")
+		logger.WithField("error", err).Error("Failed to save user message")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to save message")
 		return
 	}
@@ -848,13 +870,13 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	// Update thread token counts
 	if inputTokenEstimate > 0 {
 		if err := s.updateThreadTokens(chat.ChatID, inputTokenEstimate, 0); err != nil {
-			Log.WithField("error", err).Warn("Failed to update thread tokens for user message")
+			logger.WithField("error", err).Warn("Failed to update thread tokens for user message")
 		}
 	}
 
 	// Check if context limit is exceeded and summarize if needed
 	if err := s.checkAndSummarizeContext(&chat); err != nil {
-		Log.WithField("error", err).Warn("Failed to summarize context")
+		logger.WithField("error", err).Warn("Failed to summarize context")
 	}
 
 	// Always use streaming response for OpenAI models in miniapp
@@ -1483,6 +1505,7 @@ type TokenUsage struct {
 
 // Generate response with streaming updates to SSE
 func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, history []openai.ChatMessage, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, *TokenUsage, error) {
+	logger := getLogger(ctx)
 	model := s.getModel(chat.ModelName)
 	if model == nil {
 		return "", nil, fmt.Errorf("model %s not found", chat.ModelName)
@@ -1593,7 +1616,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 				toolResults, err := s.handleResponseFunctionCallsForWebapp(chat, functionCalls)
 				if err != nil {
-					Log.WithField("error", err).Error("Failed to handle function calls")
+					logger.WithField("error", err).Error("Failed to handle function calls")
 					return result.String(), usage, err
 				}
 
@@ -1625,13 +1648,13 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					OutputTokens: event.Response.Usage.OutputTokens,
 					TotalTokens:  event.Response.Usage.TotalTokens,
 				}
-				Log.WithFields(map[string]interface{}{
+				logger.WithFields(map[string]interface{}{
 					"input_tokens":  usage.InputTokens,
 					"output_tokens": usage.OutputTokens,
 					"total_tokens":  usage.TotalTokens,
 				}).Debug("Done")
 			} else {
-				Log.Debug("No usage data found in response.done event")
+				logger.Debug("No usage data found in response.done event")
 			}
 
 			return result.String(), usage, nil
@@ -1664,7 +1687,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 			if event.Item != nil {
 				switch event.Item.Type {
 				case "function_call":
-					Log.WithField("function", event.Item.Name).Info("Function call started")
+					logger.WithField("function", event.Item.Name).Info("Function call started")
 				case "web_search_call":
 					currentContent := chat.t("Web search started, please wait...")
 					updatedResponse := MessageResponse{
@@ -1708,15 +1731,49 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 					}
 					if event.Item.Content != nil && len(event.Item.Content) > 0 {
 						annotations := s.ProcessAnnotations(
-							event.Item.Content, &WebappAnnotationProcessor{server: s},
+							event.Item.Content, &WebappAnnotationProcessor{server: s, logger: logger},
 						)
 						if len(annotations) > 0 {
 							s.StoreAnnotations(assistantMsg, annotations)
+
+							// Send immediate streaming update with annotations to frontend
+							if w != nil && flusher != nil {
+								// Reload message from database to get updated annotations
+								var updatedMsg ChatMessage
+								if err := s.db.First(&updatedMsg, assistantMsg.ID).Error; err == nil {
+									// Process annotations for response (convert file paths to URLs)
+									processedAnnotations := make(Annotations, 0, len(updatedMsg.Annotations))
+									for _, ann := range updatedMsg.Annotations {
+										processedAnn := ann
+										if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
+											url := s.filePathToURL(*ann.LocalFilePath)
+											processedAnn.LocalFilePath = &url
+										}
+										processedAnnotations = append(processedAnnotations, processedAnn)
+									}
+
+									// Send update with current content and annotations
+									currentContent := result.String()
+									annotationResponse := MessageResponse{
+										ID:          assistantMsg.ID,
+										Role:        "assistant",
+										Content:     &currentContent,
+										CreatedAt:   assistantMsg.CreatedAt,
+										IsLive:      true,
+										MessageType: "normal",
+										Annotations: processedAnnotations,
+									}
+
+									jsonData, _ := json.Marshal(annotationResponse)
+									fmt.Fprintf(w, "data: %s\n\n", jsonData)
+									flusher.Flush()
+								}
+							}
 						}
 					}
 				case "function_call":
 					functionCalls = append(functionCalls, *event.Item)
-					Log.WithField("function", event.Item.Name).Info("Function call completed")
+					logger.WithField("function", event.Item.Name).Info("Function call completed")
 				}
 			}
 		}
@@ -1765,6 +1822,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := getUserFromContext(r)
+	logger := getLogger(r.Context())
 	if user == nil {
 		s.writeJSONError(w, http.StatusUnauthorized, "User not found")
 		return
@@ -1775,7 +1833,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const maxUploadSize = 10 << 20 // 10MB
+	const maxUploadSize = 10 << 20 // 10MB for form parsing
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "Failed to parse form data or file too large")
 		return
@@ -1783,20 +1841,29 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("image")
 	if err != nil {
-		s.writeJSONError(w, http.StatusBadRequest, "No image file found in request")
+		s.writeJSONError(w, http.StatusBadRequest, "No file found in request")
 		return
 	}
 	defer file.Close()
 
-	// Enhanced file validation
 	if header.Filename == "" {
 		s.writeJSONError(w, http.StatusBadRequest, "Invalid filename")
 		return
 	}
 
-	// Validate file size (double-check after form parsing)
-	if header.Size > maxUploadSize {
-		s.writeJSONError(w, http.StatusBadRequest, "File size too large. Maximum 10MB allowed")
+	contentType := header.Header.Get("Content-Type")
+	isImageOrPdf := strings.HasPrefix(contentType, "image/") || contentType == "application/pdf"
+	maxFileSize := int64(10 << 20) // 10MB for images/PDFs
+	if !isImageOrPdf {
+		maxFileSize = 2 << 20 // 2MB for text files
+	}
+
+	if header.Size > maxFileSize {
+		if isImageOrPdf {
+			s.writeJSONError(w, http.StatusBadRequest, "File too large. Maximum 10MB for images/PDFs")
+		} else {
+			s.writeJSONError(w, http.StatusBadRequest, "File too large. Maximum 2MB for text files")
+		}
 		return
 	}
 
@@ -1805,8 +1872,6 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Basic file type validation
-	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		s.writeJSONError(w, http.StatusBadRequest, "Missing content type")
 		return
@@ -1814,14 +1879,32 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Validate content type
 	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
+		"image/jpeg":         true,
+		"image/png":          true,
+		"image/gif":          true,
+		"image/webp":         true,
+		"application/pdf":    true,
+		"text/plain":         true,
+		"text/csv":           true,
+		"text/x-python":      true,
+		"text/x-php":         true,
+		"text/x-go":          true,
+		"text/javascript":    true,
+		"application/javascript": true,
+		"text/x-vue":         true,
+		"text/typescript":    true,
+		"text/markdown":      true,
+		"application/json":   true,
+		"text/yaml":          true,
+		"text/xml":           true,
+		"text/html":          true,
+		"text/css":           true,
+		"text/x-sql":         true,
+		"text/x-shellscript": true,
 	}
 
 	if !validTypes[contentType] {
-		s.writeJSONError(w, http.StatusBadRequest, "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed")
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid file type. Allowed: images, PDF, text, CSV, and source code files")
 		return
 	}
 
@@ -1830,24 +1913,14 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 	timestamp := time.Now().Unix()
 
 	// Determine file extension based on content type
-	var fileExt string
-	switch contentType {
-	case "image/jpeg":
-		fileExt = ".jpg"
-	case "image/png":
-		fileExt = ".png"
-	case "image/gif":
-		fileExt = ".gif"
-	case "image/webp":
-		fileExt = ".webp"
-	}
+	fileExt := getFileExtension(contentType)
 
 	filename := fmt.Sprintf("%d_%s%s", timestamp, uniqueID, fileExt)
 	filePath := fmt.Sprintf("uploads/%s", filename)
 
 	// Create uploads directory with proper permissions
 	if err := os.MkdirAll("uploads", 0755); err != nil {
-		Log.WithField("error", err).Error("Failed to create uploads directory")
+		logger.WithField("error", err).Error("Failed to create uploads directory")
 		s.writeJSONError(w, http.StatusInternalServerError, "Failed to create upload directory")
 		return
 	}
@@ -1975,7 +2048,7 @@ func (s *Server) createMessagesSummary(messages []ChatMessage) (string, error) {
 
 // Helper functions for thread message processing
 
-func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []openai.ChatMessage {
+func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat, logger *log.Entry) []openai.ChatMessage {
 	var history []openai.ChatMessage
 
 	// Add system prompt/role if exists
@@ -1999,12 +2072,10 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 
 		var message openai.ChatMessage
 
-		// Handle image attachments like Telegram bot
 		if msg.ImagePath != nil {
 			reader, err := os.Open(*msg.ImagePath)
 			if err != nil {
-				Log.Warn("Error opening image file", "error=", err)
-				// Still add text content if available
+				logger.Warn("Error opening file", "error=", err)
 				if *msg.Content != "" {
 					history = append(history, openai.ChatMessage{
 						Role:    openai.ChatMessageRole(msg.Role),
@@ -2017,8 +2088,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 
 			bytes, err := io.ReadAll(reader)
 			if err != nil {
-				Log.Warn("Error reading image file", "error=", err)
-				// Still add text content if available
+				logger.Warn("Error reading file content", "error=", err)
 				if *msg.Content != "" {
 					history = append(history, openai.ChatMessage{
 						Role:    openai.ChatMessageRole(msg.Role),
@@ -2028,24 +2098,36 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 				continue
 			}
 
-			// Add text content first (without the [IMAGE: ...] reference)
-			textContent := strings.TrimSpace(*msg.Content)
-			// Remove any [IMAGE: ...] references from the text content
-			textContent = regexp.MustCompile(`\n*\[IMAGE: [^\]]+\]\s*`).ReplaceAllString(textContent, "")
-			textContent = strings.TrimSpace(textContent)
-
-			// Create content array starting with text
-			content := []openai.ChatMessageContent{{Type: "text", Text: &textContent}}
-
-			// Add image content
-			filename := "image.jpg"
-			if msg.Filename != nil {
-				filename = *msg.Filename
+			if msg.MessageType == "file" {
+				filename := "file"
+				if msg.Filename != nil {
+					filename = *msg.Filename
+				}
+				isPDF := strings.HasSuffix(strings.ToLower(filename), ".pdf")
+				if isPDF {
+					content := []openai.ChatMessageContent{{Type: "text", Text: msg.Content}}
+					content = append(content, openai.NewChatMessageContentFileWithBytes(bytes, filename))
+					logger.Info("Adding PDF file to history", "filename=", filename)
+					message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
+				} else {
+					ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+					if ext == "" {
+						ext = "text"
+					}
+					textContent := *msg.Content
+					if textContent != "" {
+						textContent += "\n\n"
+					}
+					textContent += fmt.Sprintf("```%s\n%s\n```\n[File: %s]", ext, string(bytes), filename)
+					logger.Info("Adding text file to history", "filename=", filename)
+					message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: textContent}
+				}
+			} else {
+				content := []openai.ChatMessageContent{{Type: "text", Text: msg.Content}}
+				content = append(content, openai.NewChatMessageContentWithBytes(bytes))
+				logger.Info("Adding image to history")
+				message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
 			}
-			content = append(content, openai.NewChatMessageContentWithBytes(bytes))
-
-			Log.Info("Adding image message to history", "filename=", filename)
-			message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
 		} else {
 			// Regular text message
 			message = openai.ChatMessage{
@@ -2062,6 +2144,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat) []o
 
 // Handle streaming response with Server-Sent Events
 func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request, chat *Chat, userMessage *ChatMessage, isNewThread bool) {
+	logger := getLogger(r.Context())
 	// Set up Server-Sent Events headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2088,7 +2171,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		Find(&messages)
 
 	// Convert to OpenAI format (user message is now in DB, no need to append)
-	history := s.convertMessagesToOpenAI(messages, chat)
+	history := s.convertMessagesToOpenAI(messages, chat, logger)
 
 	// Create assistant message in database
 	assistantMsg := ChatMessage{
@@ -2100,7 +2183,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	}
 
 	if err := s.db.Create(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to create assistant message")
+		logger.WithField("error", err).Error("Failed to create assistant message")
 		return
 	}
 
@@ -2122,7 +2205,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	responseTime := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		Log.WithField("error", err).Error("Failed to generate response")
+		logger.WithField("error", err).Error("Failed to generate response")
 		errorContent := fmt.Sprintf("Sorry, I encountered an error: %s", err.Error())
 		assistantMsg.Content = &errorContent
 		s.db.Save(&assistantMsg)
@@ -2159,13 +2242,13 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	}
 
 	if err := s.db.Save(&assistantMsg).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to save final response to database")
+		logger.WithField("error", err).Error("Failed to save final response to database")
 	}
 
 	// Update thread token counts for assistant message
 	if usage != nil {
 		if err := s.updateThreadTokens(chat.ChatID, usage.InputTokens, usage.OutputTokens); err != nil {
-			Log.WithField("error", err).Warn("Failed to update thread tokens for assistant message")
+			logger.WithField("error", err).Warn("Failed to update thread tokens for assistant message")
 		}
 	}
 
@@ -2201,7 +2284,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	// IMPORTANT: Reload the message from database to ensure we have all annotations
 	// that were processed during the streaming response
 	if err := s.db.First(&assistantMsg, assistantMsg.ID).Error; err != nil {
-		Log.WithField("error", err).Error("Failed to reload message with annotations")
+		logger.WithField("error", err).Error("Failed to reload message with annotations")
 	}
 
 	processedAnnotations := make(Annotations, 0, len(assistantMsg.Annotations))
@@ -2244,14 +2327,13 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 // WebappAnnotationProcessor implements AnnotationProcessor for webapp
 type WebappAnnotationProcessor struct {
 	server *Server
+	logger *log.Entry
 }
 
 // ProcessFile saves a file locally and returns the path for webapp
 func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error) {
-	// Log the file processing for webapp
-	Log.WithField("filename", filename).WithField("size", len(data)).Info("Annotation file processed for webapp")
+	p.logger.WithField("filename", filename).WithField("size", len(data)).Info("Annotation file processed")
 
-	// Create annotations directory if it doesn't exist
 	annotationsDir := "uploads/annotations"
 	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create annotations directory: %w", err)
@@ -2262,7 +2344,6 @@ func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, an
 	localFilename := fmt.Sprintf("%d_%s", timestamp, filename)
 	localPath := filepath.Join(annotationsDir, localFilename)
 
-	// Write file to disk
 	if err := os.WriteFile(localPath, data, 0644); err != nil {
 		return "", fmt.Errorf("failed to write annotation file: %w", err)
 	}
@@ -2406,7 +2487,8 @@ func (s *Server) estimateTokenCount(text string) int {
 	return charEstimate
 }
 
-// saveBase64Image saves base64 image data to a file and returns the URL
+// saveBase64Image saves base64 file data to a file and returns the URL
+// Supports images, PDFs, and text files
 func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) (string, error) {
 	// Decode base64 data
 	data, err := base64.StdEncoding.DecodeString(base64Data)
@@ -2417,18 +2499,13 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	// Generate unique filename
 	timestamp := time.Now().Format("20060102-150405")
 	randomID := uuid.New().String()[:8]
-	ext := ".jpg"
-
-	switch mimeType {
-	case "image/png":
-		ext = ".png"
-	case "image/gif":
-		ext = ".gif"
-	case "image/webp":
-		ext = ".webp"
+	ext := getFileExtension(mimeType)
+	prefix := "image"
+	if !strings.HasPrefix(mimeType, "image/") {
+		prefix = "file"
 	}
 
-	filename := fmt.Sprintf("image_%s_%s%s", timestamp, randomID, ext)
+	filename := fmt.Sprintf("%s_%s_%s%s", prefix, timestamp, randomID, ext)
 
 	// Ensure uploads directory exists
 	uploadsDir := "uploads"
@@ -2445,4 +2522,36 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	// Return file system path for database storage
 	// The frontend will get the URL path from the API response
 	return filePath, nil
+}
+
+// getFileExtension returns the appropriate file extension for a given mime type
+func getFileExtension(mimeType string) string {
+	extensions := map[string]string{
+		"image/jpeg":           ".jpg",
+		"image/png":            ".png",
+		"image/gif":            ".gif",
+		"image/webp":           ".webp",
+		"application/pdf":      ".pdf",
+		"text/plain":           ".txt",
+		"text/csv":             ".csv",
+		"text/x-python":        ".py",
+		"text/x-php":           ".php",
+		"text/x-go":            ".go",
+		"text/javascript":      ".js",
+		"application/javascript": ".js",
+		"text/x-vue":           ".vue",
+		"text/typescript":      ".ts",
+		"text/markdown":        ".md",
+		"application/json":     ".json",
+		"text/yaml":            ".yaml",
+		"text/xml":             ".xml",
+		"text/html":            ".html",
+		"text/css":             ".css",
+		"text/x-sql":           ".sql",
+		"text/x-shellscript":   ".sh",
+	}
+	if ext, ok := extensions[mimeType]; ok {
+		return ext
+	}
+	return ".bin"
 }

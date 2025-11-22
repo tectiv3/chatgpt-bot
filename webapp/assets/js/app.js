@@ -134,32 +134,31 @@ createApp({
             loading: true,
             messagesLoading: false,
             sidebarOpen: false,
+            sidebarCollapsed: false, // Desktop sidebar collapse state
 
-            // Current state
-            currentThreadId: null,
-            currentThread: null,
-            messages: [],
+            // Shared data
             threads: [],
             archivedThreads: [],
             models: [],
             roles: [],
 
-            // UI state
-            messageInput: '',
-            sending: false,
-            streaming: false,
-            currentStreamController: null,
-            creatingThread: false,
+            // Split pane management
+            panes: [], // Array of pane objects
+            activePaneId: null, // Currently focused pane
+            maxPanes: 4,
+            dividerDragging: false,
+            dragStartX: 0,
+            dragPaneIndex: 0,
 
-            // Streaming UX improvements
-            streamingBuffer: '',
-            streamingUpdateTimer: null,
-            streamingThrottleMs: 50, // Throttle streaming updates to 20 FPS
+            // UI state
+            creatingThread: false,
             showSettings: false,
             showRoleManager: false,
+            showThreadSelector: false,
+            threadSelectorPaneId: null,
             showRoleEditor: false,
-
             showArchivedSection: false,
+            settingsPaneId: null, // Which pane's settings are being edited
 
             // Edit title modal state
             showEditTitle: false,
@@ -169,24 +168,15 @@ createApp({
             },
             savingTitle: false,
 
-            // Settings (will be loaded from DeviceStorage)
-            threadSettings: {
-                model_name: 'gpt-4o',
-                temperature: 1.0,
-                role_id: null,
-                lang: 'en',
-                master_prompt: '',
-                context_limit: 40000,
-                enabled_tools: ['search'],
-            },
-
             // Persistent user preferences
             userPreferences: {
                 selectedModel: 'gpt-4o',
                 selectedRole: null,
                 defaultTemperature: 1.0,
                 enableStreaming: true,
-                selectedThreadId: null, // Last selected thread ID
+                selectedThreadId: null,
+                sidebarCollapsed: false,
+                paneLayout: null, // Save pane layout
             },
 
             // Role editing
@@ -199,32 +189,73 @@ createApp({
             // Markdown processor instance (initialized on first use)
             markdownProcessor: null,
 
-            // Simple image attachment
-            attachedImage: null,
-
             // Fullscreen image viewer
             fullscreenImage: null,
         }
     },
 
     computed: {
+        // Active pane getter
+        activePane() {
+            return this.panes.find(p => p.id === this.activePaneId) || this.panes[0]
+        },
+
+        // Backward compatibility - delegate to active pane
+        currentThreadId() {
+            return this.activePane?.threadId || null
+        },
+
+        currentThread() {
+            return this.activePane?.thread || null
+        },
+
+        messages() {
+            return this.activePane?.messages || []
+        },
+
+        threadSettings() {
+            return this.activePane?.settings || this.getDefaultSettings()
+        },
+
+        messageInput: {
+            get() {
+                return this.activePane?.messageInput || ''
+            },
+            set(value) {
+                if (this.activePane) {
+                    this.activePane.messageInput = value
+                }
+            }
+        },
+
+        attachedFile: {
+            get() {
+                return this.activePane?.attachedFile || null
+            },
+            set(value) {
+                if (this.activePane) {
+                    this.activePane.attachedFile = value
+                }
+            }
+        },
+
+        sending() {
+            return this.activePane?.sending || false
+        },
+
+        streaming() {
+            return this.activePane?.streaming || false
+        },
+
         currentMessageCount() {
-            return this.messagesLoading ? '...' : this.messages.length
+            return this.activePane?.messagesLoading ? '...' : this.messages.length
         },
 
         // Computed property for getting current role name
         currentRoleName() {
-            if (!this.threadSettings.role_id) return ''
+            if (!this.threadSettings?.role_id) return ''
             const role = this.roles.find(r => r.id === this.threadSettings.role_id)
             return role ? role.name : 'Unknown Role'
-        },
-
-        // Computed property for current thread
-        getCurrentThread() {
-            return (
-                this.threads.find(t => t.id === this.currentThreadId) ||
-                this.archivedThreads.find(t => t.id === this.currentThreadId)
-            )
         },
 
         // Computed property for sorted threads (most recent first)
@@ -236,14 +267,16 @@ createApp({
             })
         },
 
-        // Computed property to determine if message can be sent
+        // Computed property to determine if message can be sent for active pane
         canSendMessage() {
+            const pane = this.activePane
+            if (!pane) return false
             return (
-                !this.sending &&
-                !this.streaming &&
+                !pane.sending &&
+                !pane.streaming &&
                 !this.creatingThread &&
-                this.messageInput.trim().length > 0 &&
-                this.currentThreadId !== null
+                pane.messageInput.trim().length > 0 &&
+                pane.threadId !== null
             )
         },
 
@@ -266,21 +299,9 @@ createApp({
             }
         },
 
-        // Computed property for send button text
-        sendButtonText() {
-            switch (this.sendButtonState) {
-                case 'sending':
-                    return 'Sending...'
-                case 'streaming':
-                    return 'Streaming...'
-                default:
-                    return 'Send'
-            }
-        },
-
         // Check if streaming can be stopped
         canStopStreaming() {
-            return this.streaming && this.currentStreamController
+            return this.streaming && this.activePane?.streamController
         },
 
         // Check if there are archived threads to show section
@@ -291,6 +312,16 @@ createApp({
         // Should show role selector (only for new threads)
         shouldShowRoleSelector() {
             return this.currentThreadId && this.messages.length === 0
+        },
+
+        // Can split pane
+        canSplitPane() {
+            return this.panes.length < this.maxPanes && !this.mobileKeyboard?.isMobile?.value
+        },
+
+        // Can close pane
+        canClosePane() {
+            return this.panes.length > 1
         },
     },
 
@@ -369,6 +400,399 @@ createApp({
     },
 
     methods: {
+        // ==================== PANE MANAGEMENT ====================
+
+        createPane(threadId = null) {
+            const paneId = 'pane_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
+            const pane = {
+                id: paneId,
+                threadId: threadId,
+                thread: null,
+                messages: [],
+                messageInput: '',
+                attachedFile: null,
+                sending: false,
+                streaming: false,
+                streamController: null,
+                streamingBuffer: '',
+                streamingUpdateTimer: null,
+                messagesLoading: false,
+                widthPercent: 100 / (this.panes.length + 1), // Will be recalculated
+                settings: this.getDefaultSettings(),
+            }
+            return pane
+        },
+
+        getDefaultSettings() {
+            return {
+                model_name: this.userPreferences?.selectedModel || 'gpt-4o',
+                temperature: this.userPreferences?.defaultTemperature || 1.0,
+                role_id: this.userPreferences?.selectedRole || null,
+                lang: 'en',
+                master_prompt: "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
+                context_limit: 40000,
+                enabled_tools: ['search'],
+            }
+        },
+
+        initializePanes() {
+            // Create initial pane
+            const pane = this.createPane()
+            pane.widthPercent = 100
+            this.panes = [pane]
+            this.activePaneId = pane.id
+        },
+
+        splitPane(sourcePaneId = null) {
+            if (!this.canSplitPane) return
+
+            const sourcePane = sourcePaneId
+                ? this.panes.find(p => p.id === sourcePaneId)
+                : this.activePane
+
+            if (!sourcePane) return
+
+            // Create new pane
+            const newPane = this.createPane()
+
+            // Find source pane index and insert after it
+            const sourceIndex = this.panes.findIndex(p => p.id === sourcePane.id)
+            this.panes.splice(sourceIndex + 1, 0, newPane)
+
+            // Recalculate widths
+            this.recalculatePaneWidths()
+
+            // Activate the new pane
+            this.activePaneId = newPane.id
+
+            // Save layout
+            this.savePaneLayout()
+
+            // Open thread selector for the new pane
+            this.$nextTick(() => {
+                this.openThreadSelectorForPane(newPane.id)
+            })
+        },
+
+        closePane(paneId) {
+            if (!this.canClosePane) return
+
+            const paneIndex = this.panes.findIndex(p => p.id === paneId)
+            if (paneIndex === -1) return
+
+            const pane = this.panes[paneIndex]
+
+            // Stop any streaming in this pane
+            if (pane.streamController) {
+                pane.streamController.abort()
+            }
+            if (pane.streamingUpdateTimer) {
+                clearTimeout(pane.streamingUpdateTimer)
+            }
+
+            // Remove pane
+            this.panes.splice(paneIndex, 1)
+
+            // If closed pane was active, activate adjacent pane
+            if (this.activePaneId === paneId) {
+                const newActiveIndex = Math.min(paneIndex, this.panes.length - 1)
+                this.activePaneId = this.panes[newActiveIndex].id
+            }
+
+            // Recalculate widths
+            this.recalculatePaneWidths()
+
+            // Save layout
+            this.savePaneLayout()
+        },
+
+        setActivePane(paneId) {
+            if (this.panes.find(p => p.id === paneId)) {
+                this.activePaneId = paneId
+            }
+        },
+
+        recalculatePaneWidths() {
+            const equalWidth = 100 / this.panes.length
+            this.panes.forEach(pane => {
+                pane.widthPercent = equalWidth
+            })
+        },
+
+        // Divider dragging
+        startDividerDrag(event, paneIndex) {
+            if (this.panes.length < 2) return
+
+            this.dividerDragging = true
+            this.dragStartX = event.clientX || event.touches?.[0]?.clientX
+            this.dragPaneIndex = paneIndex
+
+            document.addEventListener('mousemove', this.onDividerDrag)
+            document.addEventListener('mouseup', this.stopDividerDrag)
+            document.addEventListener('touchmove', this.onDividerDrag)
+            document.addEventListener('touchend', this.stopDividerDrag)
+
+            // Prevent text selection during drag and set cursor
+            document.body.style.userSelect = 'none'
+            document.body.classList.add('pane-dragging')
+        },
+
+        onDividerDrag(event) {
+            if (!this.dividerDragging) return
+
+            const clientX = event.clientX || event.touches?.[0]?.clientX
+            const container = this.$refs.panesContainer
+            if (!container) return
+
+            const containerRect = container.getBoundingClientRect()
+            const containerWidth = containerRect.width
+            const relativeX = clientX - containerRect.left
+            const percentX = (relativeX / containerWidth) * 100
+
+            // Calculate cumulative width up to drag pane
+            let cumulativeWidth = 0
+            for (let i = 0; i < this.dragPaneIndex; i++) {
+                cumulativeWidth += this.panes[i].widthPercent
+            }
+
+            // New width for the pane being resized
+            const newWidth = percentX - cumulativeWidth
+            const minWidth = 20 // Minimum 20% width
+            const maxWidth = 100 - (this.panes.length - 1) * minWidth
+
+            if (newWidth >= minWidth && newWidth <= maxWidth) {
+                const leftPane = this.panes[this.dragPaneIndex]
+                const rightPane = this.panes[this.dragPaneIndex + 1]
+
+                if (leftPane && rightPane) {
+                    const totalWidth = leftPane.widthPercent + rightPane.widthPercent
+                    const rightNewWidth = totalWidth - newWidth
+
+                    if (rightNewWidth >= minWidth) {
+                        leftPane.widthPercent = newWidth
+                        rightPane.widthPercent = rightNewWidth
+                    }
+                }
+            }
+        },
+
+        stopDividerDrag() {
+            this.dividerDragging = false
+            document.removeEventListener('mousemove', this.onDividerDrag)
+            document.removeEventListener('mouseup', this.stopDividerDrag)
+            document.removeEventListener('touchmove', this.onDividerDrag)
+            document.removeEventListener('touchend', this.stopDividerDrag)
+            document.body.style.userSelect = ''
+            document.body.classList.remove('pane-dragging')
+
+            // Save layout after drag
+            this.savePaneLayout()
+        },
+
+        savePaneLayout() {
+            const layout = this.panes.map(p => ({
+                threadId: p.threadId,
+                widthPercent: p.widthPercent,
+            }))
+            this.saveUserPreference('paneLayout', layout)
+        },
+
+        async restorePaneLayout() {
+            const layout = this.userPreferences.paneLayout
+
+            if (layout && Array.isArray(layout) && layout.length > 0) {
+                // Restore panes from layout
+                this.panes = []
+                for (const paneData of layout) {
+                    // Create pane WITHOUT threadId (we'll set it via selectThreadInPane)
+                    const pane = this.createPane()
+                    pane.widthPercent = paneData.widthPercent || (100 / layout.length)
+                    this.panes.push(pane)
+
+                    // Load thread data if threadId exists and thread is valid
+                    if (paneData.threadId) {
+                        const threadExists = this.threads.find(t => t.id === paneData.threadId) ||
+                                           this.archivedThreads.find(t => t.id === paneData.threadId)
+                        if (threadExists) {
+                            await this.selectThreadInPane(pane.id, paneData.threadId)
+                        }
+                    }
+                }
+                this.activePaneId = this.panes[0]?.id
+            } else {
+                // Initialize with single pane
+                this.initializePanes()
+
+                // Try to restore last selected thread
+                const savedThreadId = this.userPreferences.selectedThreadId
+                if (savedThreadId) {
+                    const threadExists = this.threads.find(t => t.id === savedThreadId) ||
+                                        this.archivedThreads.find(t => t.id === savedThreadId)
+                    if (threadExists) {
+                        await this.selectThreadInPane(this.panes[0].id, savedThreadId)
+                    }
+                }
+            }
+        },
+
+        // Toggle sidebar (desktop)
+        toggleSidebar() {
+            this.sidebarCollapsed = !this.sidebarCollapsed
+            this.saveUserPreference('sidebarCollapsed', this.sidebarCollapsed)
+        },
+
+        // Get pane by ID helper
+        getPaneById(paneId) {
+            return this.panes.find(p => p.id === paneId)
+        },
+
+        // Open thread selector modal for a pane
+        openThreadSelectorForPane(paneId) {
+            this.threadSelectorPaneId = paneId
+            this.showThreadSelector = true
+        },
+
+        // Select a thread for a pane (from modal)
+        selectThreadForPane(paneId, threadId) {
+            this.selectThreadInPane(paneId, threadId)
+            this.showThreadSelector = false
+            this.threadSelectorPaneId = null
+        },
+
+        // Create new thread for a pane (from modal)
+        async createNewThreadForPane(paneId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
+
+            // Set this pane as active so newThread updates the right pane
+            this.setActivePane(paneId)
+            await this.newThread()
+
+            this.showThreadSelector = false
+            this.threadSelectorPaneId = null
+        },
+
+        // Check if message can be sent for a specific pane
+        canSendInPane(pane) {
+            if (!pane) return false
+            return (
+                !pane.sending &&
+                !pane.streaming &&
+                !this.creatingThread &&
+                pane.messageInput.trim().length > 0 &&
+                pane.threadId !== null
+            )
+        },
+
+        // Send message in a specific pane
+        sendMessageInPane(paneId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane || !this.canSendInPane(pane)) return
+
+            // Set this pane as active
+            this.setActivePane(paneId)
+
+            // Call the main send message logic
+            this.sendMessage()
+        },
+
+        // Stop streaming in a specific pane
+        stopStreamingInPane(paneId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
+
+            if (pane.streamController) {
+                pane.streamController.abort()
+                pane.streamController = null
+            }
+            pane.streaming = false
+        },
+
+        // Clear attached file in a specific pane
+        clearAttachedFileInPane(paneId) {
+            const pane = this.getPaneById(paneId)
+            if (pane) {
+                pane.attachedFile = null
+            }
+        },
+
+        // Toggle tool in a specific pane
+        toggleToolInPane(paneId, toolName) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
+
+            const tools = [...pane.settings.enabled_tools]
+            const index = tools.indexOf(toolName)
+
+            if (index > -1) {
+                tools.splice(index, 1)
+            } else {
+                tools.push(toolName)
+            }
+
+            pane.settings.enabled_tools = tools
+
+            if (pane.thread) {
+                pane.thread.settings = { ...pane.settings }
+            }
+
+            if (pane.threadId) {
+                this.saveSettingsForPane(paneId)
+            }
+
+            if (!this.mobileKeyboard.isMobile.value) {
+                this.$nextTick(() => this.focusInput())
+            }
+        },
+
+        // Handle keydown in a specific pane
+        handleKeyDownInPane(event, paneId) {
+            if (event.key === 'Enter') {
+                if (this.mobileKeyboard.isMobile.value) {
+                    // On mobile, only send on Shift+Enter
+                    if (event.shiftKey) {
+                        event.preventDefault()
+                        this.sendMessageInPane(paneId)
+                    }
+                } else {
+                    // On desktop, Enter sends message, Shift+Enter creates new line
+                    if (!event.shiftKey) {
+                        event.preventDefault()
+                        this.sendMessageInPane(paneId)
+                    }
+                }
+            }
+
+            // Handle Escape key to stop streaming
+            const pane = this.getPaneById(paneId)
+            if (event.key === 'Escape' && pane?.streaming) {
+                event.preventDefault()
+                this.stopStreamingInPane(paneId)
+            }
+        },
+
+        // Save settings for a specific pane
+        saveSettingsForPane(paneId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane || !pane.threadId) return
+
+            // Use existing saveSettings logic but for specific pane
+            fetch(`/api/threads/${pane.threadId}/settings`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Init-Data': this.initData
+                },
+                body: JSON.stringify({
+                    model_name: pane.settings.model_name,
+                    role_id: pane.settings.role_id,
+                    enabled_tools: pane.settings.enabled_tools,
+                })
+            }).catch(err => console.error('Error saving pane settings:', err))
+        },
+
+        // ==================== END PANE MANAGEMENT ====================
+
         hideInitialLoader() {
             const loader = document.getElementById('initial-loader')
             const app = document.getElementById('app')
@@ -527,34 +951,91 @@ createApp({
                 this.roles = rolesResponse.roles || []
                 this.archivedThreads = archivedResponse.threads || []
 
-                // Try to restore the last selected thread from storage
-                await this.restoreSelectedThread()
+                // Restore sidebar collapsed state
+                this.sidebarCollapsed = this.userPreferences.sidebarCollapsed || false
+
+                // Initialize and restore pane layout
+                await this.restorePaneLayout()
             } catch (error) {
                 this.showError('Failed to load data.')
             }
         },
 
-        async restoreSelectedThread() {
-            // Get the last selected thread ID from storage
-            const savedThreadId = this.userPreferences.selectedThreadId
+        // Pane-aware thread selection
+        async selectThreadInPane(paneId, threadId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
 
-            if (savedThreadId) {
-                // Check if the saved thread still exists in active or archived threads
-                const threadExists =
-                    this.threads.find(t => t.id === savedThreadId) ||
-                    this.archivedThreads.find(t => t.id === savedThreadId)
+            if (pane.threadId === threadId) return
 
-                if (threadExists) {
-                    // Restore the saved thread selection
-                    await this.selectThread(savedThreadId)
-                    return
+            pane.messagesLoading = true
+            pane.threadId = threadId
+            pane.thread = this.threads.find(t => t.id === threadId) ||
+                         this.archivedThreads.find(t => t.id === threadId)
+
+            // Close sidebar on mobile
+            this.sidebarOpen = false
+
+            if (pane.thread) {
+                // Ensure thread settings exist, fallback to defaults
+                pane.settings = {
+                    ...this.getDefaultSettings(),
+                    ...pane.thread.settings,
                 }
+
+                try {
+                    await this.loadPaneMessages(paneId)
+                } catch (error) {
+                    console.error('Failed to load messages:', error)
+                    this.showError('Failed to load thread messages')
+                }
+            } else {
+                console.error('Thread not found:', threadId)
+                this.showError('Thread not found')
             }
 
-            // Fallback: select the first available thread if no saved thread or it doesn't exist
-            if (this.threads.length > 0) {
-                await this.selectThread(this.threads[0].id)
+            // Save layout
+            this.savePaneLayout()
+        },
+
+        async loadPaneThread(paneId, threadId) {
+            await this.selectThreadInPane(paneId, threadId)
+        },
+
+        async loadPaneMessages(paneId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane || !pane.threadId) return
+
+            pane.messagesLoading = true
+
+            try {
+                const response = await this.apiCall(
+                    `/api/threads/${pane.threadId}/messages`
+                )
+                const newMessages = response.messages || []
+
+                // Process messages
+                const processedMessages = newMessages.map(message => ({
+                    ...message,
+                    is_complete: message.is_complete !== false,
+                    formattedContent: this.formatMessage(message.content, message.annotations),
+                }))
+
+                pane.messages = processedMessages
+
+                // Auto-scroll this pane to bottom
+                this.autoScrollToBottom(pane.id)
+            } catch (error) {
+                this.showError('Failed to load messages')
+            } finally {
+                pane.messagesLoading = false
             }
+        },
+
+        // Backward compatible wrapper
+        async restoreSelectedThread() {
+            // This is now handled by restorePaneLayout
+            // Kept for compatibility
         },
 
         async apiCall(endpoint, options = {}) {
@@ -588,23 +1069,19 @@ createApp({
                 // Close sidebar
                 this.sidebarOpen = false
 
-                // Reset thread settings using user preferences as defaults
-                this.threadSettings = {
-                    model_name: this.userPreferences.selectedModel || 'gpt-4o',
-                    temperature: this.userPreferences.defaultTemperature || 1.0,
-                    role_id: this.userPreferences.selectedRole || null,
-                    lang: 'en',
-                    master_prompt:
-                        "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
-                    context_limit: 40000,
-                    enabled_tools: ['search'],
+                const pane = this.activePane
+                if (!pane) {
+                    this.initializePanes()
                 }
+
+                // Reset thread settings using user preferences as defaults
+                const newSettings = this.getDefaultSettings()
 
                 const response = await this.apiCall('/api/threads', {
                     method: 'POST',
                     body: JSON.stringify({
                         initial_message: '', // Backend requires this field
-                        settings: this.threadSettings,
+                        settings: newSettings,
                     }),
                 })
 
@@ -622,15 +1099,24 @@ createApp({
                     message_count: 0,
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString(),
-                    settings: { ...this.threadSettings },
+                    settings: { ...newSettings },
                 }
 
                 this.threads.unshift(newThread)
-                this.currentThreadId = threadId
-                this.currentThread = newThread
-                this.messages = []
+
+                // Update the active pane with the new thread
+                const currentPane = this.activePane
+                if (currentPane) {
+                    currentPane.threadId = threadId
+                    currentPane.thread = newThread
+                    currentPane.messages = []
+                    currentPane.settings = { ...newSettings }
+                    currentPane.messageInput = ''
+                    currentPane.attachedFile = null
+                }
 
                 await this.saveUserPreference('selectedThreadId', threadId)
+                this.savePaneLayout()
 
                 this.$nextTick(() => this.focusInput())
             } catch (error) {
@@ -641,49 +1127,13 @@ createApp({
         },
 
         async selectThread(threadId) {
-            if (this.currentThreadId === threadId) return
-
-            // Stop any active streaming when switching threads
-            // if (this.streaming) {
-            // this.stopStreaming() // why?
-            // }
-            this.messagesLoading = true
-            this.currentThreadId = threadId
-            this.currentThread =
-                this.threads.find(t => t.id === threadId) ||
-                this.archivedThreads.find(t => t.id === threadId)
-
-            // Save selected thread to storage
-            await this.saveUserPreference('selectedThreadId', threadId)
-
-            this.sidebarOpen = false // Close sidebar on mobile
-
-            if (this.currentThread) {
-                // Ensure thread settings exist, fallback to defaults
-                this.threadSettings = {
-                    model_name: 'gpt-4o',
-                    temperature: 1.0,
-                    role_id: null,
-                    lang: 'en',
-                    master_prompt:
-                        "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely.",
-                    context_limit: 40000,
-                    enabled_tools: ['search'],
-                    ...this.currentThread.settings,
-                }
-
-                try {
-                    await this.loadMessages()
-                    this.$nextTick(() => this.focusInput())
-                } catch (error) {
-                    console.error('Failed to load messages:', error)
-                    this.showError('Failed to load thread messages')
-                } finally {
-                }
-            } else {
-                console.error('Thread not found:', threadId)
-                this.showError('Thread not found')
+            // Select thread in the active pane
+            if (!this.activePane) {
+                this.initializePanes()
             }
+            await this.selectThreadInPane(this.activePaneId, threadId)
+            await this.saveUserPreference('selectedThreadId', threadId)
+            this.$nextTick(() => this.focusInput())
         },
 
         async loadThreads() {
@@ -696,61 +1146,41 @@ createApp({
         },
 
         async loadMessages() {
-            if (!this.currentThreadId) return
-            this.messagesLoading = true
-
-            try {
-                const response = await this.apiCall(
-                    `/api/threads/${this.currentThreadId}/messages`
-                )
-                const newMessages = response.messages || []
-
-                // Ensure all loaded messages have proper completion status
-                // Messages from database without explicit is_complete should be marked as complete
-                const processedMessages = newMessages.map(message => ({
-                    ...message,
-                    is_complete: message.is_complete !== false, // Default to true if not explicitly false
-                    formattedContent: this.formatMessage(message.content, message.annotations),
-                }))
-
-                // Direct assignment for reactivity
-                this.messages = processedMessages
-
-                // Use auto-scroll for long message history
-                this.autoScrollToBottom()
-
-                this.$nextTick(() => this.focusInput())
-            } catch (error) {
-                this.showError('Failed to load messages')
-            } finally {
-                this.messagesLoading = false
-            }
+            // Load messages for the active pane
+            if (!this.activePane || !this.activePane.threadId) return
+            await this.loadPaneMessages(this.activePaneId)
+            this.$nextTick(() => this.focusInput())
         },
 
         async sendMessage() {
+            const pane = this.activePane
+            if (!pane) return
+
             // Simple validation - thread must exist
             if (
-                (!this.messageInput.trim() && !this.attachedImage) ||
-                this.sending ||
-                !this.currentThreadId ||
-                !this.currentThread
+                (!pane.messageInput.trim() && !pane.attachedFile) ||
+                pane.sending ||
+                !pane.threadId ||
+                !pane.thread
             ) {
-                if (!this.currentThreadId || !this.currentThread) {
+                if (!pane.threadId || !pane.thread) {
                     this.showError('No thread selected')
                 }
                 return
             }
 
-            const message = this.messageInput.trim()
-            const hasImage = !!this.attachedImage
-            let attachedImageData = null
+            const message = pane.messageInput.trim()
+            const hasFile = !!pane.attachedFile
+            let attachedFileData = null
 
-            // Store image data before clearing
-            if (hasImage) {
-                attachedImageData = {
-                    preview: this.attachedImage.preview,
-                    name: this.attachedImage.name,
-                    file: this.attachedImage.file,
+            // Store file data before clearing
+            if (hasFile) {
+                attachedFileData = {
+                    preview: pane.attachedFile.preview,
+                    name: pane.attachedFile.name,
+                    file: pane.attachedFile.file,
+                    isImage: pane.attachedFile.isImage,
+                    mimeType: pane.attachedFile.mimeType,
                 }
             }
 
@@ -760,63 +1190,64 @@ createApp({
                 content: message,
                 created_at: new Date().toISOString(),
                 is_live: true,
-                message_type: hasImage ? 'image' : 'normal',
-                image_data: hasImage ? attachedImageData.preview : null,
-                image_name: hasImage ? attachedImageData.name : null,
+                message_type: hasFile ? (attachedFileData.isImage ? 'image' : 'file') : 'normal',
+                image_data: hasFile && attachedFileData.isImage ? attachedFileData.preview : null,
+                image_name: hasFile ? attachedFileData.name : null,
+                file_type: hasFile ? attachedFileData.mimeType : null,
                 is_complete: true,
             }
 
-            this.messages.push(userMessage)
+            pane.messages.push(userMessage)
 
             this.$nextTick(() => {
                 this.scrollToBottom(true)
             })
 
-            this.messageInput = ''
-            this.attachedImage = null
-            this.sending = true
+            pane.messageInput = ''
+            pane.attachedFile = null
+            pane.sending = true
 
             try {
-                // Update thread title on first message if still "New Conversation"
+                // Update thread title on first message if still "New Conversation" or "New Thread"
                 if (
-                    this.currentThread &&
-                    this.currentThread.title === 'New Conversation' &&
+                    pane.thread &&
+                    (pane.thread.title === 'New Conversation' || pane.thread.title === 'New Thread') &&
                     message.trim()
                 ) {
                     const newTitle =
                         message.substring(0, 50) + (message.length > 50 ? '...' : '')
-                    this.currentThread.title = newTitle
+                    pane.thread.title = newTitle
 
                     // Find and update in threads array
                     const threadIndex = this.threads.findIndex(
-                        t => t.id === this.currentThreadId
+                        t => t.id === pane.threadId
                     )
                     if (threadIndex !== -1) {
                         this.threads[threadIndex].title = newTitle
                     }
                 }
 
-                // Prepare message payload with image data if present
+                // Prepare message payload with file data if present
                 const messagePayload = {
                     message: message,
                 }
 
-                if (hasImage && attachedImageData) {
-                    // Send single image data
+                if (hasFile && attachedFileData) {
+                    // Send file data (works for images, PDFs, text files)
                     messagePayload.image = {
-                        data: attachedImageData.preview.split(',')[1], // Base64 data only
-                        filename: attachedImageData.name,
-                        mime_type: attachedImageData.file.type,
+                        data: attachedFileData.preview.split(',')[1], // Base64 data only
+                        filename: attachedFileData.name,
+                        mime_type: attachedFileData.mimeType,
                     }
                 }
 
                 // Always use streaming for better UX
-                await this.sendMessageWithStreaming(this.currentThreadId, messagePayload)
+                await this.sendMessageWithStreamingInPane(pane.id, messagePayload)
             } catch (error) {
                 this.showError(`Failed to send message: ${error.message}`)
             } finally {
-                this.sending = false
-                this.streaming = false
+                pane.sending = false
+                pane.streaming = false
 
                 // Keep focus on mobile to prevent keyboard closing
                 this.$nextTick(() => {
@@ -827,22 +1258,28 @@ createApp({
 
         // Method to stop streaming
         stopStreaming() {
-            if (this.currentStreamController) {
-                this.currentStreamController.abort()
-                this.currentStreamController = null
+            const pane = this.activePane
+            if (pane?.streamController) {
+                pane.streamController.abort()
+                pane.streamController = null
             }
-
-            this.streaming = false
+            if (pane) {
+                pane.streaming = false
+            }
         },
 
-        // Send message with Server-Sent Events streaming
-        async sendMessageWithStreaming(threadId, messagePayload) {
-            this.streaming = true
-            this.currentStreamController = new AbortController()
-            this.streamingBuffer = ''
+        // Send message with Server-Sent Events streaming (pane-aware)
+        async sendMessageWithStreamingInPane(paneId, messagePayload) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
+
+            pane.streaming = true
+            pane.streamController = new AbortController()
+            pane.streamingBuffer = ''
 
             let streamingMessageId = null
             let lastUpdateTime = 0
+            const streamingThrottleMs = 50
 
             try {
                 const headers = {
@@ -850,11 +1287,11 @@ createApp({
                     'Telegram-Init-Data': window.Telegram?.WebApp?.initData || '',
                 }
 
-                const response = await fetch(`/api/threads/${threadId}/messages`, {
+                const response = await fetch(`/api/threads/${pane.threadId}/messages`, {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify(messagePayload),
-                    signal: this.currentStreamController.signal,
+                    signal: pane.streamController.signal,
                 })
 
                 if (!response.ok) {
@@ -883,55 +1320,49 @@ createApp({
                             const data = JSON.parse(jsonData)
 
                             if (data.type === 'complete') {
-                                this.streaming = false
+                                pane.streaming = false
 
                                 if (streamingMessageId) {
-                                    const message = this.messages.find(
+                                    const message = pane.messages.find(
                                         m => m.id === streamingMessageId
                                     )
                                     if (message) {
                                         message.is_complete = true
                                         message.isStreaming = false
 
-                                        if (
-                                            message.annotations &&
-                                            message.annotations.length > 0
-                                        ) {
-                                            message.formattedContent = this.formatMessage(
-                                                message.content,
-                                                message.annotations
-                                            )
-                                        }
+                                        message.formattedContent = this.formatMessage(
+                                            message.content,
+                                            message.annotations
+                                        )
 
-                                        // Update thread token totals if usage data is available
                                         if (message.input_tokens || message.output_tokens) {
-                                            if (this.currentThread) {
-                                                this.currentThread.total_input_tokens =
-                                                    (this.currentThread.total_input_tokens ||
+                                            if (pane.thread) {
+                                                pane.thread.total_input_tokens =
+                                                    (pane.thread.total_input_tokens ||
                                                         0) + (message.input_tokens || 0)
-                                                this.currentThread.total_output_tokens =
-                                                    (this.currentThread.total_output_tokens ||
+                                                pane.thread.total_output_tokens =
+                                                    (pane.thread.total_output_tokens ||
                                                         0) + (message.output_tokens || 0)
 
                                                 // Also update in threads array
                                                 const threadIndex = this.threads.findIndex(
-                                                    t => t.id === this.currentThreadId
+                                                    t => t.id === pane.threadId
                                                 )
                                                 if (threadIndex !== -1) {
                                                     this.threads[
                                                         threadIndex
                                                     ].total_input_tokens =
-                                                        this.currentThread.total_input_tokens
+                                                        pane.thread.total_input_tokens
                                                     this.threads[
                                                         threadIndex
                                                     ].total_output_tokens =
-                                                        this.currentThread.total_output_tokens
+                                                        pane.thread.total_output_tokens
                                                 }
                                             }
                                         }
                                     }
 
-                                    this.generateTitleFromConversation(streamingMessageId)
+                                    this.generateTitleFromConversationInPane(paneId, streamingMessageId)
                                 }
 
                                 return
@@ -951,15 +1382,15 @@ createApp({
                                         is_complete: false,
                                         isStreaming: true,
                                     }
-                                    this.messages.push(assistantMessage)
+                                    pane.messages.push(assistantMessage)
                                     streamingMessageId = data.id
 
                                     this.$nextTick(() => this.scrollToBottom(false))
                                 } else {
-                                    this.streamingBuffer = data.content || ''
+                                    pane.streamingBuffer = data.content || ''
 
                                     // Update meta information if available
-                                    const message = this.messages.find(
+                                    const message = pane.messages.find(
                                         m => m.id === streamingMessageId
                                     )
 
@@ -983,25 +1414,34 @@ createApp({
                                         message.finish_reason = data.finish_reason
                                     }
 
+                                    if (message && data.annotations !== undefined) {
+                                        message.annotations = data.annotations
+                                    }
+                                    message.formattedContent = this.formatMessage(
+                                        message.content,
+                                        message.annotations
+                                    )
                                     const now = Date.now()
 
-                                    if (now - lastUpdateTime >= this.streamingThrottleMs) {
-                                        this.updateStreamingMessage(
+                                    if (now - lastUpdateTime >= streamingThrottleMs) {
+                                        this.updateStreamingMessageInPane(
+                                            paneId,
                                             streamingMessageId,
-                                            this.streamingBuffer
+                                            pane.streamingBuffer
                                         )
                                         lastUpdateTime = now
                                     } else {
-                                        if (this.streamingUpdateTimer) {
-                                            clearTimeout(this.streamingUpdateTimer)
+                                        if (pane.streamingUpdateTimer) {
+                                            clearTimeout(pane.streamingUpdateTimer)
                                         }
-                                        this.streamingUpdateTimer = setTimeout(() => {
-                                            this.updateStreamingMessage(
+                                        pane.streamingUpdateTimer = setTimeout(() => {
+                                            this.updateStreamingMessageInPane(
+                                                paneId,
                                                 streamingMessageId,
-                                                this.streamingBuffer
+                                                pane.streamingBuffer
                                             )
                                             lastUpdateTime = Date.now()
-                                        }, this.streamingThrottleMs - (now - lastUpdateTime))
+                                        }, streamingThrottleMs - (now - lastUpdateTime))
                                     }
                                 }
                             }
@@ -1019,7 +1459,7 @@ createApp({
                 ) {
                     // Add interruption message to the streaming response
                     if (streamingMessageId) {
-                        const message = this.messages.find(m => m.id === streamingMessageId)
+                        const message = pane.messages.find(m => m.id === streamingMessageId)
                         if (message && message.content) {
                             message.content += '\n\n_[Streaming was interrupted by user]_'
                             message.is_complete = true
@@ -1030,28 +1470,28 @@ createApp({
                     throw error
                 }
             } finally {
-                this.streaming = false
-                this.currentStreamController = null
+                pane.streaming = false
+                pane.streamController = null
 
                 // Clean up streaming state and ensure final update
-                if (this.streamingUpdateTimer) {
-                    clearTimeout(this.streamingUpdateTimer)
-                    this.streamingUpdateTimer = null
+                if (pane.streamingUpdateTimer) {
+                    clearTimeout(pane.streamingUpdateTimer)
+                    pane.streamingUpdateTimer = null
                 }
 
-                if (streamingMessageId && this.streamingBuffer) {
+                if (streamingMessageId && pane.streamingBuffer) {
                     // Final update with any remaining buffer content
-                    this.updateStreamingMessage(streamingMessageId, this.streamingBuffer)
+                    this.updateStreamingMessageInPane(paneId, streamingMessageId, pane.streamingBuffer)
                 }
 
                 if (streamingMessageId) {
-                    const message = this.messages.find(m => m.id === streamingMessageId)
+                    const message = pane.messages.find(m => m.id === streamingMessageId)
                     if (message) {
                         message.isStreaming = false
                     }
                 }
 
-                this.streamingBuffer = ''
+                pane.streamingBuffer = ''
             }
         },
 
@@ -1106,7 +1546,6 @@ createApp({
         },
 
         toggleTool(toolName) {
-
             const tools = [...this.threadSettings.enabled_tools]
             const index = tools.indexOf(toolName)
 
@@ -1500,19 +1939,23 @@ createApp({
             this.showArchivedSection = !this.showArchivedSection
         },
 
-        scrollToBottom(smooth = true) {
-            const container = this.$refs.messagesContainer
-            if (container) {
-                container.scrollTo({
-                    top: container.scrollHeight,
+        scrollToBottom(smooth = true, paneId = null) {
+            const targetPaneId = paneId || this.activePaneId
+            const refName = 'messagesContainer_' + targetPaneId
+            const container = this.$refs[refName]
+            // Handle both array (from v-for) and single element refs
+            const el = Array.isArray(container) ? container[0] : container
+            if (el) {
+                el.scrollTo({
+                    top: el.scrollHeight,
                     behavior: smooth ? 'smooth' : 'auto',
                 })
             }
         },
 
-        autoScrollToBottom() {
+        autoScrollToBottom(paneId = null) {
             this.$nextTick(() => {
-                setTimeout(() => this.scrollToBottom(false), 100)
+                setTimeout(() => this.scrollToBottom(false, paneId), 100)
             })
         },
 
@@ -1588,6 +2031,84 @@ createApp({
             }
         },
 
+        // Pane-aware streaming message update
+        updateStreamingMessageInPane(paneId, messageId, content) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
+
+            const message = pane.messages.find(m => m.id === messageId)
+            if (message) {
+                message.content = content
+                if (message.isStreaming && content && content.length > 0) {
+                    message.displayContent =
+                        content + '<span class="streaming-indicator">▌</span>'
+                } else {
+                    message.displayContent = content
+                }
+
+                // Auto-scroll if this is the active pane
+                if (pane.id === this.activePaneId) {
+                    this.$nextTick(() => {
+                        const container = this.$refs[`messagesContainer_${paneId}`]?.[0] || this.$refs.messagesContainer
+                        if (container) {
+                            const isNearBottom =
+                                container.scrollHeight -
+                                    container.scrollTop -
+                                    container.clientHeight <
+                                100
+                            if (isNearBottom) {
+                                this.scrollToBottom(true)
+                            }
+                        }
+                    })
+                }
+            }
+        },
+
+        // Pane-aware title generation
+        async generateTitleFromConversationInPane(paneId, assistantMessageId) {
+            const pane = this.getPaneById(paneId)
+            if (!pane) return
+
+            // Only update if this is the first message exchange and title is still "New Thread"
+            if (!pane.thread || pane.thread.title !== 'New Thread') return
+
+            // Check if we have exactly 2 messages (user question + assistant response)
+            if (pane.messages.length !== 2) return
+
+            const userMessage = pane.messages.find(m => m.role === 'user')
+            const assistantMessage = pane.messages.find(m => m.id === assistantMessageId)
+
+            if (!userMessage || !assistantMessage) return
+
+            try {
+                const response = await this.apiCall(
+                    `/api/threads/${pane.threadId}/generate-title`,
+                    {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            question: userMessage.content,
+                            response: assistantMessage.content,
+                        }),
+                    }
+                )
+
+                const newTitle = response.data?.title || response.title
+                if (newTitle) {
+                    pane.thread.title = newTitle
+
+                    const threadIndex = this.threads.findIndex(
+                        t => t.id === pane.threadId
+                    )
+                    if (threadIndex !== -1) {
+                        this.threads[threadIndex].title = newTitle
+                    }
+                }
+            } catch (error) {
+                // Silent failure for title generation
+            }
+        },
+
         // DeviceStorage integration methods
         async loadUserPreferences() {
             const [
@@ -1596,12 +2117,16 @@ createApp({
                 defaultTemperature,
                 enableStreaming,
                 selectedThreadId,
+                sidebarCollapsed,
+                paneLayout,
             ] = await Promise.all([
                 this.deviceStorage.getItem('selectedModel', 'gpt-4o'),
                 this.deviceStorage.getItem('selectedRole', null),
                 this.deviceStorage.getItem('defaultTemperature', 1.0),
                 this.deviceStorage.getItem('enableStreaming', true),
                 this.deviceStorage.getItem('selectedThreadId', null),
+                this.deviceStorage.getItem('sidebarCollapsed', false),
+                this.deviceStorage.getItem('paneLayout', null),
             ])
 
             this.userPreferences = {
@@ -1610,6 +2135,8 @@ createApp({
                 defaultTemperature,
                 enableStreaming,
                 selectedThreadId,
+                sidebarCollapsed,
+                paneLayout,
             }
         },
 
@@ -1681,26 +2208,54 @@ createApp({
             event.target.focus()
         },
 
-        selectImage() {
+        selectFile() {
             const input = document.createElement('input')
             input.type = 'file'
-            input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp'
-            input.addEventListener('change', event => this.handleImageSelect(event))
+            // Combine MIME types and extensions for best browser support
+            input.setAttribute('accept', 
+                'image/jpeg,image/png,image/gif,image/webp,' +
+                'application/pdf,text/plain,text/csv,' +
+                '.jpg,.jpeg,.png,.gif,.webp,' +
+                '.pdf,.txt,.csv,' +
+                '.py,.php,.go,.js,.vue,.ts,.tsx,' +
+                '.md,.json,.yaml,.yml,.xml,.html,.css,.sql,.sh'
+            )
+            input.style.display = 'none'
+            document.body.appendChild(input)
+            
+            input.addEventListener('change', event => {
+                this.handleFileSelect(event)
+                document.body.removeChild(input)
+            })
+            
+            input.addEventListener('cancel', () => {
+                document.body.removeChild(input)
+            })
+            
             input.click()
         },
 
-        handleImageSelect(event) {
+        handleFileSelect(event) {
             const file = event.target.files[0]
             if (!file) return
 
-            if (!this.validateImageFile(file)) return
+            if (!this.validateFile(file)) {
+                // Validation failed - file not attached, user can try again
+                return
+            }
 
             const reader = new FileReader()
+            const isImage = file.type.startsWith('image/')
+            // Determine effective mime type (browsers may report code files as text/plain)
+            const effectiveMimeType = this.getEffectiveMimeType(file)
+
             reader.onload = e => {
-                this.attachedImage = {
+                this.attachedFile = {
                     file: file,
                     name: file.name,
                     size: file.size,
+                    mimeType: effectiveMimeType,
+                    isImage: isImage,
                     preview: e.target.result,
                 }
 
@@ -1709,29 +2264,89 @@ createApp({
             reader.readAsDataURL(file)
         },
 
-        validateImageFile(file) {
-            const allowedTypes = [
+        // Get effective mime type based on file extension (browsers often report code as text/plain)
+        getEffectiveMimeType(file) {
+            const ext = file.name.split('.').pop()?.toLowerCase()
+            const extToMime = {
+                'py': 'text/x-python',
+                'php': 'text/x-php',
+                'go': 'text/x-go',
+                'js': 'text/javascript',
+                'vue': 'text/x-vue',
+                'ts': 'text/typescript',
+                'tsx': 'text/typescript',
+                'csv': 'text/csv',
+                'md': 'text/markdown',
+                'json': 'application/json',
+                'yaml': 'text/yaml',
+                'yml': 'text/yaml',
+                'xml': 'text/xml',
+                'html': 'text/html',
+                'css': 'text/css',
+                'sql': 'text/x-sql',
+                'sh': 'text/x-shellscript',
+                'bash': 'text/x-shellscript',
+            }
+            return extToMime[ext] || file.type
+        },
+
+        validateFile(file) {
+            const allowedMimeTypes = [
                 'image/jpeg',
                 'image/jpg',
                 'image/png',
                 'image/gif',
                 'image/webp',
+                'application/pdf',
+                'text/plain',
+                'text/csv',
+                'text/x-python',
+                'text/x-php',
+                'text/x-go',
+                'text/javascript',
+                'application/javascript',
+                'text/x-vue',
+                'text/typescript',
+                'text/markdown',
+                'application/json',
+                'text/yaml',
+                'text/xml',
+                'text/html',
+                'text/css',
+                'text/x-sql',
+                'text/x-shellscript',
             ]
-            if (!allowedTypes.includes(file.type)) {
-                this.showError('File type not supported. Please use JPEG, PNG, GIF, or WebP.')
+            // Also check by extension for code files (browsers may report as text/plain or octet-stream)
+            const allowedExtensions = [
+                'jpg', 'jpeg', 'png', 'gif', 'webp',
+                'pdf', 'txt', 'csv',
+                'py', 'php', 'go', 'js', 'vue', 'ts', 'tsx',
+                'md', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'sql', 'sh', 'bash'
+            ]
+            const ext = file.name.split('.').pop()?.toLowerCase()
+            
+            if (!allowedMimeTypes.includes(file.type) && !allowedExtensions.includes(ext)) {
+                this.showError('File type not supported. Allowed: images, PDF, text, CSV, and source code files.')
                 return false
             }
 
-            if (file.size > 10 * 1024 * 1024) {
-                this.showError('File is too large. Maximum size is 10MB.')
+            const isImageOrPdf = file.type.startsWith('image/') || 
+                                 file.type === 'application/pdf' || 
+                                 ext === 'pdf' ||
+                                 ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+            const maxSize = isImageOrPdf ? 10 * 1024 * 1024 : 2 * 1024 * 1024
+            const maxSizeLabel = isImageOrPdf ? '10MB' : '2MB'
+
+            if (file.size > maxSize) {
+                this.showError(`File is too large. Maximum size for ${isImageOrPdf ? 'images/PDFs' : 'text files'} is ${maxSizeLabel}.`)
                 return false
             }
 
             return true
         },
 
-        clearAttachedImage() {
-            this.attachedImage = null
+        clearAttachedFile() {
+            this.attachedFile = null
         },
 
         formatFileSize(bytes) {
@@ -1740,6 +2355,53 @@ createApp({
             const sizes = ['B', 'KB', 'MB', 'GB']
             const i = Math.floor(Math.log(bytes) / Math.log(k))
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+        },
+
+        // Helper to get file icon based on mime type
+        getFileIcon(mimeType) {
+            if (mimeType?.startsWith('image/')) return 'fas fa-image'
+            if (mimeType === 'application/pdf') return 'fas fa-file-pdf'
+            if (mimeType === 'text/csv') return 'fas fa-file-csv'
+            if (mimeType?.includes('python')) return 'fab fa-python'
+            if (mimeType?.includes('php')) return 'fab fa-php'
+            if (mimeType?.includes('javascript') || mimeType?.includes('typescript')) return 'fab fa-js'
+            if (mimeType?.includes('json')) return 'fas fa-brackets-curly'
+            if (mimeType?.includes('html')) return 'fab fa-html5'
+            if (mimeType?.includes('css')) return 'fab fa-css3'
+            if (mimeType?.includes('markdown')) return 'fas fa-file-alt'
+            if (mimeType?.startsWith('text/')) return 'fas fa-file-code'
+            return 'fas fa-file'
+        },
+
+        // Helper to get file icon class with color for templates
+        // Accepts either a mimeType or a filename
+        getFileIconClass(input) {
+            if (!input) return 'fas fa-file text-tg-hint'
+
+            // If input looks like a filename (has extension), extract extension
+            let ext = ''
+            if (input.includes('.') && !input.includes('/')) {
+                ext = input.split('.').pop().toLowerCase()
+            }
+
+            // Check by extension first
+            if (ext === 'pdf' || input === 'application/pdf') return 'fas fa-file-pdf text-red-500'
+            if (ext === 'csv' || input === 'text/csv') return 'fas fa-file-csv text-green-500'
+            if (ext === 'py' || input?.includes('python')) return 'fab fa-python text-yellow-500'
+            if (ext === 'php' || input?.includes('php')) return 'fab fa-php text-purple-500'
+            if (['js', 'jsx'].includes(ext) || input?.includes('javascript')) return 'fab fa-js text-yellow-400'
+            if (['ts', 'tsx'].includes(ext) || input?.includes('typescript')) return 'fas fa-code text-blue-500'
+            if (ext === 'vue' || input?.includes('vue')) return 'fab fa-vuejs text-green-500'
+            if (ext === 'go' || input?.includes('go')) return 'fas fa-code text-cyan-500'
+            if (ext === 'json' || input?.includes('json')) return 'fas fa-file-code text-yellow-600'
+            if (ext === 'html' || input?.includes('html')) return 'fab fa-html5 text-orange-500'
+            if (ext === 'css' || input?.includes('css')) return 'fab fa-css3 text-blue-400'
+            if (ext === 'sql' || input?.includes('sql')) return 'fas fa-database text-blue-600'
+            if (ext === 'sh' || input?.includes('shell')) return 'fas fa-terminal text-gray-400'
+            if (['md', 'markdown'].includes(ext) || input?.includes('markdown')) return 'fas fa-file-alt text-tg-hint'
+            if (['xml', 'yaml', 'yml'].includes(ext)) return 'fas fa-file-code text-orange-400'
+            if (input?.startsWith('text/')) return 'fas fa-file-code text-tg-hint'
+            return 'fas fa-file text-tg-hint'
         },
 
         // Handle window resize to adapt sidebar behavior

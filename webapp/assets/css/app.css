@@ -460,3 +460,185 @@ body {
     opacity: 1;
   }
 }
+
+/* ==================== SPLIT PANE STYLES ==================== */
+
+/* Pane container */
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  transition: width 0.15s ease-out;
+}
+
+/* Active pane indicator */
+.pane-active {
+  z-index: 1;
+}
+
+.pane-active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--tg-theme-link-color);
+  z-index: 10;
+}
+
+/* Pane divider */
+.pane-divider {
+  flex-shrink: 0;
+  width: 4px;
+  background-color: color-mix(in srgb, var(--tg-theme-hint-color) 20%, transparent);
+  cursor: col-resize;
+  transition: background-color 0.15s ease;
+  position: relative;
+}
+
+.pane-divider:hover {
+  background-color: var(--tg-theme-link-color);
+}
+
+.pane-divider:active,
+.pane-divider.dragging {
+  background-color: var(--tg-theme-link-color);
+}
+
+/* Expand touch/click area for divider */
+.pane-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+
+/* Drag handle visual indicator */
+.pane-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 24px;
+  background-color: var(--tg-theme-hint-color);
+  border-radius: 1px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.pane-divider:hover::after {
+  opacity: 0.6;
+}
+
+/* Prevent text selection during drag */
+body.pane-dragging {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.pane-dragging * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* Pane input area */
+.pane-input-area {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+
+/* Sidebar collapse transition */
+.sidebar {
+  transition: width 0.3s ease, transform 0.3s ease;
+}
+
+/* Sidebar expand button animation */
+.sidebar-expand-btn {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.sidebar-expand-btn:hover {
+  transform: translateX(2px);
+}
+
+/* Mobile: disable split panes */
+@media (max-width: 1023px) {
+  /* Force single pane on mobile */
+  .pane {
+    width: 100% !important;
+    flex: 1 !important;
+  }
+  
+  /* Hide dividers on mobile */
+  .pane-divider {
+    display: none !important;
+  }
+  
+  /* Hide split/close buttons on mobile (already handled by lg:block) */
+  
+  /* Hide thread selector if only one pane */
+  .pane-thread-selector-mobile {
+    display: none;
+  }
+}
+
+/* Desktop: show split controls */
+@media (min-width: 1024px) {
+  /* Smooth pane width transitions when not dragging */
+  .pane:not(.dragging) {
+    transition: width 0.15s ease-out;
+  }
+  
+  /* Remove transition during drag for responsive feel */
+  body.pane-dragging .pane {
+    transition: none !important;
+  }
+}
+
+/* Compact header for multiple panes */
+.pane-header-compact {
+  padding: 0.5rem 0.75rem;
+}
+
+/* Thread selector in pane header */
+.pane-thread-selector {
+  max-width: 140px;
+  font-size: 0.75rem;
+}
+
+/* Animation for pane open/close */
+@keyframes paneSlideIn {
+  from {
+    opacity: 0;
+    width: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes paneSlideOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    width: 0;
+  }
+}
+
+.pane-enter-active {
+  animation: paneSlideIn 0.2s ease-out;
+}
+
+.pane-leave-active {
+  animation: paneSlideOut 0.2s ease-in;
+}
