@@ -832,10 +832,14 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 	var imagePath, filename *string
 
 	if imageURL != "" {
-		messageType = "image"
 		imagePath = &imageURL
 		if req.Image != nil {
-			filename = &req.Image.Filename
+			if strings.HasPrefix(req.Image.MimeType, "image/") {
+				messageType = "image"
+			} else {
+				messageType = "file"
+				filename = &req.Image.Filename
+			}
 		}
 	}
 
@@ -1829,7 +1833,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const maxUploadSize = 10 << 20 // 10MB
+	const maxUploadSize = 10 << 20 // 10MB for form parsing
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		s.writeJSONError(w, http.StatusBadRequest, "Failed to parse form data or file too large")
 		return
@@ -1837,20 +1841,29 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("image")
 	if err != nil {
-		s.writeJSONError(w, http.StatusBadRequest, "No image file found in request")
+		s.writeJSONError(w, http.StatusBadRequest, "No file found in request")
 		return
 	}
 	defer file.Close()
 
-	// Enhanced file validation
 	if header.Filename == "" {
 		s.writeJSONError(w, http.StatusBadRequest, "Invalid filename")
 		return
 	}
 
-	// Validate file size (double-check after form parsing)
-	if header.Size > maxUploadSize {
-		s.writeJSONError(w, http.StatusBadRequest, "File size too large. Maximum 10MB allowed")
+	contentType := header.Header.Get("Content-Type")
+	isImageOrPdf := strings.HasPrefix(contentType, "image/") || contentType == "application/pdf"
+	maxFileSize := int64(10 << 20) // 10MB for images/PDFs
+	if !isImageOrPdf {
+		maxFileSize = 2 << 20 // 2MB for text files
+	}
+
+	if header.Size > maxFileSize {
+		if isImageOrPdf {
+			s.writeJSONError(w, http.StatusBadRequest, "File too large. Maximum 10MB for images/PDFs")
+		} else {
+			s.writeJSONError(w, http.StatusBadRequest, "File too large. Maximum 2MB for text files")
+		}
 		return
 	}
 
@@ -1859,8 +1872,6 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Basic file type validation
-	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		s.writeJSONError(w, http.StatusBadRequest, "Missing content type")
 		return
@@ -1868,14 +1879,32 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Validate content type
 	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
+		"image/jpeg":         true,
+		"image/png":          true,
+		"image/gif":          true,
+		"image/webp":         true,
+		"application/pdf":    true,
+		"text/plain":         true,
+		"text/csv":           true,
+		"text/x-python":      true,
+		"text/x-php":         true,
+		"text/x-go":          true,
+		"text/javascript":    true,
+		"application/javascript": true,
+		"text/x-vue":         true,
+		"text/typescript":    true,
+		"text/markdown":      true,
+		"application/json":   true,
+		"text/yaml":          true,
+		"text/xml":           true,
+		"text/html":          true,
+		"text/css":           true,
+		"text/x-sql":         true,
+		"text/x-shellscript": true,
 	}
 
 	if !validTypes[contentType] {
-		s.writeJSONError(w, http.StatusBadRequest, "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed")
+		s.writeJSONError(w, http.StatusBadRequest, "Invalid file type. Allowed: images, PDF, text, CSV, and source code files")
 		return
 	}
 
@@ -1884,17 +1913,7 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 	timestamp := time.Now().Unix()
 
 	// Determine file extension based on content type
-	var fileExt string
-	switch contentType {
-	case "image/jpeg":
-		fileExt = ".jpg"
-	case "image/png":
-		fileExt = ".png"
-	case "image/gif":
-		fileExt = ".gif"
-	case "image/webp":
-		fileExt = ".webp"
-	}
+	fileExt := getFileExtension(contentType)
 
 	filename := fmt.Sprintf("%d_%s%s", timestamp, uniqueID, fileExt)
 	filePath := fmt.Sprintf("uploads/%s", filename)
@@ -2053,12 +2072,10 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat, log
 
 		var message openai.ChatMessage
 
-		// Handle image attachments like Telegram bot
 		if msg.ImagePath != nil {
 			reader, err := os.Open(*msg.ImagePath)
 			if err != nil {
-				logger.Warn("Error opening image file", "error=", err)
-				// Still add text content if available
+				logger.Warn("Error opening file", "error=", err)
 				if *msg.Content != "" {
 					history = append(history, openai.ChatMessage{
 						Role:    openai.ChatMessageRole(msg.Role),
@@ -2071,8 +2088,7 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat, log
 
 			bytes, err := io.ReadAll(reader)
 			if err != nil {
-				logger.Warn("Error reading image file", "error=", err)
-				// Still add text content if available
+				logger.Warn("Error reading file content", "error=", err)
 				if *msg.Content != "" {
 					history = append(history, openai.ChatMessage{
 						Role:    openai.ChatMessageRole(msg.Role),
@@ -2082,24 +2098,36 @@ func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat, log
 				continue
 			}
 
-			// Add text content first (without the [IMAGE: ...] reference)
-			textContent := strings.TrimSpace(*msg.Content)
-			// Remove any [IMAGE: ...] references from the text content
-			textContent = regexp.MustCompile(`\n*\[IMAGE: [^\]]+\]\s*`).ReplaceAllString(textContent, "")
-			textContent = strings.TrimSpace(textContent)
-
-			// Create content array starting with text
-			content := []openai.ChatMessageContent{{Type: "text", Text: &textContent}}
-
-			// Add image content
-			filename := "image.jpg"
-			if msg.Filename != nil {
-				filename = *msg.Filename
+			if msg.MessageType == "file" {
+				filename := "file"
+				if msg.Filename != nil {
+					filename = *msg.Filename
+				}
+				isPDF := strings.HasSuffix(strings.ToLower(filename), ".pdf")
+				if isPDF {
+					content := []openai.ChatMessageContent{{Type: "text", Text: msg.Content}}
+					content = append(content, openai.NewChatMessageContentFileWithBytes(bytes, filename))
+					logger.Info("Adding PDF file to history", "filename=", filename)
+					message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
+				} else {
+					ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+					if ext == "" {
+						ext = "text"
+					}
+					textContent := *msg.Content
+					if textContent != "" {
+						textContent += "\n\n"
+					}
+					textContent += fmt.Sprintf("```%s\n%s\n```\n[File: %s]", ext, string(bytes), filename)
+					logger.Info("Adding text file to history", "filename=", filename)
+					message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: textContent}
+				}
+			} else {
+				content := []openai.ChatMessageContent{{Type: "text", Text: msg.Content}}
+				content = append(content, openai.NewChatMessageContentWithBytes(bytes))
+				logger.Info("Adding image to history")
+				message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
 			}
-			content = append(content, openai.NewChatMessageContentWithBytes(bytes))
-
-			logger.Info("Adding image message to history", "filename=", filename)
-			message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
 		} else {
 			// Regular text message
 			message = openai.ChatMessage{
@@ -2459,7 +2487,8 @@ func (s *Server) estimateTokenCount(text string) int {
 	return charEstimate
 }
 
-// saveBase64Image saves base64 image data to a file and returns the URL
+// saveBase64Image saves base64 file data to a file and returns the URL
+// Supports images, PDFs, and text files
 func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) (string, error) {
 	// Decode base64 data
 	data, err := base64.StdEncoding.DecodeString(base64Data)
@@ -2470,18 +2499,13 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	// Generate unique filename
 	timestamp := time.Now().Format("20060102-150405")
 	randomID := uuid.New().String()[:8]
-	ext := ".jpg"
-
-	switch mimeType {
-	case "image/png":
-		ext = ".png"
-	case "image/gif":
-		ext = ".gif"
-	case "image/webp":
-		ext = ".webp"
+	ext := getFileExtension(mimeType)
+	prefix := "image"
+	if !strings.HasPrefix(mimeType, "image/") {
+		prefix = "file"
 	}
 
-	filename := fmt.Sprintf("image_%s_%s%s", timestamp, randomID, ext)
+	filename := fmt.Sprintf("%s_%s_%s%s", prefix, timestamp, randomID, ext)
 
 	// Ensure uploads directory exists
 	uploadsDir := "uploads"
@@ -2498,4 +2522,36 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 	// Return file system path for database storage
 	// The frontend will get the URL path from the API response
 	return filePath, nil
+}
+
+// getFileExtension returns the appropriate file extension for a given mime type
+func getFileExtension(mimeType string) string {
+	extensions := map[string]string{
+		"image/jpeg":           ".jpg",
+		"image/png":            ".png",
+		"image/gif":            ".gif",
+		"image/webp":           ".webp",
+		"application/pdf":      ".pdf",
+		"text/plain":           ".txt",
+		"text/csv":             ".csv",
+		"text/x-python":        ".py",
+		"text/x-php":           ".php",
+		"text/x-go":            ".go",
+		"text/javascript":      ".js",
+		"application/javascript": ".js",
+		"text/x-vue":           ".vue",
+		"text/typescript":      ".ts",
+		"text/markdown":        ".md",
+		"application/json":     ".json",
+		"text/yaml":            ".yaml",
+		"text/xml":             ".xml",
+		"text/html":            ".html",
+		"text/css":             ".css",
+		"text/x-sql":           ".sql",
+		"text/x-shellscript":   ".sh",
+	}
+	if ext, ok := extensions[mimeType]; ok {
+		return ext
+	}
+	return ".bin"
 }

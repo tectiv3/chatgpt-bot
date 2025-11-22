@@ -35,7 +35,7 @@
                 },
             }
         </script>
-        <link rel="stylesheet" href="/assets/css/app.css?104" />
+        <link rel="stylesheet" href="/assets/css/app.css?105" />
         <link
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
             rel="stylesheet"
@@ -308,8 +308,8 @@
                     <!-- Pane Loop -->
                     <template v-for="(pane, paneIndex) in panes" :key="pane.id">
                         <!-- Divider between panes -->
-                        <div 
-                            v-if="paneIndex > 0" 
+                        <div
+                            v-if="paneIndex > 0"
                             class="pane-divider w-1 bg-white/10 hover:bg-tg-link cursor-col-resize flex-shrink-0 transition-colors relative group"
                             @mousedown="startDividerDrag($event, paneIndex - 1)"
                             @touchstart="startDividerDrag($event, paneIndex - 1)"
@@ -318,7 +318,7 @@
                         </div>
 
                         <!-- Single Pane -->
-                        <div 
+                        <div
                             class="pane flex flex-col min-w-0 transition-all"
                             :style="{ width: pane.widthPercent + '%' }"
                             :class="{ 'pane-active': pane.id === activePaneId }"
@@ -380,8 +380,8 @@
                                         <button
                                             @click="toggleToolInPane(pane.id, 'search')"
                                             class="flex items-center gap-0.5 px-2 py-1 rounded-full text-xs transition-all"
-                                            :class="pane.settings?.enabled_tools?.includes('search') 
-                                                ? 'bg-tg-link text-white' 
+                                            :class="pane.settings?.enabled_tools?.includes('search')
+                                                ? 'bg-tg-link text-white'
                                                 : 'bg-tg-secondary text-tg-hint hover:bg-tg-hint/10'"
                                             title="Toggle web search"
                                         >
@@ -486,8 +486,14 @@
                                                 </button>
 
                                                 <!-- Image attachment -->
-                                                <div v-if="message.image_data" class="mb-3">
+                                                <div v-if="message.image_data && message.message_type !== 'file'" class="mb-3">
                                                     <img :src="message.image_data" :alt="message.image_name" class="max-w-full h-auto rounded-lg" />
+                                                </div>
+
+                                                <!-- File attachment -->
+                                                <div v-if="message.image_data && message.message_type === 'file'" class="mb-3 flex items-center gap-2 p-2 rounded-lg" :class="message.role === 'user' ? 'bg-white/10' : 'bg-tg-bg'">
+                                                    <i :class="getFileIconClass(message.image_name)" class="text-xl"></i>
+                                                    <span class="text-sm truncate">[[ message.image_name || 'File' ]]</span>
                                                 </div>
 
                                                 <!-- Message text -->
@@ -538,12 +544,17 @@
 
                             <!-- Pane Input Area -->
                             <div v-if="pane.threadId" class="pane-input-area bg-tg-primary border-t border-white/10">
-                                <!-- Image preview -->
-                                <div v-if="pane.attachedImage" class="p-2 pb-0">
+                                <!-- File preview -->
+                                <div v-if="pane.attachedFile" class="p-2 pb-0">
                                     <div class="flex items-center gap-2 bg-tg-secondary rounded-lg p-2">
-                                        <img :src="pane.attachedImage.preview" class="w-10 h-10 object-cover rounded" />
-                                        <span class="text-xs text-tg-text truncate flex-1">[[ pane.attachedImage.name ]]</span>
-                                        <button @click="clearAttachedImageInPane(pane.id)" class="p-1 text-tg-hint hover:text-tg-text">
+                                        <!-- Image preview -->
+                                        <img v-if="pane.attachedFile.isImage" :src="pane.attachedFile.preview" class="w-10 h-10 object-cover rounded" />
+                                        <!-- File icon for non-images -->
+                                        <div v-else class="w-10 h-10 rounded bg-tg-hint/20 flex items-center justify-center">
+                                            <i class="fas" :class="getFileIconClass(pane.attachedFile.mimeType)"></i>
+                                        </div>
+                                        <span class="text-xs text-tg-text truncate flex-1">[[ pane.attachedFile.name ]]</span>
+                                        <button @click="clearAttachedFileInPane(pane.id)" class="p-1 text-tg-hint hover:text-tg-text">
                                             <i class="fas fa-times"></i>
                                         </button>
                                     </div>
@@ -552,11 +563,11 @@
                                 <!-- Input -->
                                 <div class="p-2 flex items-center gap-2">
                                     <button
-                                        @click="setActivePane(pane.id); selectImage()"
+                                        @click="setActivePane(pane.id); selectFile()"
                                         class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
-                                        :class="pane.attachedImage ? 'bg-tg-link text-white' : 'bg-tg-secondary text-tg-hint hover:text-tg-text'"
+                                        :class="pane.attachedFile ? 'bg-tg-link text-white' : 'bg-tg-secondary text-tg-hint hover:text-tg-text'"
                                     >
-                                        <i class="fas fa-image"></i>
+                                        <i class="fas fa-paperclip"></i>
                                     </button>
 
                                     <textarea
@@ -735,8 +746,8 @@
                                 :key="thread.id"
                                 @click="selectThreadForPane(threadSelectorPaneId, thread.id)"
                                 class="w-full text-left p-3 rounded-lg transition-colors"
-                                :class="getPaneById(threadSelectorPaneId)?.threadId === thread.id 
-                                    ? 'bg-tg-link/20 border border-tg-link/30' 
+                                :class="getPaneById(threadSelectorPaneId)?.threadId === thread.id
+                                    ? 'bg-tg-link/20 border border-tg-link/30'
                                     : 'hover:bg-tg-secondary'"
                             >
                                 <div class="font-medium text-sm text-tg-text truncate">[[ thread.title ]]</div>
@@ -991,6 +1002,6 @@
             </div>
         </div>
 
-        <script src="/assets/js/app.js?104"></script>
+        <script src="/assets/js/app.js?105"></script>
     </body>
 </html>

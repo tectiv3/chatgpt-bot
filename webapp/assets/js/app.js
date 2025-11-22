@@ -228,13 +228,13 @@ createApp({
             }
         },
 
-        attachedImage: {
+        attachedFile: {
             get() {
-                return this.activePane?.attachedImage || null
+                return this.activePane?.attachedFile || null
             },
             set(value) {
                 if (this.activePane) {
-                    this.activePane.attachedImage = value
+                    this.activePane.attachedFile = value
                 }
             }
         },
@@ -401,7 +401,7 @@ createApp({
 
     methods: {
         // ==================== PANE MANAGEMENT ====================
-        
+
         createPane(threadId = null) {
             const paneId = 'pane_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
             const pane = {
@@ -410,7 +410,7 @@ createApp({
                 thread: null,
                 messages: [],
                 messageInput: '',
-                attachedImage: null,
+                attachedFile: null,
                 sending: false,
                 streaming: false,
                 streamController: null,
@@ -446,15 +446,15 @@ createApp({
         splitPane(sourcePaneId = null) {
             if (!this.canSplitPane) return
 
-            const sourcePane = sourcePaneId 
-                ? this.panes.find(p => p.id === sourcePaneId) 
+            const sourcePane = sourcePaneId
+                ? this.panes.find(p => p.id === sourcePaneId)
                 : this.activePane
-            
+
             if (!sourcePane) return
 
             // Create new pane
             const newPane = this.createPane()
-            
+
             // Find source pane index and insert after it
             const sourceIndex = this.panes.findIndex(p => p.id === sourcePane.id)
             this.panes.splice(sourceIndex + 1, 0, newPane)
@@ -522,7 +522,7 @@ createApp({
         // Divider dragging
         startDividerDrag(event, paneIndex) {
             if (this.panes.length < 2) return
-            
+
             this.dividerDragging = true
             this.dragStartX = event.clientX || event.touches?.[0]?.clientX
             this.dragPaneIndex = paneIndex
@@ -531,7 +531,7 @@ createApp({
             document.addEventListener('mouseup', this.stopDividerDrag)
             document.addEventListener('touchmove', this.onDividerDrag)
             document.addEventListener('touchend', this.stopDividerDrag)
-            
+
             // Prevent text selection during drag and set cursor
             document.body.style.userSelect = 'none'
             document.body.classList.add('pane-dragging')
@@ -563,7 +563,7 @@ createApp({
             if (newWidth >= minWidth && newWidth <= maxWidth) {
                 const leftPane = this.panes[this.dragPaneIndex]
                 const rightPane = this.panes[this.dragPaneIndex + 1]
-                
+
                 if (leftPane && rightPane) {
                     const totalWidth = leftPane.widthPercent + rightPane.widthPercent
                     const rightNewWidth = totalWidth - newWidth
@@ -599,7 +599,7 @@ createApp({
 
         async restorePaneLayout() {
             const layout = this.userPreferences.paneLayout
-            
+
             if (layout && Array.isArray(layout) && layout.length > 0) {
                 // Restore panes from layout
                 this.panes = []
@@ -608,7 +608,7 @@ createApp({
                     const pane = this.createPane()
                     pane.widthPercent = paneData.widthPercent || (100 / layout.length)
                     this.panes.push(pane)
-                    
+
                     // Load thread data if threadId exists and thread is valid
                     if (paneData.threadId) {
                         const threadExists = this.threads.find(t => t.id === paneData.threadId) ||
@@ -622,7 +622,7 @@ createApp({
             } else {
                 // Initialize with single pane
                 this.initializePanes()
-                
+
                 // Try to restore last selected thread
                 const savedThreadId = this.userPreferences.selectedThreadId
                 if (savedThreadId) {
@@ -667,7 +667,7 @@ createApp({
             // Set this pane as active so newThread updates the right pane
             this.setActivePane(paneId)
             await this.newThread()
-            
+
             this.showThreadSelector = false
             this.threadSelectorPaneId = null
         },
@@ -708,11 +708,11 @@ createApp({
             pane.streaming = false
         },
 
-        // Clear attached image in a specific pane
-        clearAttachedImageInPane(paneId) {
+        // Clear attached file in a specific pane
+        clearAttachedFileInPane(paneId) {
             const pane = this.getPaneById(paneId)
             if (pane) {
-                pane.attachedImage = null
+                pane.attachedFile = null
             }
         },
 
@@ -1005,7 +1005,7 @@ createApp({
         async loadPaneMessages(paneId) {
             const pane = this.getPaneById(paneId)
             if (!pane || !pane.threadId) return
-            
+
             pane.messagesLoading = true
 
             try {
@@ -1112,7 +1112,7 @@ createApp({
                     currentPane.messages = []
                     currentPane.settings = { ...newSettings }
                     currentPane.messageInput = ''
-                    currentPane.attachedImage = null
+                    currentPane.attachedFile = null
                 }
 
                 await this.saveUserPreference('selectedThreadId', threadId)
@@ -1158,7 +1158,7 @@ createApp({
 
             // Simple validation - thread must exist
             if (
-                (!pane.messageInput.trim() && !pane.attachedImage) ||
+                (!pane.messageInput.trim() && !pane.attachedFile) ||
                 pane.sending ||
                 !pane.threadId ||
                 !pane.thread
@@ -1170,15 +1170,17 @@ createApp({
             }
 
             const message = pane.messageInput.trim()
-            const hasImage = !!pane.attachedImage
-            let attachedImageData = null
+            const hasFile = !!pane.attachedFile
+            let attachedFileData = null
 
-            // Store image data before clearing
-            if (hasImage) {
-                attachedImageData = {
-                    preview: pane.attachedImage.preview,
-                    name: pane.attachedImage.name,
-                    file: pane.attachedImage.file,
+            // Store file data before clearing
+            if (hasFile) {
+                attachedFileData = {
+                    preview: pane.attachedFile.preview,
+                    name: pane.attachedFile.name,
+                    file: pane.attachedFile.file,
+                    isImage: pane.attachedFile.isImage,
+                    mimeType: pane.attachedFile.mimeType,
                 }
             }
 
@@ -1188,9 +1190,10 @@ createApp({
                 content: message,
                 created_at: new Date().toISOString(),
                 is_live: true,
-                message_type: hasImage ? 'image' : 'normal',
-                image_data: hasImage ? attachedImageData.preview : null,
-                image_name: hasImage ? attachedImageData.name : null,
+                message_type: hasFile ? (attachedFileData.isImage ? 'image' : 'file') : 'normal',
+                image_data: hasFile && attachedFileData.isImage ? attachedFileData.preview : null,
+                image_name: hasFile ? attachedFileData.name : null,
+                file_type: hasFile ? attachedFileData.mimeType : null,
                 is_complete: true,
             }
 
@@ -1201,7 +1204,7 @@ createApp({
             })
 
             pane.messageInput = ''
-            pane.attachedImage = null
+            pane.attachedFile = null
             pane.sending = true
 
             try {
@@ -1224,17 +1227,17 @@ createApp({
                     }
                 }
 
-                // Prepare message payload with image data if present
+                // Prepare message payload with file data if present
                 const messagePayload = {
                     message: message,
                 }
 
-                if (hasImage && attachedImageData) {
-                    // Send single image data
+                if (hasFile && attachedFileData) {
+                    // Send file data (works for images, PDFs, text files)
                     messagePayload.image = {
-                        data: attachedImageData.preview.split(',')[1], // Base64 data only
-                        filename: attachedImageData.name,
-                        mime_type: attachedImageData.file.type,
+                        data: attachedFileData.preview.split(',')[1], // Base64 data only
+                        filename: attachedFileData.name,
+                        mime_type: attachedFileData.mimeType,
                     }
                 }
 
@@ -2205,26 +2208,54 @@ createApp({
             event.target.focus()
         },
 
-        selectImage() {
+        selectFile() {
             const input = document.createElement('input')
             input.type = 'file'
-            input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp'
-            input.addEventListener('change', event => this.handleImageSelect(event))
+            // Combine MIME types and extensions for best browser support
+            input.setAttribute('accept', 
+                'image/jpeg,image/png,image/gif,image/webp,' +
+                'application/pdf,text/plain,text/csv,' +
+                '.jpg,.jpeg,.png,.gif,.webp,' +
+                '.pdf,.txt,.csv,' +
+                '.py,.php,.go,.js,.vue,.ts,.tsx,' +
+                '.md,.json,.yaml,.yml,.xml,.html,.css,.sql,.sh'
+            )
+            input.style.display = 'none'
+            document.body.appendChild(input)
+            
+            input.addEventListener('change', event => {
+                this.handleFileSelect(event)
+                document.body.removeChild(input)
+            })
+            
+            input.addEventListener('cancel', () => {
+                document.body.removeChild(input)
+            })
+            
             input.click()
         },
 
-        handleImageSelect(event) {
+        handleFileSelect(event) {
             const file = event.target.files[0]
             if (!file) return
 
-            if (!this.validateImageFile(file)) return
+            if (!this.validateFile(file)) {
+                // Validation failed - file not attached, user can try again
+                return
+            }
 
             const reader = new FileReader()
+            const isImage = file.type.startsWith('image/')
+            // Determine effective mime type (browsers may report code files as text/plain)
+            const effectiveMimeType = this.getEffectiveMimeType(file)
+
             reader.onload = e => {
-                this.attachedImage = {
+                this.attachedFile = {
                     file: file,
                     name: file.name,
                     size: file.size,
+                    mimeType: effectiveMimeType,
+                    isImage: isImage,
                     preview: e.target.result,
                 }
 
@@ -2233,29 +2264,89 @@ createApp({
             reader.readAsDataURL(file)
         },
 
-        validateImageFile(file) {
-            const allowedTypes = [
+        // Get effective mime type based on file extension (browsers often report code as text/plain)
+        getEffectiveMimeType(file) {
+            const ext = file.name.split('.').pop()?.toLowerCase()
+            const extToMime = {
+                'py': 'text/x-python',
+                'php': 'text/x-php',
+                'go': 'text/x-go',
+                'js': 'text/javascript',
+                'vue': 'text/x-vue',
+                'ts': 'text/typescript',
+                'tsx': 'text/typescript',
+                'csv': 'text/csv',
+                'md': 'text/markdown',
+                'json': 'application/json',
+                'yaml': 'text/yaml',
+                'yml': 'text/yaml',
+                'xml': 'text/xml',
+                'html': 'text/html',
+                'css': 'text/css',
+                'sql': 'text/x-sql',
+                'sh': 'text/x-shellscript',
+                'bash': 'text/x-shellscript',
+            }
+            return extToMime[ext] || file.type
+        },
+
+        validateFile(file) {
+            const allowedMimeTypes = [
                 'image/jpeg',
                 'image/jpg',
                 'image/png',
                 'image/gif',
                 'image/webp',
+                'application/pdf',
+                'text/plain',
+                'text/csv',
+                'text/x-python',
+                'text/x-php',
+                'text/x-go',
+                'text/javascript',
+                'application/javascript',
+                'text/x-vue',
+                'text/typescript',
+                'text/markdown',
+                'application/json',
+                'text/yaml',
+                'text/xml',
+                'text/html',
+                'text/css',
+                'text/x-sql',
+                'text/x-shellscript',
             ]
-            if (!allowedTypes.includes(file.type)) {
-                this.showError('File type not supported. Please use JPEG, PNG, GIF, or WebP.')
+            // Also check by extension for code files (browsers may report as text/plain or octet-stream)
+            const allowedExtensions = [
+                'jpg', 'jpeg', 'png', 'gif', 'webp',
+                'pdf', 'txt', 'csv',
+                'py', 'php', 'go', 'js', 'vue', 'ts', 'tsx',
+                'md', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'sql', 'sh', 'bash'
+            ]
+            const ext = file.name.split('.').pop()?.toLowerCase()
+            
+            if (!allowedMimeTypes.includes(file.type) && !allowedExtensions.includes(ext)) {
+                this.showError('File type not supported. Allowed: images, PDF, text, CSV, and source code files.')
                 return false
             }
 
-            if (file.size > 10 * 1024 * 1024) {
-                this.showError('File is too large. Maximum size is 10MB.')
+            const isImageOrPdf = file.type.startsWith('image/') || 
+                                 file.type === 'application/pdf' || 
+                                 ext === 'pdf' ||
+                                 ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+            const maxSize = isImageOrPdf ? 10 * 1024 * 1024 : 2 * 1024 * 1024
+            const maxSizeLabel = isImageOrPdf ? '10MB' : '2MB'
+
+            if (file.size > maxSize) {
+                this.showError(`File is too large. Maximum size for ${isImageOrPdf ? 'images/PDFs' : 'text files'} is ${maxSizeLabel}.`)
                 return false
             }
 
             return true
         },
 
-        clearAttachedImage() {
-            this.attachedImage = null
+        clearAttachedFile() {
+            this.attachedFile = null
         },
 
         formatFileSize(bytes) {
@@ -2264,6 +2355,53 @@ createApp({
             const sizes = ['B', 'KB', 'MB', 'GB']
             const i = Math.floor(Math.log(bytes) / Math.log(k))
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+        },
+
+        // Helper to get file icon based on mime type
+        getFileIcon(mimeType) {
+            if (mimeType?.startsWith('image/')) return 'fas fa-image'
+            if (mimeType === 'application/pdf') return 'fas fa-file-pdf'
+            if (mimeType === 'text/csv') return 'fas fa-file-csv'
+            if (mimeType?.includes('python')) return 'fab fa-python'
+            if (mimeType?.includes('php')) return 'fab fa-php'
+            if (mimeType?.includes('javascript') || mimeType?.includes('typescript')) return 'fab fa-js'
+            if (mimeType?.includes('json')) return 'fas fa-brackets-curly'
+            if (mimeType?.includes('html')) return 'fab fa-html5'
+            if (mimeType?.includes('css')) return 'fab fa-css3'
+            if (mimeType?.includes('markdown')) return 'fas fa-file-alt'
+            if (mimeType?.startsWith('text/')) return 'fas fa-file-code'
+            return 'fas fa-file'
+        },
+
+        // Helper to get file icon class with color for templates
+        // Accepts either a mimeType or a filename
+        getFileIconClass(input) {
+            if (!input) return 'fas fa-file text-tg-hint'
+
+            // If input looks like a filename (has extension), extract extension
+            let ext = ''
+            if (input.includes('.') && !input.includes('/')) {
+                ext = input.split('.').pop().toLowerCase()
+            }
+
+            // Check by extension first
+            if (ext === 'pdf' || input === 'application/pdf') return 'fas fa-file-pdf text-red-500'
+            if (ext === 'csv' || input === 'text/csv') return 'fas fa-file-csv text-green-500'
+            if (ext === 'py' || input?.includes('python')) return 'fab fa-python text-yellow-500'
+            if (ext === 'php' || input?.includes('php')) return 'fab fa-php text-purple-500'
+            if (['js', 'jsx'].includes(ext) || input?.includes('javascript')) return 'fab fa-js text-yellow-400'
+            if (['ts', 'tsx'].includes(ext) || input?.includes('typescript')) return 'fas fa-code text-blue-500'
+            if (ext === 'vue' || input?.includes('vue')) return 'fab fa-vuejs text-green-500'
+            if (ext === 'go' || input?.includes('go')) return 'fas fa-code text-cyan-500'
+            if (ext === 'json' || input?.includes('json')) return 'fas fa-file-code text-yellow-600'
+            if (ext === 'html' || input?.includes('html')) return 'fab fa-html5 text-orange-500'
+            if (ext === 'css' || input?.includes('css')) return 'fab fa-css3 text-blue-400'
+            if (ext === 'sql' || input?.includes('sql')) return 'fas fa-database text-blue-600'
+            if (ext === 'sh' || input?.includes('shell')) return 'fas fa-terminal text-gray-400'
+            if (['md', 'markdown'].includes(ext) || input?.includes('markdown')) return 'fas fa-file-alt text-tg-hint'
+            if (['xml', 'yaml', 'yml'].includes(ext)) return 'fas fa-file-code text-orange-400'
+            if (input?.startsWith('text/')) return 'fas fa-file-code text-tg-hint'
+            return 'fas fa-file text-tg-hint'
         },
 
         // Handle window resize to adapt sidebar behavior
