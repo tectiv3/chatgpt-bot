@@ -35,7 +35,7 @@
                 },
             }
         </script>
-        <link rel="stylesheet" href="/assets/css/app.css?101" />
+        <link rel="stylesheet" href="/assets/css/app.css?104" />
         <link
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
             rel="stylesheet"
@@ -69,33 +69,45 @@
             <div v-else class="flex-1 flex h-full overflow-hidden">
                 <!-- Sidebar -->
                 <div
-                    class="fixed lg:relative z-50 lg:z-auto w-80 h-full bg-tg-secondary border-r border-white/10 dark:border-white/10 flex flex-col transform transition-transform duration-300 ease-in-out"
-                    :class="
-                        sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-                    "
+                    class="sidebar fixed lg:relative z-50 lg:z-auto h-full bg-tg-secondary border-r border-white/10 dark:border-white/10 flex flex-col transform transition-all duration-300 ease-in-out"
+                    :class="[
+                        sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+                        sidebarCollapsed ? 'lg:w-0 lg:overflow-hidden lg:border-r-0' : 'lg:w-80 lg:translate-x-0',
+                        'w-80'
+                    ]"
                 >
                     <div
-                        class="flex-shrink-0 px-2 border-b border-white/10 dark:border-white/10 bg-tg-secondary"
+                        class="flex-shrink-0 px-2 py-2 border-b border-white/10 dark:border-white/10 bg-tg-secondary"
                     >
-                        <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <!-- Desktop collapse button -->
+                            <button
+                                @click="toggleSidebar"
+                                class="hidden lg:flex flex-shrink-0 w-9 h-9 items-center justify-center rounded-lg hover:bg-tg-primary/10 text-tg-hint"
+                                title="Collapse sidebar"
+                            >
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <!-- Mobile close button -->
                             <button
                                 @click="sidebarOpen = false"
-                                class="lg:hidden p-1 rounded-md hover:bg-tg-primary/10 text-tg-hint"
+                                class="lg:hidden flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg hover:bg-tg-primary/10 text-tg-hint"
                             >
-                                <i class="fas fa-times w-4 h-4"></i>
+                                <i class="fas fa-times"></i>
+                            </button>
+                            <!-- New Thread button -->
+                            <button
+                                @click="newThread()"
+                                :disabled="creatingThread"
+                                class="flex-1 bg-tg-button text-tg-button-text py-2 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            >
+                                <i
+                                    class="fas"
+                                    :class="creatingThread ? 'fa-spinner fa-spin' : 'fa-plus'"
+                                ></i>
+                                [[ creatingThread ? 'Creating...' : 'New Thread' ]]
                             </button>
                         </div>
-                        <button
-                            @click="newThread()"
-                            :disabled="creatingThread"
-                            class="w-full bg-tg-button text-tg-button-text py-2 mb-2 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
-                        >
-                            <i
-                                class="fas"
-                                :class="creatingThread ? 'fa-spinner fa-spin' : 'fa-plus'"
-                            ></i>
-                            [[ creatingThread ? 'Creating...' : 'New Thread' ]]
-                        </button>
                     </div>
 
                     <!-- Scrollable Content -->
@@ -290,546 +302,290 @@
                     @click="sidebarOpen = false"
                 ></div>
 
-                <!-- Main Content -->
-                <div class="flex-1 flex flex-col min-w-0">
-                    <!-- Header -->
-                    <div
-                        class="flex-shrink-0 bg-tg-primary border-b border-white/10 dark:border-white/10 px-4 py-2"
-                    >
-                        <div class="flex items-center gap-4">
-                            <button
-                                @click="sidebarOpen = !sidebarOpen"
-                                class="lg:hidden p-2 rounded-lg hover:bg-tg-secondary text-tg-text"
-                            >
-                                <i class="fas fa-bars"></i>
-                            </button>
+                <!-- Panes Container -->
+                <div class="flex-1 flex min-w-0 relative" ref="panesContainer">
 
-                            <div
-                                v-if="currentThreadId"
-                                class="flex-1 flex items-center justify-between"
-                            >
-                                <!-- Show selectors for new threads with no messages -->
-                                <div
-                                    v-if="shouldShowRoleSelector"
-                                    class="flex items-center gap-2 flex-1 mr-2"
-                                >
-                                    <div class="flex-1">
-                                        <select
-                                            v-model="threadSettings.model_name"
-                                            @change="updateThreadSettings"
-                                            class="w-full h-10 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20"
-                                        >
-                                            <option
-                                                v-for="model in models"
-                                                :key="model.id"
-                                                :value="model.id"
-                                            >
-                                                [[ model.name ]]
-                                            </option>
-                                        </select>
-                                    </div>
-
-                                    <div v-if="roles.length > 0" class="flex-1">
-                                        <select
-                                            v-model="threadSettings.role_id"
-                                            @change="updateThreadSettings"
-                                            class="w-full h-10 px-3 rounded-lg text-sm bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20"
-                                        >
-                                            <option :value="null">Default Role</option>
-                                            <option
-                                                v-for="role in roles"
-                                                :key="role.id"
-                                                :value="role.id"
-                                            >
-                                                [[ role.name ]]
-                                            </option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <!-- Show current settings badges after first message -->
-                                <div v-else class="flex flex-wrap items-center gap-1.5 flex-1">
-                                    <!-- Model selector button -->
-                                    <button
-                                        @click="showSettings = true"
-                                        class="flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
-                                        title="Click to change model"
-                                    >
-                                        <i class="fas fa-brain text-tg-link text-xs"></i>
-                                        <span class="text-tg-text font-medium hidden sm:inline"
-                                            >[[ threadSettings.model_name || 'No model'
-                                            ]]</span
-                                        >
-                                        <span class="text-tg-text font-medium sm:hidden"
-                                            >[[ (threadSettings.model_name ||
-                                            'Model').substring(0, 8) ]]</span
-                                        >
-                                    </button>
-
-                                    <!-- Role selector button - hidden on mobile -->
-                                    <button
-                                        v-if="threadSettings.role_id || roles.length > 0"
-                                        @click="showSettings = true"
-                                        class="hidden sm:flex items-center gap-1 bg-tg-secondary px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm hover:bg-tg-hint/10 transition-colors"
-                                        title="Click to change role"
-                                    >
-                                        <i class="fas fa-user-tag text-tg-link text-xs"></i>
-                                        <span class="text-tg-text font-medium hidden lg:inline"
-                                            >[[ currentRoleName || 'Default Role' ]]</span
-                                        >
-                                    </button>
-
-                                    <!-- Search tool -->
-                                        <button
-                                            @click="toggleTool('search')"
-                                            class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
-                                            :class="threadSettings.enabled_tools.includes('search') 
-                                                ? 'bg-tg-link text-white' 
-                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'">
-                                            <i class="fas fa-search"></i>
-                                            <span class="tool-text hidden lg:inline font-medium">Search</span>
-                                        </button>
-
-                                    <!-- Code tool -->
-                                        <button
-                                            @click="toggleTool('code')"
-                                            class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
-                                            :class="threadSettings.enabled_tools.includes('code') 
-                                                ? 'bg-tg-link text-white' 
-                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'">
-                                            <i class="fas fa-code"></i>
-                                            <span class="tool-text hidden lg:inline font-medium">Code</span>
-                                        </button>
-
-                                    <button
-                                            @click="toggleTool('summary')"
-                                            class="flex items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm transition-all"
-                                            :class="threadSettings.enabled_tools.includes('summary') 
-                                                ? 'bg-tg-link text-white' 
-                                                : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'">
-                                            <i class="fas fa-file-alt"></i>
-                                            <span class="tool-text hidden lg:inline font-medium">Summary</span>
-                                        </button>
-                                </div>
-
-                                <!-- Thread settings button -->
-                                <button
-                                    @click="showSettings = true"
-                                    class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors"
-                                    title="Thread Settings"
-                                >
-                                    <i class="fas fa-cog"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Messages -->
-                    <div
-                        class="flex-1 overflow-y-auto scrollbar-thin pb-24"
-                        ref="messagesContainer"
-                        @click="dismissKeyboard"
-                    >
-                        <!-- Welcome message -->
-                        <div
-                            v-if="!currentThreadId"
-                            class="flex-1 flex items-center justify-center p-8"
+                    <!-- Pane Loop -->
+                    <template v-for="(pane, paneIndex) in panes" :key="pane.id">
+                        <!-- Divider between panes -->
+                        <div 
+                            v-if="paneIndex > 0" 
+                            class="pane-divider w-1 bg-white/10 hover:bg-tg-link cursor-col-resize flex-shrink-0 transition-colors relative group"
+                            @mousedown="startDividerDrag($event, paneIndex - 1)"
+                            @touchstart="startDividerDrag($event, paneIndex - 1)"
                         >
-                            <div class="text-center max-w-md">
-                                <h2 class="text-2xl font-bold text-tg-text mb-4">
-                                    Welcome to {{.BotName}} Assistant
-                                </h2>
-                                <p class="text-tg-hint leading-relaxed">
-                                    Create a new thread to start chatting, or select an
-                                    existing thread from the sidebar.
-                                </p>
-                            </div>
+                            <div class="absolute inset-y-0 -left-1 -right-1"></div>
                         </div>
 
-                        <!-- Messages list -->
-                        <div v-else class="p-4 space-y-4">
-                            <div
-                                v-for="message in messages"
-                                :key="message.id"
-                                class="flex gap-3"
-                                :class="
-                                    message.role === 'user'
-                                        ? 'justify-end user'
-                                        : 'justify-start assistant'
-                                "
-                            >
-                                <!-- Assistant Avatar -->
-                                <div
-                                    v-if="message.role === 'assistant'"
-                                    class="flex-shrink-0 w-8 h-8 rounded-full bg-tg-link flex items-center justify-center"
-                                >
-                                    <i class="fas fa-robot text-white text-sm"></i>
-                                </div>
-
-                                <!-- Message Content -->
-                                <div
-                                    class="max-w-[80%] lg:max-w-[70%] group"
-                                    :class="message.role === 'user' ? 'order-first' : ''"
-                                >
-                                    <!-- Summary Header -->
-                                    <div
-                                        v-if="message.message_type === 'summary'"
-                                        class="flex items-center gap-2 mb-2 text-sm text-tg-hint"
+                        <!-- Single Pane -->
+                        <div 
+                            class="pane flex flex-col min-w-0 transition-all"
+                            :style="{ width: pane.widthPercent + '%' }"
+                            :class="{ 'pane-active': pane.id === activePaneId }"
+                            @click="setActivePane(pane.id)"
+                        >
+                            <!-- Pane Header -->
+                            <div class="flex-shrink-0 bg-tg-primary border-b border-white/10 px-2 py-1.5">
+                                <div class="flex items-center gap-1.5">
+                                    <!-- Sidebar expand button (desktop, only first pane, when collapsed) -->
+                                    <button
+                                        v-if="paneIndex === 0 && sidebarCollapsed"
+                                        @click="toggleSidebar"
+                                        class="hidden lg:flex flex-shrink-0 w-8 h-8 items-center justify-center rounded-lg hover:bg-tg-secondary text-tg-hint"
+                                        title="Expand sidebar"
                                     >
-                                        <i class="fas fa-compress-alt"></i>
-                                        <span>Conversation Summary</span>
-                                    </div>
+                                        <i class="fas fa-bars"></i>
+                                    </button>
 
-                                    <!-- Message bubble with copy button -->
-                                    <div
-                                        class="relative rounded-2xl px-4 pt-3 pb-1"
-                                        :class="
-                                            message.role === 'user'
-                                                ? 'bg-tg-link text-white ml-auto'
-                                                : 'bg-tg-secondary text-tg-text'
-                                        "
-                                        :style="
-                                            message.isStreaming && message.estimatedHeight
-                                                ? { minHeight: message.estimatedHeight + 'px' }
-                                                : {}
-                                        "
+                                    <!-- Mobile hamburger (only in first pane) -->
+                                    <button
+                                        v-if="paneIndex === 0"
+                                        @click="sidebarOpen = !sidebarOpen"
+                                        class="lg:hidden flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-tg-secondary text-tg-text"
                                     >
-                                        <!-- Copy button -->
+                                        <i class="fas fa-bars"></i>
+                                    </button>
+
+                                    <!-- Thread title (clickable to change) -->
+                                    <button
+                                        v-if="panes.length > 1 || sidebarCollapsed"
+                                        @click="openThreadSelectorForPane(pane.id)"
+                                        class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-tg-secondary text-left transition-colors"
+                                        :title="pane.thread?.title || 'Select thread'"
+                                    >
+                                        <span class="text-sm font-medium text-tg-text truncate">
+                                            [[ pane.thread?.title || 'Select thread...' ]]
+                                        </span>
+                                        <i class="fas fa-chevron-down text-xs text-tg-hint flex-shrink-0"></i>
+                                    </button>
+
+                                    <!-- Spacer when single pane with sidebar open -->
+                                    <div v-else class="flex-1"></div>
+
+                                    <!-- Model/Role/Tools (compact) -->
+                                    <div v-if="pane.threadId" class="flex items-center gap-1 flex-shrink-0">
+                                        <!-- Model -->
                                         <button
-                                            @click="copyMessage(message.content)"
-                                            class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs z-10 bg-white/20 hover:bg-white text-white hover:text-black"
-                                            title="Copy message"
+                                            @click="setActivePane(pane.id); showSettings = true"
+                                            class="flex items-center gap-1 bg-tg-secondary px-2 py-1 rounded-full text-xs hover:bg-tg-hint/10 transition-colors truncate"
+                                            :title="pane.settings?.model_name || 'Select model'"
                                         >
-                                            <i class="fas fa-copy"></i>
+                                            <i class="fas fa-brain text-tg-link text-xs"></i>
+                                            <span class="text-tg-text font-medium truncate max-w-[60px] hidden sm:inline">
+                                                [[ (pane.settings?.model_name || 'Model').substring(0, 10) ]]
+                                            </span>
                                         </button>
 
-                                        <!-- Image attachment -->
-                                        <div v-if="message.image_data" class="mb-3">
-                                            <img
-                                                :src="message.image_data"
-                                                :alt="message.image_name"
-                                                class="max-w-full h-auto rounded-lg"
-                                            />
+                                        <!-- Tools -->
+                                        <button
+                                            @click="toggleToolInPane(pane.id, 'search')"
+                                            class="flex items-center gap-0.5 px-2 py-1 rounded-full text-xs transition-all"
+                                            :class="pane.settings?.enabled_tools?.includes('search') 
+                                                ? 'bg-tg-link text-white' 
+                                                : 'bg-tg-secondary text-tg-hint hover:bg-tg-hint/10'"
+                                            title="Toggle web search"
+                                        >
+                                            <i class="fas fa-search"></i>
+                                        </button>
+                                    </div>
+
+                                    <!-- Pane controls -->
+                                    <div class="flex items-center gap-1 flex-shrink-0">
+                                        <!-- Settings -->
+                                        <button
+                                            v-if="pane.threadId"
+                                            @click="setActivePane(pane.id); showSettings = true"
+                                            class="p-1.5 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors"
+                                            title="Thread Settings"
+                                        >
+                                            <i class="fas fa-cog text-xs"></i>
+                                        </button>
+
+                                        <!-- Split button -->
+                                        <button
+                                            v-if="canSplitPane"
+                                            @click="splitPane(pane.id)"
+                                            class="hidden lg:block p-1.5 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors"
+                                            title="Split pane"
+                                        >
+                                            <i class="fas fa-columns text-xs"></i>
+                                        </button>
+
+                                        <!-- Close pane button -->
+                                        <button
+                                            v-if="canClosePane"
+                                            @click="closePane(pane.id)"
+                                            class="hidden lg:block p-1.5 rounded-lg hover:bg-red-500/20 text-tg-hint hover:text-red-500 transition-colors"
+                                            title="Close pane"
+                                        >
+                                            <i class="fas fa-times text-xs"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Pane Messages -->
+                            <div
+                                class="flex-1 overflow-y-auto scrollbar-thin pb-24"
+                                :ref="'messagesContainer_' + pane.id"
+                                @click="setActivePane(pane.id)"
+                            >
+                                <!-- No thread selected -->
+                                <div v-if="!pane.threadId" class="flex-1 flex items-center justify-center p-8 h-full">
+                                    <div class="text-center max-w-md">
+                                        <h2 class="text-xl font-bold text-tg-text mb-4">
+                                            [[ panes.length > 1 ? 'Select a Thread' : 'Welcome to {{.BotName}}' ]]
+                                        </h2>
+                                        <p class="text-tg-hint leading-relaxed mb-4">
+                                            [[ panes.length > 1 ? 'Choose a thread from the dropdown above.' : 'Create a new thread or select one from the sidebar.' ]]
+                                        </p>
+                                        <button
+                                            @click="setActivePane(pane.id); newThread()"
+                                            :disabled="creatingThread"
+                                            class="bg-tg-button text-tg-button-text py-2 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50"
+                                        >
+                                            <i class="fas" :class="creatingThread ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                                            New Thread
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Messages list -->
+                                <div v-else class="p-4 space-y-4">
+                                    <div
+                                        v-for="message in pane.messages"
+                                        :key="message.id"
+                                        class="flex gap-3"
+                                        :class="message.role === 'user' ? 'justify-end user' : 'justify-start assistant'"
+                                    >
+                                        <!-- Assistant Avatar -->
+                                        <div
+                                            v-if="message.role === 'assistant'"
+                                            class="flex-shrink-0 w-8 h-8 rounded-full bg-tg-link flex items-center justify-center"
+                                        >
+                                            <i class="fas fa-robot text-white text-sm"></i>
                                         </div>
 
-                                        <!-- Message text -->
+                                        <!-- Message Content -->
                                         <div
-                                            class="prose prose-sm break-words"
-                                            :class="{
-                                                'streaming-text': message.isStreaming,
-                                                'text-white': message.role === 'user',
-                                            }"
-                                            v-html="
-                                                message.formattedContent || message.content
-                                            "
-                                        ></div>
-
-                                        <!-- Annotations display -->
-                                        <div
-                                            v-if="
-                                                message.annotations &&
-                                                message.annotations.length > 0
-                                            "
+                                            class="max-w-[85%] group"
+                                            :class="message.role === 'user' ? 'order-first' : ''"
                                         >
-                                            <!-- URL Citations -->
+                                            <!-- Message bubble -->
                                             <div
-                                                v-html="formatAnnotations(message.annotations)"
-                                                class="pr-8"
-                                                :class="
-                                                    message.role === 'user'
-                                                        ? 'text-white/70'
-                                                        : 'text-tg-text/70'
-                                                "
-                                            ></div>
-
-                                            <!-- File Citations -->
-                                            <div
-                                                v-if="
-                                                    message.annotations.some(
-                                                        a =>
-                                                            a.type === 'file_citation' ||
-                                                            a.type ===
-                                                                'container_file_citation'
-                                                    )
-                                                "
-                                                class="mt-3 pr-8"
+                                                class="relative rounded-2xl px-4 pt-3 pb-1"
+                                                :class="message.role === 'user' ? 'bg-tg-link text-white ml-auto' : 'bg-tg-secondary text-tg-text'"
                                             >
-                                                <div
-                                                    v-for="(
-                                                        annotation, idx
-                                                    ) in message.annotations.filter(
-                                                        a =>
-                                                            a.type === 'file_citation' ||
-                                                            a.type ===
-                                                                'container_file_citation'
-                                                    )"
-                                                    :key="idx"
+                                                <!-- Copy button -->
+                                                <button
+                                                    @click="copyMessage(message.content)"
+                                                    class="absolute top-2 right-2 w-6 h-6 rounded opacity-0 group-hover:opacity-80 hover:opacity-100 transition-opacity flex items-center justify-center text-xs z-10 bg-white/20 hover:bg-white text-white hover:text-black"
+                                                    title="Copy message"
                                                 >
-                                                    <!-- Image file -->
-                                                    <div
-                                                        v-if="
-                                                            annotation.local_file_path &&
-                                                            annotation.local_file_path.match(
-                                                                /\.(png|jpg|jpeg|gif)$/i
-                                                            )
-                                                        "
-                                                        class="annotation-image mb-2"
-                                                    >
-                                                        <img
-                                                            :src="annotation.local_file_path"
-                                                            :alt="
-                                                                annotation.filename ||
-                                                                'Generated image'
-                                                            "
-                                                            class="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-white/10"
-                                                            @click="
-                                                                viewImageFullscreen({
-                                                                    annotation_url:
-                                                                        annotation.local_file_path,
-                                                                    annotation_filename:
-                                                                        annotation.filename,
-                                                                })
-                                                            "
-                                                            :title="
-                                                                'Click to view ' +
-                                                                (annotation.filename ||
-                                                                    'image') +
-                                                                ' in fullscreen'
-                                                            "
-                                                        />
-                                                        <div
-                                                            class="text-xs text-opacity-70 mt-1"
-                                                            :class="
-                                                                message.role === 'user'
-                                                                    ? 'text-white'
-                                                                    : 'text-tg-hint'
-                                                            "
-                                                        >
-                                                            <i class="fas fa-image mr-1"></i>
-                                                            [[ annotation.filename ||
-                                                            'Generated image' ]]
-                                                        </div>
-                                                    </div>
+                                                    <i class="fas fa-copy"></i>
+                                                </button>
 
-                                                    <!-- Document/other file -->
-                                                    <div
-                                                        v-else-if="annotation.local_file_path"
-                                                        class="annotation-file mb-2"
-                                                    >
-                                                        <a
-                                                            :href="annotation.local_file_path"
-                                                            :download="annotation.filename"
-                                                            class="inline-flex items-center gap-2 px-3 py-2 rounded-lg transition-colors"
-                                                            :class="
-                                                                message.role === 'user'
-                                                                    ? 'bg-white/20 hover:bg-white/30 text-white'
-                                                                    : 'bg-tg-link/10 hover:bg-tg-link/20 text-tg-link'
-                                                            "
-                                                            :title="
-                                                                'Download ' +
-                                                                (annotation.filename || 'file')
-                                                            "
-                                                        >
-                                                            <i class="fas fa-download"></i>
-                                                            <span class="text-sm font-medium"
-                                                                >[[ annotation.filename ||
-                                                                'Download file' ]]</span
-                                                            >
-                                                        </a>
-                                                    </div>
+                                                <!-- Image attachment -->
+                                                <div v-if="message.image_data" class="mb-3">
+                                                    <img :src="message.image_data" :alt="message.image_name" class="max-w-full h-auto rounded-lg" />
                                                 </div>
+
+                                                <!-- Message text -->
+                                                <div
+                                                    class="prose prose-sm break-words"
+                                                    :class="{ 'streaming-text': message.isStreaming, 'text-white': message.role === 'user' }"
+                                                    v-html="message.formattedContent || message.content"
+                                                ></div>
+
+                                                <!-- Annotations -->
+                                                <div v-if="message.annotations && message.annotations.length > 0">
+                                                    <div v-html="formatAnnotations(message.annotations)" class="pr-8" :class="message.role === 'user' ? 'text-white/70' : 'text-tg-text/70'"></div>
+                                                </div>
+
+                                                <!-- Streaming indicator -->
+                                                <div v-if="message.isStreaming && (!message.content || message.content.length === 0)" class="typing-indicator mt-2">
+                                                    <div class="typing-dot"></div>
+                                                    <div class="typing-dot"></div>
+                                                    <div class="typing-dot"></div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Message metadata -->
+                                            <div class="flex items-center gap-2 mt-1 px-1 text-xs text-tg-hint" :class="message.role === 'user' ? 'justify-end' : 'justify-between'">
+                                                <div class="flex items-center gap-2">
+                                                    <span>[[ formatTime(message.created_at) ]]</span>
+                                                    <span v-if="message.role === 'assistant' && message.total_tokens">
+                                                        <i class="fas fa-calculator text-xs"></i> [[ message.total_tokens ]] tokens
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    @click="deleteMessage(message.id)"
+                                                    class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 hover:text-red-500"
+                                                    title="Delete message"
+                                                >
+                                                    <i class="fas fa-trash text-xs"></i>
+                                                </button>
                                             </div>
                                         </div>
 
-                                        <!-- Streaming indicator -->
-                                        <div
-                                            v-if="
-                                                message.isStreaming &&
-                                                (!message.content ||
-                                                    message.content.length === 0)
-                                            "
-                                            class="typing-indicator mt-2"
-                                        >
-                                            <div class="typing-dot"></div>
-                                            <div class="typing-dot"></div>
-                                            <div class="typing-dot"></div>
+                                        <!-- User Avatar -->
+                                        <div v-if="message.role === 'user'" class="flex-shrink-0 w-8 h-8 rounded-full bg-white text-gray-700 flex items-center justify-center">
+                                            <i class="fas fa-user text-sm"></i>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
 
-                                    <!-- Message metadata -->
-                                    <div
-                                        class="flex items-center gap-2 mt-1 px-1 text-xs text-tg-hint"
-                                        :class="
-                                            message.role === 'user'
-                                                ? 'justify-end'
-                                                : 'justify-between'
-                                        "
-                                    >
-                                        <!-- Time and stats on left for assistant, right for user -->
-                                        <div class="flex items-center gap-2">
-                                            <span>[[ formatTime(message.created_at) ]]</span>
-
-                                            <span
-                                                v-if="
-                                                    message.role === 'assistant' &&
-                                                    message.total_tokens
-                                                "
-                                            >
-                                                <i class="fas fa-calculator text-xs"></i>
-                                                [[ message.total_tokens ]] tokens
-                                            </span>
-
-                                            <span
-                                                v-if="
-                                                    message.role === 'assistant' &&
-                                                    message.response_time_ms
-                                                "
-                                            >
-                                                <i class="fas fa-clock text-xs"></i>
-                                                [[ formatResponseTime(message.response_time_ms)
-                                                ]]
-                                            </span>
-
-                                            <span
-                                                v-if="
-                                                    message.role === 'assistant' &&
-                                                    message.model_used &&
-                                                    message.model_used !==
-                                                        threadSettings.model_name
-                                                "
-                                            >
-                                                <i class="fas fa-robot text-xs"></i>
-                                                [[ message.model_used ]]
-                                            </span>
-
-                                            <span
-                                                v-if="!message.is_live"
-                                                class="px-2 py-0.5 bg-tg-hint/20 rounded-full"
-                                                >Archived</span
-                                            >
-                                        </div>
-
-                                        <button
-                                            @click="deleteMessage(message.id)"
-                                            class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 hover:text-red-500"
-                                            title="Delete message"
-                                        >
-                                            <i class="fas fa-trash text-xs"></i>
+                            <!-- Pane Input Area -->
+                            <div v-if="pane.threadId" class="pane-input-area bg-tg-primary border-t border-white/10">
+                                <!-- Image preview -->
+                                <div v-if="pane.attachedImage" class="p-2 pb-0">
+                                    <div class="flex items-center gap-2 bg-tg-secondary rounded-lg p-2">
+                                        <img :src="pane.attachedImage.preview" class="w-10 h-10 object-cover rounded" />
+                                        <span class="text-xs text-tg-text truncate flex-1">[[ pane.attachedImage.name ]]</span>
+                                        <button @click="clearAttachedImageInPane(pane.id)" class="p-1 text-tg-hint hover:text-tg-text">
+                                            <i class="fas fa-times"></i>
                                         </button>
                                     </div>
                                 </div>
 
-                                <!-- User Avatar -->
-                                <div
-                                    v-if="message.role === 'user'"
-                                    class="flex-shrink-0 w-8 h-8 rounded-full bg-white text-gray-700 flex items-center justify-center"
-                                >
-                                    <i class="fas fa-user text-sm"></i>
+                                <!-- Input -->
+                                <div class="p-2 flex items-center gap-2">
+                                    <button
+                                        @click="setActivePane(pane.id); selectImage()"
+                                        class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+                                        :class="pane.attachedImage ? 'bg-tg-link text-white' : 'bg-tg-secondary text-tg-hint hover:text-tg-text'"
+                                    >
+                                        <i class="fas fa-image"></i>
+                                    </button>
+
+                                    <textarea
+                                        v-model="pane.messageInput"
+                                        @keydown="handleKeyDownInPane($event, pane.id)"
+                                        @focus="setActivePane(pane.id)"
+                                        placeholder="Type your message..."
+                                        class="flex-1 py-2 px-3 rounded-2xl bg-tg-secondary border border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none resize-none text-sm"
+                                        :disabled="pane.sending"
+                                        rows="1"
+                                        style="field-sizing: content; max-height: 100px"
+                                    ></textarea>
+
+                                    <button
+                                        @click="pane.streaming ? stopStreamingInPane(pane.id) : sendMessageInPane(pane.id)"
+                                        :disabled="!canSendInPane(pane) && !pane.streaming"
+                                        class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all"
+                                        :class="pane.streaming ? 'bg-tg-destructive text-white hover:bg-red-600' : (canSendInPane(pane) ? 'bg-tg-button text-tg-button-text hover:opacity-90' : 'bg-tg-hint/20 text-tg-hint cursor-not-allowed')"
+                                    >
+                                        <i :class="pane.streaming ? 'fas fa-stop' : (pane.sending ? 'fas fa-spinner fa-spin' : 'fas fa-paper-plane')"></i>
+                                    </button>
                                 </div>
                             </div>
                         </div>
-
-                        <!-- <div v-else>
-                            <div class="flex-1 flex items-center justify-center p-8">
-                                <div class="text-center">
-                                    <div
-                                        class="w-8 h-8 border-2 border-tg-link border-t-transparent rounded-full animate-spin mx-auto mb-4"
-                                    ></div>
-                                    <div class="text-tg-hint">Loading messages...</div>
-                                </div>
-                            </div>
-                        </div> -->
-                    </div>
-
-                    <!-- Input Area -->
-                    <div
-                        v-if="currentThreadId"
-                        class="fixed bottom-0 left-0 lg:left-80 right-0 bg-tg-primary border-t border-white/10 dark:border-white/10 z-20"
-                    >
-                        <!-- Image attachment preview -->
-                        <div v-if="attachedImage" class="p-4 pb-0">
-                            <div
-                                class="flex items-center gap-3 bg-tg-secondary rounded-lg p-3"
-                            >
-                                <img
-                                    :src="attachedImage.preview"
-                                    :alt="attachedImage.name"
-                                    class="w-12 h-12 object-cover rounded-lg"
-                                />
-                                <div class="flex-1 min-w-0">
-                                    <div class="text-sm font-medium text-tg-text truncate">
-                                        [[ attachedImage.name ]]
-                                    </div>
-                                    <div class="text-xs text-tg-hint">
-                                        [[ formatFileSize(attachedImage.size) ]]
-                                    </div>
-                                </div>
-                                <button
-                                    @click="clearAttachedImage"
-                                    class="p-1.5 rounded-lg hover:bg-tg-primary/10 text-tg-hint hover:text-tg-text transition-colors"
-                                    title="Remove image"
-                                >
-                                    <i class="fas fa-times"></i>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Input wrapper -->
-                        <div
-                            class="py-4 px-2 flex items-center gap-2 max-w-4xl mx-auto w-full"
-                        >
-                            <button
-                                @click="selectImage"
-                                class="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-colors"
-                                :class="
-                                    attachedImage
-                                        ? 'bg-tg-link text-white'
-                                        : 'bg-tg-secondary text-tg-hint hover:text-tg-text hover:bg-tg-hint/10'
-                                "
-                                title="Attach image"
-                            >
-                                <i class="fas fa-image"></i>
-                            </button>
-
-                            <div class="flex-1">
-                                <textarea
-                                    ref="messageInput"
-                                    v-model="messageInput"
-                                    @keydown="handleKeyDown"
-                                    @touchstart.passive="onInputTouch"
-                                    placeholder="Type your message..."
-                                    class="w-full py-3 px-4 rounded-2xl bg-tg-secondary border border-white/10 dark:border-white/10 text-tg-text placeholder-tg-hint focus:border-tg-link focus:outline-none focus:ring-2 focus:ring-tg-link/20 resize-none min-h-[48px]"
-                                    :disabled="sending"
-                                    autocomplete="off"
-                                    autocorrect="off"
-                                    autocapitalize="sentences"
-                                    spellcheck="true"
-                                    rows="1"
-                                    style="field-sizing: content; max-height: 120px"
-                                ></textarea>
-                            </div>
-
-                            <button
-                                @click="streaming ? stopStreaming() : sendMessage()"
-                                :disabled="!canSendMessage && !canStopStreaming"
-                                class="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all"
-                                :class="
-                                    streaming
-                                        ? 'bg-tg-destructive text-white hover:bg-red-600'
-                                        : canSendMessage
-                                        ? 'bg-tg-button text-tg-button-text hover:opacity-90'
-                                        : 'bg-tg-hint/20 text-tg-hint cursor-not-allowed'
-                                "
-                                :title="streaming ? 'Stop generation' : 'Send message (Enter)'"
-                            >
-                                <i :class="sendButtonIcon"></i>
-                            </button>
-                        </div>
-                    </div>
+                    </template>
                 </div>
             </div>
 
-            <!-- Settings Modal -->
+                        <!-- Settings Modal -->
             <div
                 v-if="showSettings"
                 class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
@@ -932,6 +688,69 @@
                         >
                             Save Settings
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thread Selector Modal (for pane thread selection) -->
+            <div
+                v-if="showThreadSelector"
+                class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+                @click="showThreadSelector = false"
+            >
+                <div
+                    class="bg-tg-primary rounded-2xl shadow-2xl w-full max-w-md max-h-[70vh] overflow-hidden flex flex-col"
+                    @click.stop
+                >
+                    <div
+                        class="flex-shrink-0 flex items-center justify-between p-4 border-b border-white/10"
+                    >
+                        <h3 class="text-lg font-semibold text-tg-text">Select Thread</h3>
+                        <button
+                            @click="showThreadSelector = false"
+                            class="p-2 rounded-lg hover:bg-tg-secondary text-tg-hint hover:text-tg-text transition-colors"
+                        >
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+
+                    <div class="p-3 overflow-y-auto flex-1">
+                        <!-- New Thread button -->
+                        <button
+                            @click="createNewThreadForPane(threadSelectorPaneId)"
+                            :disabled="creatingThread"
+                            class="w-full bg-tg-button text-tg-button-text py-2.5 px-4 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity mb-3"
+                        >
+                            <i
+                                class="fas"
+                                :class="creatingThread ? 'fa-spinner fa-spin' : 'fa-plus'"
+                            ></i>
+                            [[ creatingThread ? 'Creating...' : 'New Thread' ]]
+                        </button>
+
+                        <!-- Thread list -->
+                        <div class="space-y-1">
+                            <button
+                                v-for="thread in sortedThreads"
+                                :key="thread.id"
+                                @click="selectThreadForPane(threadSelectorPaneId, thread.id)"
+                                class="w-full text-left p-3 rounded-lg transition-colors"
+                                :class="getPaneById(threadSelectorPaneId)?.threadId === thread.id 
+                                    ? 'bg-tg-link/20 border border-tg-link/30' 
+                                    : 'hover:bg-tg-secondary'"
+                            >
+                                <div class="font-medium text-sm text-tg-text truncate">[[ thread.title ]]</div>
+                                <div class="text-xs text-tg-hint mt-0.5">
+                                    [[ thread.message_count ]] messages • [[ formatDate(thread.updated_at) ]]
+                                </div>
+                            </button>
+                        </div>
+
+                        <!-- Empty state -->
+                        <div v-if="sortedThreads.length === 0" class="text-center py-8 text-tg-hint">
+                            <i class="fas fa-comments text-3xl mb-2 opacity-50"></i>
+                            <p>No threads yet. Create one to get started!</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1172,6 +991,6 @@
             </div>
         </div>
 
-        <script src="/assets/js/app.js?103"></script>
+        <script src="/assets/js/app.js?104"></script>
     </body>
 </html>
