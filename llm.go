@@ -347,7 +347,7 @@ func (s *Server) saveHistory(chat *Chat) {
 			history = append(history, h)
 			continue
 		}
-		if h.CreatedAt.Before(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
+		if chat.ConversationAge > 0 && h.CreatedAt.Before(time.Now().AddDate(0, 0, -int(chat.ConversationAge))) {
 			s.db.Where("chat_id = ?", chat.ID).Where("id = ?", h.ID).Delete(&ChatMessage{})
 		} else {
 			history = append(history, h)

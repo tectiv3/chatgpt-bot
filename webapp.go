@@ -753,14 +753,15 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 
 		// Create new chat with thread
 		chat = Chat{
-			UserID:       user.ID,
-			ChatID:       int64(user.ID)*1000 + time.Now().Unix()%1000, // Unique chat ID
-			ThreadID:     &newThreadID,
-			ThreadTitle:  &title,
-			Temperature:  1.0, // Default values
-			ModelName:    defaultModelName,
-			Stream:       true,
-			ContextLimit: 4000,
+			UserID:          user.ID,
+			ChatID:          int64(user.ID)*1000 + time.Now().Unix()%1000, // Unique chat ID
+			ThreadID:        &newThreadID,
+			ThreadTitle:     &title,
+			Temperature:     1.0, // Default values
+			ModelName:       defaultModelName,
+			Stream:          true,
+			ContextLimit:    4000,
+			ConversationAge: 1,
 		}
 
 		// Apply custom settings if provided
