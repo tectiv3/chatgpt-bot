@@ -4,15 +4,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
-	"github.com/meinside/openai-go"
 	"github.com/tectiv3/chatgpt-bot/opus"
-	"github.com/tectiv3/go-lame"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -35,7 +34,7 @@ func convertToWav(r io.Reader) ([]byte, error) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			Log.Fatal(err)
+			return nil, err
 		}
 		pcm := pcmbuf[:n*1]
 
@@ -45,14 +44,18 @@ func convertToWav(r io.Reader) ([]byte, error) {
 		}
 	}
 
-	return output.Bytes(), err
+	// Patch WAV header sizes now that we know the total data length
+	buf := output.Bytes()
+	dataSize := uint32(len(buf) - 44) // 44 = WAV header size
+	binary.LittleEndian.PutUint32(buf[4:8], dataSize+36)
+	binary.LittleEndian.PutUint32(buf[40:44], dataSize)
+
+	return buf, nil
 }
 
-// Helper function to create a new WAV writer
 func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample int) (*wavWriter, error) {
 	var header wavHeader
 
-	// Set header values
 	header.RIFFID = [4]byte{'R', 'I', 'F', 'F'}
 	header.WAVEID = [4]byte{'W', 'A', 'V', 'E'}
 	header.FMTID = [4]byte{'f', 'm', 't', ' '}
@@ -65,7 +68,6 @@ func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample in
 	header.BlockAlign = uint16(numChannels * bitsPerSample / 8)
 	header.DataID = [4]byte{'d', 'a', 't', 'a'}
 
-	// Write header
 	err := binary.Write(w, binary.LittleEndian, &header)
 	if err != nil {
 		return nil, err
@@ -74,9 +76,7 @@ func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample in
 	return &wavWriter{w: w}, nil
 }
 
-// WriteSamples Write samples to the WAV file
 func (ww *wavWriter) WriteSamples(samples []float32) error {
-	// Convert float32 samples to int16 samples
 	int16Samples := make([]int16, len(samples))
 	for i, s := range samples {
 		if s > 1.0 {
@@ -86,27 +86,7 @@ func (ww *wavWriter) WriteSamples(samples []float32) error {
 		}
 		int16Samples[i] = int16(s * 32767)
 	}
-	// Write int16 samples to the WAV file
 	return binary.Write(ww.w, binary.LittleEndian, &int16Samples)
-}
-
-func wavToMp3(wav []byte) []byte {
-	reader := bytes.NewReader(wav)
-	wavHdr, err := lame.ReadWavHeader(reader)
-	if err != nil {
-		Log.Warn("not a wav file", "error=", err.Error())
-		return nil
-	}
-	output := new(bytes.Buffer)
-	wr, _ := lame.NewWriter(output)
-	defer wr.Close()
-
-	wr.EncodeOptions = wavHdr.ToEncodeOptions()
-	if _, err := io.Copy(wr, reader); err != nil {
-		return nil
-	}
-
-	return output.Bytes()
 }
 
 func (s *Server) handleVoice(c tele.Context) {
@@ -121,160 +101,100 @@ func (s *Server) handleVoice(c tele.Context) {
 		f, err := c.Bot().FileByID(audioFile.FileID)
 		if err != nil {
 			Log.Warn("Error getting file ID", "error=", err)
+			_ = c.Send("Voice error: failed to get file ID")
 			return
 		}
-		// start reader from f.FilePath
 		reader, err = os.Open(f.FilePath)
 		if err != nil {
 			Log.Warn("Error opening file", "error=", err)
+			_ = c.Send("Voice error: failed to open audio file")
 			return
 		}
 	} else {
 		reader, err = c.Bot().File(&audioFile)
 		if err != nil {
 			Log.Warn("Error getting file content", "error=", err)
+			_ = c.Send("Voice error: failed to download audio")
 			return
 		}
 	}
 	defer reader.Close()
 
-	//body, err := ioutil.ReadAll(reader)
-	//if err != nil {
-	//	fmt.Println("Error reading file content:", err)
-	//	return nil
-	//}
-
 	wav, err := convertToWav(reader)
 	if err != nil {
 		Log.Warn("failed to convert to wav", "error=", err)
+		_ = c.Send("Voice error: failed to convert audio")
 		return
 	}
-	mp3 := wavToMp3(wav)
-	if mp3 == nil {
-		Log.Warn("failed to convert to mp3")
-		return
-	}
-	audio := openai.NewFileParamFromBytes(mp3)
-	transcript, err := s.openAI.CreateTranscription(audio, "whisper-1", nil)
+
+	transcript, err := s.transcribe(wav)
 	if err != nil {
-		Log.Warn("failed to create transcription", "error=", err)
-		return
-	}
-	if transcript.JSON == nil &&
-		transcript.Text == nil &&
-		transcript.SRT == nil &&
-		transcript.VerboseJSON == nil &&
-		transcript.VTT == nil {
-		Log.Warn("There was no returned data")
-
+		Log.Warn("failed to transcribe", "error=", err)
+		_ = c.Send("Voice error: transcription failed")
 		return
 	}
 
-	if strings.HasPrefix(strings.ToLower(*transcript.Text), "reset") {
+	if strings.HasPrefix(strings.ToLower(transcript), "reset") {
 		chat := s.getChat(c.Chat(), c.Sender())
 		s.deleteHistory(chat.ID)
-
-		v := &tele.Voice{File: tele.FromDisk("erased.ogg")}
-		_ = c.Send(v)
-
 		return
 	}
 
-	s.complete(c, *transcript.Text, false)
-	chat := s.getChat(c.Chat(), c.Sender())
-	sentMessage := chat.getSentMessage(c)
-	response := sentMessage.Text
+	// Always show transcript as a separate reply
+	transcriptText := fmt.Sprintf("_Transcript:_\n\n%s", transcript)
+	_, _ = c.Bot().Send(c.Recipient(), transcriptText, "text", &tele.SendOptions{
+		ReplyTo:   c.Message(),
+		ParseMode: tele.ModeMarkdown,
+	})
 
-	Log.WithField("user", c.Sender().Username).Info("Response length=", len(response))
-
-	if len(response) == 0 {
+	// Forwarded voice — transcript only, no AI reply
+	if c.Message().IsForwarded() {
 		return
 	}
 
-	s.sendAudio(c, response)
+	s.complete(c, transcript)
 }
 
-func (s *Server) sendAudio(c tele.Context, text string) {
-	url := "https://api.openai.com/v1/audio/speech"
-	body := map[string]string{
-		"model":           "tts-1",
-		"input":           text,
-		"voice":           "alloy",
-		"response_format": "opus",
-		"speed":           "1",
+// transcribe sends WAV audio to the configured whisper endpoint
+func (s *Server) transcribe(wav []byte) (string, error) {
+	if s.conf.WhisperEndpoint == "" {
+		return "", fmt.Errorf("whisper_endpoint not configured")
 	}
-	jsonStr, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
-	req.Header.Set("Authorization", "Bearer "+s.conf.OpenAIAPIKey)
-	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "audio.wav")
 	if err != nil {
-		Log.Warn("failed to send request", "error=", err)
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := part.Write(wav); err != nil {
+		return "", fmt.Errorf("failed to write audio: %w", err)
+	}
+	writer.Close()
+
+	resp, err := http.Post(s.conf.WhisperEndpoint, writer.FormDataContentType(), &body)
+	if err != nil {
+		return "", fmt.Errorf("whisper request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	out, err := os.CreateTemp("", "chatbot")
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("whisper returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Text string `json:"text"`
+	}
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		Log.Warn("failed to create temp file", "error=", err)
-		return
+		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	_, err = io.Copy(out, resp.Body)
-	if err := out.Close(); err != nil {
-		return
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		// Fallback: treat as plain text
+		return strings.TrimSpace(string(respBody)), nil
 	}
 
-	v := &tele.Voice{File: tele.FromDisk(out.Name())}
-	defer os.Remove(out.Name())
-	_ = c.Send(v)
-}
-
-func (s *Server) textToSpeech(c tele.Context, text, lang string) error {
-	switch lang {
-	case "en":
-	case "fr":
-	case "ru":
-		break
-	default:
-		s.sendAudio(c, text)
-		return nil
-	}
-	if len(s.conf.PiperDir) == 0 {
-		return c.Send("PiperDir is not set")
-	}
-	cmd := exec.Command(s.conf.PiperDir+"piper", "-m", s.conf.PiperDir+lang+".onnx", "-f", "-")
-
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-	go io.Copy(os.Stderr, stderr)
-
-	out, err := os.CreateTemp("", "piper.wav")
-	if err != nil {
-		return c.Send("Error creating temp file: " + err.Error())
-	}
-	defer out.Close()
-
-	if err := cmd.Start(); err != nil {
-		return c.Send("Error starting command: " + err.Error())
-	}
-	if _, err := stdin.Write([]byte(text)); err != nil {
-		return c.Send("Error writing to command: " + err.Error())
-	}
-	stdin.Close()
-	_, err = io.Copy(out, stdout)
-	if err != nil {
-		return c.Send("Error reading from the command: " + err.Error())
-	}
-	if err := cmd.Wait(); err != nil {
-		return c.Send("Error waiting for command: " + err.Error())
-	}
-
-	Log.WithField("user", c.Sender().Username).Info("TTS done")
-	v := &tele.Voice{File: tele.FromDisk(out.Name())}
-	defer os.Remove(out.Name())
-
-	return c.Send(v)
+	return result.Text, nil
 }

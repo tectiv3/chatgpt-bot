@@ -1,10 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"github.com/meinside/openai-go"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -12,8 +10,6 @@ func (s *Server) handleImage(c tele.Context) {
 	photo := c.Message().Photo.File
 
 	var fileName string
-	// var err error
-	// var reader io.ReadCloser
 
 	if s.conf.TelegramServerURL != "" {
 		f, err := c.Bot().FileByID(photo.FileID)
@@ -21,12 +17,6 @@ func (s *Server) handleImage(c tele.Context) {
 			Log.Warn("Error getting file ID", "error=", err)
 			return
 		}
-		// start reader from f.FilePath
-		//reader, err = os.Open(f.FilePath)
-		//if err != nil {
-		//	Log.Warn("Error opening file", "error=", err)
-		//	return
-		//}
 		fileName = f.FilePath
 	} else {
 		out, err := os.Create("uploads/" + photo.FileID + ".jpg")
@@ -41,63 +31,9 @@ func (s *Server) handleImage(c tele.Context) {
 		fileName = out.Name()
 	}
 
-	//defer reader.Close()
-	//
-	//bytes, err := io.ReadAll(reader)
-	//if err != nil {
-	//	Log.Warn("Error reading file content", "error=", err)
-	//	return
-	//}
-	//
-	//var base64Encoding string
-	//
-	//// Determine the content type of the image file
-	//mimeType := http.DetectContentType(bytes)
-	//
-	//// Prepend the appropriate URI scheme header depending
-	//// on the MIME type
-	//switch mimeType {
-	//case "image/jpeg":
-	//	base64Encoding += "data:image/jpeg;base64,"
-	//case "image/png":
-	//	base64Encoding += "data:image/png;base64,"
-	//}
-	//
-	//// Append the base64 encoded output
-	//encoded := base64Encoding + toBase64(bytes)
-
 	chat := s.getChat(c.Chat(), c.Sender())
 	chat.addImageToDialog(c.Message().Caption, fileName)
 	s.db.Save(&chat)
 
-	s.complete(c, "", true)
-}
-
-func (s *Server) textToImage(c tele.Context, text string, hd bool) error {
-	Log.WithField("user", c.Sender().Username).Info("generating image")
-	options := openai.ImageOptions{}.SetResponseFormat(openai.IamgeResponseFormatURL).
-		SetSize(openai.ImageSize1024x1024_DallE3).
-		SetN(1).
-		SetModel("dall-e-3")
-	if hd {
-		options.SetQuality("hd")
-	}
-
-	created, err := s.openAI.CreateImage(text, options)
-	if err != nil {
-		return fmt.Errorf("failed to create image: %s", err)
-	}
-
-	if len(created.Data) <= 0 {
-		return fmt.Errorf("no items returned")
-	}
-
-	Log.WithField("user", c.Sender().Username).WithField("results", len(created.Data)).Info("image generation complete")
-
-	for _, item := range created.Data {
-		m := &tele.Photo{File: tele.FromURL(*item.URL)}
-		_ = c.Reply(c.Message(), m)
-	}
-
-	return nil
+	s.complete(c, "")
 }

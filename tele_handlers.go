@@ -130,7 +130,7 @@ func (s *Server) onText(c tele.Context) {
 		return
 	}
 
-	s.complete(c, message, true)
+	s.complete(c, message)
 }
 
 func (s *Server) onVoice(c tele.Context) {
@@ -185,7 +185,7 @@ func (s *Server) onTranslate(c tele.Context, prefix string) {
 		query = query[len(command):]
 	}
 
-	s.complete(c, fmt.Sprintf("%s\n%s", prefix, query), true)
+	s.complete(c, fmt.Sprintf("%s\n%s", prefix, query))
 }
 
 func (s *Server) onGetUsers(c tele.Context) {

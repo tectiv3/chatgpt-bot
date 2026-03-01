@@ -14,10 +14,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
-	"github.com/tectiv3/anthropic-go"
-	"github.com/tectiv3/awsnova-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"golang.org/x/crypto/ssh/terminal"
 	"gorm.io/driver/sqlite"
@@ -59,8 +56,6 @@ func main() {
 	}
 
 	if conf, err := loadConfig(confFilepath); err == nil {
-		apiKey := conf.OpenAIAPIKey
-		orgID := conf.OpenAIOrganizationID
 		level := logger.Error
 		if conf.Verbose {
 			//	level = logger.Info
@@ -96,25 +91,17 @@ func main() {
 			panic("failed to migrate role")
 		}
 
+
+		if len(conf.Models) == 0 {
+			panic("config.json must contain at least one model in 'models' array")
+		}
+
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
-			conf:   conf,
-			db:     db,
-			openAI: openai.NewClient(apiKey, orgID),
-			nova: awsnova.NewClient(conf.AWSRegion, conf.AWSModelID, awsnova.AWSCredentials{
-				AccessKeyID:     conf.AWSAccessKeyID,
-				SecretAccessKey: conf.AWSSecretAccessKey,
-			}),
-			// Initialize rate limiter: 20 requests per minute per user
-			rateLimiter: NewRateLimiter(20, time.Minute),
-			// Allow max 3 concurrent polling connections per user
+			conf:              conf,
+			db:                db,
+			rateLimiter:       NewRateLimiter(20, time.Minute),
 			connectionManager: NewConnectionManager(3),
-		}
-		if conf.AnthropicEnabled {
-			server.anthropic = anthropic.New(anthropic.WithAPIKey(conf.AnthropicAPIKey))
-		}
-		if conf.GeminiEnabled {
-			server.gemini = openai.NewClient(conf.GeminiAPIKey, "").SetBaseURL("https://generativelanguage.googleapis.com/v1beta/openai")
 		}
 		l = i18n.New("ru", "en")
 

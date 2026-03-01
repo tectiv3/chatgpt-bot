@@ -79,6 +79,14 @@ $ systemctl daemon-reload
 
 and `systemctl` enable|start|restart|stop the service.
 
+## Upgrading to v1
+
+If upgrading from an older version, run the following SQL on your database to rename the column:
+
+```sql
+ALTER TABLE chat_messages RENAME COLUMN annotations TO citations;
+```
+
 ## License
 
 The MIT License (MIT)
