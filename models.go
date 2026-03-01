@@ -11,9 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meinside/openai-go"
-	"github.com/tectiv3/anthropic-go"
-	"github.com/tectiv3/awsnova-go"
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
 )
@@ -24,58 +21,34 @@ type config struct {
 	TelegramBotToken  string `json:"telegram_bot_token"`
 	TelegramServerURL string `json:"telegram_server_url"`
 
-	Models []AiModel `json:"models"`
+	Models       []AiModel `json:"models"`
+	DefaultModel string    `json:"default_model"`
 
-	// openai api
-	OpenAIAPIKey         string `json:"openai_api_key"`
-	OpenAIOrganizationID string `json:"openai_org_id"`
-	OpenAILatestModel    string `json:"openai_latest_model"`
-
-	OllamaURL     string `json:"ollama_url"`
-	OllamaEnabled bool   `json:"ollama_enabled"`
-
-	GroqAPIKey string `json:"groq_api_key"`
-
-	AnthropicAPIKey  string `json:"anthropic_api_key"`
-	AnthropicEnabled bool   `json:"anthropic_enabled"`
-
-	AWSAccessKeyID     string `json:"aws_access_key_id"`
-	AWSSecretAccessKey string `json:"aws_secret_access_key"`
-	AWSModelID         string `json:"aws_model_id"`
-	AWSRegion          string `json:"aws_region"`
-	AWSEnabled         bool   `json:"aws_enabled"`
-
-	GeminiEnabled bool   `json:"gemini_enabled"`
-	GeminiAPIKey  string `json:"gemini_api_key"`
+	AnthropicAPIKey string `json:"anthropic_api_key"`
 
 	// other configurations
 	AllowedTelegramUsers []string `json:"allowed_telegram_users"`
 	Verbose              bool     `json:"verbose,omitempty"`
-	PiperDir             string   `json:"piper_dir"`
 
 	// Mini app configuration
 	MiniAppEnabled bool   `json:"mini_app_enabled"`
 	WebServerPort  string `json:"web_server_port"`
 	MiniAppURL     string `json:"mini_app_url"`
+
+	WhisperEndpoint string `json:"whisper_endpoint"`
 }
 
 type AiModel struct {
-	ModelID         string `json:"model_id"`
-	Name            string `json:"name"`
-	Provider        string `json:"provider"` // openai, ollama, groq, nova
-	SearchTool      string `json:"search_tool,omitempty"`
-	Reasoning       bool   `json:"reasoning,omitempty"`
-	CodeInterpreter bool   `json:"code_interpreter,omitempty"`
+	ModelID   string `json:"model_id"`
+	Name      string `json:"name"`
+	Reasoning bool   `json:"reasoning,omitempty"`
+	WebSearch bool   `json:"web_search,omitempty"`
 }
 
 type Server struct {
 	sync.RWMutex
 	conf      config
 	users     []string
-	openAI    *openai.Client
-	anthropic *anthropic.Client
-	gemini    *openai.Client
-	nova      *awsnova.Client
 	bot       *tele.Bot
 	db        *gorm.DB
 	webServer *http.Server
@@ -230,11 +203,11 @@ type ChatMessage struct {
 	UpdatedAt time.Time
 	ChatID    int64 `sql:"chat_id" json:"chat_id" gorm:"index"`
 
-	Role       openai.ChatMessageRole `json:"role"`
-	ToolCallID *string                `json:"tool_call_id,omitempty"`
-	Content    *string                `json:"content,omitempty"`
-	ImagePath  *string                `json:"image_path,omitempty"`
-	Filename   *string                `json:"filename,omitempty"`
+	Role       string  `json:"role"`
+	ToolCallID *string `json:"tool_call_id,omitempty"`
+	Content    *string `json:"content,omitempty"`
+	ImagePath  *string `json:"image_path,omitempty"`
+	Filename   *string `json:"filename,omitempty"`
 
 	// Context management
 	IsLive      bool   `json:"is_live" gorm:"default:true;index"`  // If false, not sent to model
@@ -247,31 +220,32 @@ type ChatMessage struct {
 	ResponseTimeMs *int64  `json:"response_time_ms,omitempty" gorm:"nullable"`
 	FinishReason   *string `json:"finish_reason,omitempty" gorm:"size:50;nullable"`
 
-	Annotations Annotations `json:"annotations,omitempty" gorm:"type:json"`
+	Citations Citations `json:"citations,omitempty" gorm:"type:json"`
 
 	ToolCalls ToolCalls `json:"tool_calls,omitempty" gorm:"type:text"`
 }
 
-type Annotations []AnnotationData
-
-type AnnotationData struct {
-	openai.Annotation
-	LocalFilePath *string `json:"local_file_path,omitempty"`
+type Citation struct {
+	URL       string `json:"url"`
+	Title     string `json:"title"`
+	CitedText string `json:"cited_text,omitempty"`
 }
 
+type Citations []Citation
+
 // Value implements the driver.Valuer interface for database storage
-func (a Annotations) Value() (driver.Value, error) {
-	if a == nil {
+func (c Citations) Value() (driver.Value, error) {
+	if c == nil {
 		return nil, nil
 	}
 
-	return json.Marshal(a)
+	return json.Marshal(c)
 }
 
 // Scan implements the sql.Scanner interface for database retrieval
-func (a *Annotations) Scan(value interface{}) error {
+func (c *Citations) Scan(value interface{}) error {
 	if value == nil {
-		*a = nil
+		*c = nil
 		return nil
 	}
 
@@ -280,17 +254,22 @@ func (a *Annotations) Scan(value interface{}) error {
 		return fmt.Errorf("type assertion to []byte failed")
 	}
 
-	return json.Unmarshal(b, &a)
+	return json.Unmarshal(b, &c)
 }
 
 // ToolCalls is a custom type that will allow us to implement
 // the driver.Valuer and sql.Scanner interfaces on a slice of ToolCall.
 type ToolCalls []ToolCall
 
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 type ToolCall struct {
-	ID       string                  `json:"id"`
-	Type     string                  `json:"type"` // == 'function'
-	Function openai.ToolCallFunction `json:"function"`
+	ID       string           `json:"id"`
+	Type     string           `json:"type"` // == 'function'
+	Function ToolCallFunction `json:"function"`
 }
 
 // Value implements the driver.Valuer interface, allowing
@@ -317,12 +296,6 @@ func (tc *ToolCalls) Scan(value interface{}) error {
 	}
 
 	return json.Unmarshal(b, &tc)
-}
-
-type GPTResponse interface {
-	Type() string       // direct, array, image, audio, async
-	Value() interface{} // string, []string
-	CanReply() bool     // if true replyMenu need to be shown
 }
 
 // WAV writer struct
@@ -370,11 +343,6 @@ func in_array(needle string, haystack []string) bool {
 	}
 
 	return false
-}
-
-// AnnotationProcessor interface defines callbacks for platform-specific file handling
-type AnnotationProcessor interface {
-	ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error)
 }
 
 func toBase64(b []byte) string {
