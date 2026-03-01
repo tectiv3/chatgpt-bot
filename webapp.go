@@ -1489,7 +1489,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	if chat.RoleID != nil {
 		system = chat.Role.Prompt
 	}
-	system += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
+	system += fmt.Sprintf("\n\nCurrent date: %s", time.Now().Format("2006-01-02"))
 
 	// Build tools list
 	var tools []anthropic.ToolInterface
