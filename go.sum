@@ -256,8 +256,6 @@ github.com/hashicorp/serf v0.9.6/go.mod h1:TXZNMjZQijwlDvp+r0b63xZ45H7JmCmgg4gpT
 github.com/hashicorp/serf v0.9.7/go.mod h1:TXZNMjZQijwlDvp+r0b63xZ45H7JmCmgg4gpTwn9UV4=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
-github.com/imacks/aws-sigv4 v0.1.1 h1:fxc278QpG1myNoi2LvzR5n0lBm+7ZLu5QVxjELPkzxI=
-github.com/imacks/aws-sigv4 v0.1.1/go.mod h1:Acmjho4qkq/3QQHKbYNfbkpWGuntIu4aLVPyw4o6Nf8=
 github.com/jinzhu/inflection v1.0.0 h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD/E=
 github.com/jinzhu/inflection v1.0.0/go.mod h1:h+uFLlag+Qp1Va5pdKtLDYj+kHp5pxUVkryuEj+Srlc=
 github.com/jinzhu/now v1.1.5 h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
@@ -388,12 +386,6 @@ github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8
 github.com/subosito/gotenv v1.4.1/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
 github.com/tectiv3/anthropic-go v0.1.0 h1:Q/dLxPm/SvRe3Ned8TrKvZwi49k9SpWLa05xFxJtcdg=
 github.com/tectiv3/anthropic-go v0.1.0/go.mod h1:7GyeaaPq5Q3UZGzIsVvx9KgyotwBvHYufcE6j6f6FTY=
-github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117 h1:NOIsMMmwqlbGqfUva1opfXdYxv534V2hAX3u7GjpS54=
-github.com/tectiv3/awsnova-go v0.0.0-20250112173251-e2244ec0b117/go.mod h1:uHQ4ArgV2YTUGdVjrg7QtbN5G9poWcGr8xcs0qgSCto=
-github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794 h1:X1dBW7XXk7ta3uH4bsyWWkuvev0bj2fk+pMkV+jRobQ=
-github.com/tectiv3/go-lame v0.0.0-20240321153525-da7c3c48f794/go.mod h1:L1Df1Q+hQKQpQZnSzNo+qwsmdVMjF7HGpersx/21GP8=
-github.com/tectiv3/openai-go v0.7.2 h1:21vKY5Ez70KHWEmEX5eeWTpJFaQRmVZkqsanSTQs6z0=
-github.com/tectiv3/openai-go v0.7.2/go.mod h1:dgAFcjVzLjIwKgjSycPHjkml63gBRi4b/k7BskxaNaI=
 github.com/telegram-mini-apps/init-data-golang v1.5.0 h1:rtpsmQ/nihkicPvnrdRXmHHtTnPvG1FmxMRZJwMKPz0=
 github.com/telegram-mini-apps/init-data-golang v1.5.0/go.mod h1:GG4HnRx9ocjD4MjjzOw7gf9Ptm0NvFbDr5xqnfFOYuY=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
