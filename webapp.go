@@ -1532,7 +1532,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	for round := 0; round < maxToolRounds; round++ {
 		stream, err := client.Stream(ctx, currentMessages)
 		if err != nil {
-			return result.String(), usage, fmt.Errorf("failed to start Anthropic stream: %v", err)
+			return result.String(), usage, fmt.Errorf("%s", friendlyAPIError(err))
 		}
 
 		accumulator := anthropic.NewResponseAccumulator()
@@ -1596,7 +1596,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 		stream.Close()
 
 		if err := stream.Err(); err != nil {
-			return result.String(), usage, err
+			return result.String(), usage, fmt.Errorf("%s", friendlyAPIError(err))
 		}
 
 		if !accumulator.IsComplete() {

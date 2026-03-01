@@ -44,7 +44,13 @@ func convertToWav(r io.Reader) ([]byte, error) {
 		}
 	}
 
-	return output.Bytes(), nil
+	// Patch WAV header sizes now that we know the total data length
+	buf := output.Bytes()
+	dataSize := uint32(len(buf) - 44) // 44 = WAV header size
+	binary.LittleEndian.PutUint32(buf[4:8], dataSize+36)
+	binary.LittleEndian.PutUint32(buf[40:44], dataSize)
+
+	return buf, nil
 }
 
 func newWavWriter(w io.Writer, sampleRate int, numChannels int, bitsPerSample int) (*wavWriter, error) {
@@ -95,17 +101,20 @@ func (s *Server) handleVoice(c tele.Context) {
 		f, err := c.Bot().FileByID(audioFile.FileID)
 		if err != nil {
 			Log.Warn("Error getting file ID", "error=", err)
+			_ = c.Send("Voice error: failed to get file ID")
 			return
 		}
 		reader, err = os.Open(f.FilePath)
 		if err != nil {
 			Log.Warn("Error opening file", "error=", err)
+			_ = c.Send("Voice error: failed to open audio file")
 			return
 		}
 	} else {
 		reader, err = c.Bot().File(&audioFile)
 		if err != nil {
 			Log.Warn("Error getting file content", "error=", err)
+			_ = c.Send("Voice error: failed to download audio")
 			return
 		}
 	}
@@ -114,12 +123,14 @@ func (s *Server) handleVoice(c tele.Context) {
 	wav, err := convertToWav(reader)
 	if err != nil {
 		Log.Warn("failed to convert to wav", "error=", err)
+		_ = c.Send("Voice error: failed to convert audio")
 		return
 	}
 
 	transcript, err := s.transcribe(wav)
 	if err != nil {
 		Log.Warn("failed to transcribe", "error=", err)
+		_ = c.Send("Voice error: transcription failed")
 		return
 	}
 

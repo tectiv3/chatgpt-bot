@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,6 +13,32 @@ import (
 	"github.com/tectiv3/anthropic-go"
 	tele "gopkg.in/telebot.v3"
 )
+
+// friendlyAPIError extracts a human-readable message from Anthropic ClientError,
+// falling back to err.Error() for other error types.
+func friendlyAPIError(err error) string {
+	var clientErr *anthropic.ClientError
+	if !errors.As(err, &clientErr) {
+		return err.Error()
+	}
+
+	// Error() returns "provider api error (status N): {json body}"
+	// Extract the JSON portion after the prefix
+	raw := clientErr.Error()
+	if idx := strings.Index(raw, ": {"); idx != -1 {
+		body := raw[idx+2:]
+		var parsed struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(body), &parsed) == nil && parsed.Error.Message != "" {
+			return fmt.Sprintf("API error (%d): %s", clientErr.StatusCode(), parsed.Error.Message)
+		}
+	}
+
+	return err.Error()
+}
 
 func (s *Server) complete(c tele.Context, message string, reply bool) {
 	chat := s.getChat(c.Chat(), c.Sender())
@@ -90,7 +118,7 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		stream, err := client.Stream(ctx, dialog)
 		if err != nil {
 			Log.WithField("user", c.Sender().Username).Error(err)
-			_, _ = c.Bot().Edit(sentMessage, err.Error())
+			_, _ = c.Bot().Edit(sentMessage, friendlyAPIError(err))
 			return
 		}
 
@@ -144,7 +172,7 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 				_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial: "+result.String())
 			} else {
 				Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
-				_, _ = c.Bot().Edit(sentMessage, "Error: "+err.Error())
+				_, _ = c.Bot().Edit(sentMessage, "Error: "+friendlyAPIError(err))
 			}
 			return
 		}
