@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/meinside/openai-go"
 	log "github.com/sirupsen/logrus"
+	"github.com/tectiv3/anthropic-go"
 	initdata "github.com/telegram-mini-apps/init-data-golang"
 	"gorm.io/gorm"
 )
@@ -92,7 +92,7 @@ type MessageResponse struct {
 	ResponseTimeMs *int64  `json:"response_time_ms,omitempty"`
 	FinishReason   *string `json:"finish_reason,omitempty"`
 
-	Annotations Annotations `json:"annotations,omitempty"`
+	Citations Citations `json:"citations,omitempty"`
 }
 
 type ChatWithThreadResponse struct {
@@ -101,9 +101,8 @@ type ChatWithThreadResponse struct {
 }
 
 type ModelResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type RoleResponse struct {
@@ -494,7 +493,7 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		ThreadID:     &threadID,
 		ThreadTitle:  &title,
 		Temperature:  1.0, // Default values
-		ModelName:    "gpt-4o",
+		ModelName:    s.conf.Models[0].ModelID,
 		Stream:       true,
 		ContextLimit: 40000,
 	}
@@ -672,19 +671,9 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			imageData = &imageURL
 		}
 
-		processedAnnotations := make(Annotations, 0, len(msg.Annotations))
-		for _, ann := range msg.Annotations {
-			processedAnn := ann
-			if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
-				url := s.filePathToURL(*ann.LocalFilePath)
-				processedAnn.LocalFilePath = &url
-			}
-			processedAnnotations = append(processedAnnotations, processedAnn)
-		}
-
 		response[i] = MessageResponse{
 			ID:          msg.ID,
-			Role:        string(msg.Role),
+			Role:        msg.Role,
 			Content:     msg.Content,
 			CreatedAt:   msg.CreatedAt,
 			IsLive:      msg.IsLive,
@@ -699,7 +688,7 @@ func (s *Server) getThreadMessages(w http.ResponseWriter, r *http.Request, threa
 			ResponseTimeMs: msg.ResponseTimeMs,
 			FinishReason:   msg.FinishReason,
 
-			Annotations: processedAnnotations,
+			Citations: msg.Citations,
 		}
 	}
 
@@ -767,7 +756,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 			ThreadID:     &newThreadID,
 			ThreadTitle:  &title,
 			Temperature:  1.0, // Default values
-			ModelName:    "gpt-4o",
+			ModelName:    s.conf.Models[0].ModelID,
 			Stream:       true,
 			ContextLimit: 4000,
 		}
@@ -879,7 +868,6 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 		logger.WithField("error", err).Warn("Failed to summarize context")
 	}
 
-	// Always use streaming response for OpenAI models in miniapp
 	s.handleStreamingResponse(w, r, &chat, &userMessage, isNewThread)
 }
 
@@ -1134,19 +1122,15 @@ func (s *Server) updateThreadTitle(w http.ResponseWriter, r *http.Request, threa
 }
 
 func (s *Server) getAvailableModels(w http.ResponseWriter, r *http.Request) {
-	// Filter to only return OpenAI models
-	var openaiModels []ModelResponse
+	models := make([]ModelResponse, 0, len(s.conf.Models))
 	for _, model := range s.conf.Models {
-		if model.Provider == "openai" {
-			openaiModels = append(openaiModels, ModelResponse{
-				ID:       model.ModelID,
-				Name:     model.Name,
-				Provider: model.Provider,
-			})
-		}
+		models = append(models, ModelResponse{
+			ID:   model.ModelID,
+			Name: model.Name,
+		})
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string][]ModelResponse{"models": openaiModels})
+	s.writeJSON(w, http.StatusOK, map[string][]ModelResponse{"models": models})
 }
 
 // Handle /api/roles (GET and POST)
@@ -1440,59 +1424,46 @@ func (s *Server) updateThreadTokens(chatID int64, inputTokens, outputTokens int)
 }
 
 func (s *Server) generateThreadTitle(initialMessage string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	messages := []openai.ChatMessage{
-		{Role: "system", Content: "Generate a short, descriptive title (max 50 chars) for this conversation based on the user's first message. Reply with just the title, no quotes or extra text."},
-		{Role: "user", Content: initialMessage},
-	}
-
-	response, err := s.openAI.CreateChatCompletionWithContext(ctx, miniModel, messages, openai.ChatCompletionOptions{}.SetTemperature(0.3))
+	result, err := s.generateSimple(
+		"Generate a short, descriptive title (max 50 chars) for this conversation based on the user's first message. Reply with just the title, no quotes or extra text.",
+		initialMessage,
+		s.conf.Models[0].ModelID,
+	)
 	if err != nil {
 		return "", err
 	}
 
-	if len(response.Choices) > 0 {
-		if content, ok := response.Choices[0].Message.Content.(string); ok && content != "" {
-			title := strings.TrimSpace(content)
-			if len(title) > 50 {
-				title = title[:47] + "..."
-			}
-			return title, nil
-		}
+	title := strings.TrimSpace(result)
+	if title == "" {
+		return "", fmt.Errorf("no title generated")
+	}
+	if len(title) > 50 {
+		title = title[:47] + "..."
 	}
 
-	return "", fmt.Errorf("no title generated")
+	return title, nil
 }
 
 func (s *Server) generateThreadTitleFromConversation(question, response string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	messages := []openai.ChatMessage{
-		{Role: "system", Content: "Generate a short, descriptive title (max 50 chars) for this conversation based on the user's question and AI response. Reply with just the title, no quotes or extra text."},
-		{Role: "user", Content: question},
-		{Role: "assistant", Content: response},
-		{Role: "user", Content: "Generate a title for this conversation"},
-	}
-
-	apiResponse, err := s.openAI.CreateChatCompletionWithContext(ctx, miniModel, messages, openai.ChatCompletionOptions{}.SetTemperature(0.3))
+	prompt := fmt.Sprintf("User: %s\nAssistant: %s\n\nGenerate a title for this conversation.", question, response)
+	result, err := s.generateSimple(
+		"Generate a short, descriptive title (max 50 chars) for this conversation based on the user's question and AI response. Reply with just the title, no quotes or extra text.",
+		prompt,
+		s.conf.Models[0].ModelID,
+	)
 	if err != nil {
 		return "", err
 	}
 
-	if len(apiResponse.Choices) > 0 {
-		if content, ok := apiResponse.Choices[0].Message.Content.(string); ok && content != "" {
-			title := strings.TrimSpace(content)
-			if len(title) > 50 {
-				title = title[:47] + "..."
-			}
-			return title, nil
-		}
+	title := strings.TrimSpace(result)
+	if title == "" {
+		return "", fmt.Errorf("no title generated")
+	}
+	if len(title) > 50 {
+		title = title[:47] + "..."
 	}
 
-	return "", fmt.Errorf("no title generated")
+	return title, nil
 }
 
 // TokenUsage holds token usage information
@@ -1503,315 +1474,248 @@ type TokenUsage struct {
 	FinishReason string
 }
 
-// Generate response with streaming updates to SSE
-func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, history []openai.ChatMessage, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, *TokenUsage, error) {
+// generateResponseWithStreamingUpdates streams an Anthropic response via SSE to the webapp client
+func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat *Chat, messages []*anthropic.Message, assistantMsg *ChatMessage, w http.ResponseWriter, flusher http.Flusher) (string, *TokenUsage, error) {
 	logger := getLogger(ctx)
 	model := s.getModel(chat.ModelName)
 	if model == nil {
 		return "", nil, fmt.Errorf("model %s not found", chat.ModelName)
 	}
 
-	if model.Provider != "openai" {
-		return "", nil, fmt.Errorf("only OpenAI models are supported in miniapp")
-	}
-
-	type completion struct {
-		event openai.ResponseStreamEvent
-		done  bool
-		err   error
-	}
-	ch := make(chan completion, 1)
-
-	var result strings.Builder
-	var usage *TokenUsage
-	var functionCalls []openai.ResponseOutput
-
-	messages := s.convertDialogToResponseMessages(history)
-
-	instructions := chat.MasterPrompt
+	system := chat.MasterPrompt
 	if chat.RoleID != nil {
-		instructions = chat.Role.Prompt
+		system = chat.Role.Prompt
 	}
-	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
+	system += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
 
-	options := openai.ResponseOptions{}
-	options.SetInstructions(instructions)
-	options.SetMaxOutputTokens(10000)
-	options.SetTemperature(chat.Temperature)
-	options.SetUser(fmt.Sprintf("webapp_user_%d", chat.UserID))
-	options.SetStore(false)
-
-	tools := []any{}
-
+	// Build tools list
+	var tools []anthropic.ToolInterface
 	enabledTools := chat.GetEnabledToolsArray()
 	enabledToolsMap := make(map[string]bool)
 	for _, tool := range enabledTools {
 		enabledToolsMap[tool] = true
 	}
 
+	if enabledToolsMap["search"] && model.WebSearch {
+		tools = append(tools, anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 5}))
+	}
 	if enabledToolsMap["summary"] {
-		tools = append(tools, openai.ResponseTool{
-			Type:        "function",
-			Name:        "make_summary",
-			Description: "Make a summary of a web page from an explicit summarization request.",
-			Parameters: openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
-				SetRequiredParameters([]string{"url"}),
-		})
+		tools = append(tools, s.getTools()...)
 	}
 
-	if enabledToolsMap["search"] {
-		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
-	}
+	// Create a fresh client per request to avoid shared state
+	client := anthropic.New(
+		anthropic.WithAPIKey(s.conf.AnthropicAPIKey),
+		anthropic.WithModel(model.ModelID),
+		anthropic.WithSystemPrompt(system),
+		anthropic.WithMaxTokens(16384),
+	)
 
-	if enabledToolsMap["code"] {
-		tools = append(tools, openai.NewBuiltinToolWithContainer("code_interpreter", "auto"))
+	if !model.Reasoning {
+		temp := chat.Temperature
+		client.Temperature = &temp
 	}
 
 	if len(tools) > 0 {
-		options.SetTools(tools)
-	}
-	aiClient := s.openAI
-
-	if err := aiClient.CreateResponseStreamWithContext(ctx, model.ModelID, messages, options,
-		func(event openai.ResponseStreamEvent, d bool, e error) {
-			ch <- completion{event: event, done: d, err: e}
-			if d {
-				close(ch)
-			}
-		}); err != nil {
-		return "", nil, fmt.Errorf("failed to start OpenAI stream: %v", err)
+		client.Apply(anthropic.WithTools(tools...))
 	}
 
-	for comp := range ch {
-		if comp.err != nil {
-			return result.String(), usage, comp.err
+	var result strings.Builder
+	var usage *TokenUsage
+
+	// Streaming loop with tool-use continuation
+	currentMessages := messages
+	for {
+		stream, err := client.Stream(ctx, currentMessages)
+		if err != nil {
+			return result.String(), usage, fmt.Errorf("failed to start Anthropic stream: %v", err)
 		}
-		event := comp.event
 
-		if comp.done {
-			if len(functionCalls) > 0 {
-				// First, add the assistant's message with tool calls to conversation history
-				assistantMsgContent := result.String()
-				var toolCalls ToolCalls
-				for _, responseOutput := range functionCalls {
-					if responseOutput.Type == "function_call" {
-						toolCall := ToolCall{
-							ID:   responseOutput.CallID,
-							Type: "function",
-							Function: openai.ToolCallFunction{
-								Name:      responseOutput.Name,
-								Arguments: responseOutput.Arguments,
-							},
+		accumulator := anthropic.NewResponseAccumulator()
+
+		for stream.Next() {
+			select {
+			case <-ctx.Done():
+				stream.Close()
+				return result.String(), usage, ctx.Err()
+			default:
+			}
+
+			event := stream.Event()
+			accumulator.AddEvent(event)
+
+			switch event.Type {
+			case anthropic.EventTypeContentBlockStart:
+				if event.ContentBlock != nil {
+					if event.ContentBlock.Type == anthropic.ContentTypeServerToolUse &&
+						event.ContentBlock.Name == "web_search" {
+						// Notify client about web search
+						statusContent := chat.t("Web search started, please wait...")
+						statusResponse := MessageResponse{
+							ID:          assistantMsg.ID,
+							Role:        "assistant",
+							Content:     &statusContent,
+							CreatedAt:   assistantMsg.CreatedAt,
+							IsLive:      true,
+							MessageType: "normal",
 						}
-						toolCalls = append(toolCalls, toolCall)
+						jsonData, _ := json.Marshal(statusResponse)
+						fmt.Fprintf(w, "data: %s\n\n", jsonData)
+						flusher.Flush()
+					} else if event.ContentBlock.Type == anthropic.ContentTypeToolUse {
+						logger.WithField("function", event.ContentBlock.Name).Info("Function call started")
 					}
 				}
 
-				if len(toolCalls) > 0 {
-					assistantMsg.ToolCalls = toolCalls
-					assistantMsg.Content = &assistantMsgContent
-					s.db.Save(assistantMsg)
-				}
-
-				toolResults, err := s.handleResponseFunctionCallsForWebapp(chat, functionCalls)
-				if err != nil {
-					logger.WithField("error", err).Error("Failed to handle function calls")
-					return result.String(), usage, err
-				}
-
-				if toolResults != "" {
-					result.WriteString("\n\n")
-					result.WriteString(toolResults)
+			case anthropic.EventTypeContentBlockDelta:
+				if event.Delta != nil && event.Delta.Type == anthropic.EventDeltaTypeText {
+					result.WriteString(event.Delta.Text)
 
 					if w != nil && flusher != nil {
-						finalContent := result.String()
+						currentContent := result.String()
 						updatedResponse := MessageResponse{
 							ID:          assistantMsg.ID,
 							Role:        "assistant",
-							Content:     &finalContent,
+							Content:     &currentContent,
 							CreatedAt:   assistantMsg.CreatedAt,
-							IsLive:      false,
+							IsLive:      true,
 							MessageType: "normal",
 						}
-
 						jsonData, _ := json.Marshal(updatedResponse)
 						fmt.Fprintf(w, "data: %s\n\n", jsonData)
 						flusher.Flush()
 					}
 				}
 			}
-
-			if event.Response != nil && event.Response.Usage != nil {
-				usage = &TokenUsage{
-					InputTokens:  event.Response.Usage.InputTokens,
-					OutputTokens: event.Response.Usage.OutputTokens,
-					TotalTokens:  event.Response.Usage.TotalTokens,
-				}
-				logger.WithFields(map[string]interface{}{
-					"input_tokens":  usage.InputTokens,
-					"output_tokens": usage.OutputTokens,
-					"total_tokens":  usage.TotalTokens,
-				}).Debug("Done")
-			} else {
-				logger.Debug("No usage data found in response.done event")
-			}
-
-			return result.String(), usage, nil
 		}
 
-		switch event.Type {
-		case "response.output_text.delta":
-			if event.Delta != nil {
-				result.WriteString(*event.Delta)
+		stream.Close()
 
-				// Send SSE update immediately for every token
-				if w != nil && flusher != nil {
-					currentContent := result.String()
-					updatedResponse := MessageResponse{
-						ID:          assistantMsg.ID,
-						Role:        "assistant",
-						Content:     &currentContent,
-						CreatedAt:   assistantMsg.CreatedAt,
-						IsLive:      true,
-						MessageType: "normal",
-					}
+		if err := stream.Err(); err != nil {
+			return result.String(), usage, err
+		}
 
-					jsonData, _ := json.Marshal(updatedResponse)
-					fmt.Fprintf(w, "data: %s\n\n", jsonData)
-					flusher.Flush()
-				}
+		if !accumulator.IsComplete() {
+			return result.String(), usage, fmt.Errorf("incomplete response from Anthropic")
+		}
+
+		response := accumulator.Response()
+
+		// Extract usage
+		accUsage := accumulator.Usage()
+		if accUsage.InputTokens > 0 || accUsage.OutputTokens > 0 {
+			if usage == nil {
+				usage = &TokenUsage{}
 			}
-
-		case "response.output_item.added":
-			if event.Item != nil {
-				switch event.Item.Type {
-				case "function_call":
-					logger.WithField("function", event.Item.Name).Info("Function call started")
-				case "web_search_call":
-					currentContent := chat.t("Web search started, please wait...")
-					updatedResponse := MessageResponse{
-						ID:          assistantMsg.ID,
-						Role:        "assistant",
-						Content:     &currentContent,
-						CreatedAt:   assistantMsg.CreatedAt,
-						IsLive:      true,
-						MessageType: "normal",
-					}
-
-					jsonData, _ := json.Marshal(updatedResponse)
-					fmt.Fprintf(w, "data: %s\n\n", jsonData)
-					flusher.Flush()
-				case "code_interpreter_call":
-					currentContent := chat.t("Crafting and executing code, please wait...")
-					updatedResponse := MessageResponse{
-						ID:          assistantMsg.ID,
-						Role:        "assistant",
-						Content:     &currentContent,
-						CreatedAt:   assistantMsg.CreatedAt,
-						IsLive:      true,
-						MessageType: "normal",
-					}
-
-					jsonData, _ := json.Marshal(updatedResponse)
-					fmt.Fprintf(w, "data: %s\n\n", jsonData)
-					flusher.Flush()
-				}
+			usage.InputTokens += accUsage.InputTokens
+			usage.OutputTokens += accUsage.OutputTokens
+			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		}
+		if response.StopReason != "" {
+			if usage == nil {
+				usage = &TokenUsage{}
 			}
+			usage.FinishReason = string(response.StopReason)
+		}
 
-		case "response.output_item.done":
-			if event.Item != nil {
-				switch event.Item.Type {
-				case "message":
-					if event.Item.Status != "" {
-						if usage == nil {
-							usage = &TokenUsage{}
-						}
-						usage.FinishReason = event.Item.Status
-					}
-					if event.Item.Content != nil && len(event.Item.Content) > 0 {
-						annotations := s.ProcessAnnotations(
-							event.Item.Content, &WebappAnnotationProcessor{server: s, logger: logger},
-						)
-						if len(annotations) > 0 {
-							s.StoreAnnotations(assistantMsg, annotations)
-
-							// Send immediate streaming update with annotations to frontend
-							if w != nil && flusher != nil {
-								// Reload message from database to get updated annotations
-								var updatedMsg ChatMessage
-								if err := s.db.First(&updatedMsg, assistantMsg.ID).Error; err == nil {
-									// Process annotations for response (convert file paths to URLs)
-									processedAnnotations := make(Annotations, 0, len(updatedMsg.Annotations))
-									for _, ann := range updatedMsg.Annotations {
-										processedAnn := ann
-										if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
-											url := s.filePathToURL(*ann.LocalFilePath)
-											processedAnn.LocalFilePath = &url
-										}
-										processedAnnotations = append(processedAnnotations, processedAnn)
-									}
-
-									// Send update with current content and annotations
-									currentContent := result.String()
-									annotationResponse := MessageResponse{
-										ID:          assistantMsg.ID,
-										Role:        "assistant",
-										Content:     &currentContent,
-										CreatedAt:   assistantMsg.CreatedAt,
-										IsLive:      true,
-										MessageType: "normal",
-										Annotations: processedAnnotations,
-									}
-
-									jsonData, _ := json.Marshal(annotationResponse)
-									fmt.Fprintf(w, "data: %s\n\n", jsonData)
-									flusher.Flush()
-								}
-							}
-						}
-					}
-				case "function_call":
-					functionCalls = append(functionCalls, *event.Item)
-					logger.WithField("function", event.Item.Name).Info("Function call completed")
+		// Extract citations from text blocks
+		var citations []Citation
+		for _, content := range response.Content {
+			if tc, ok := content.(*anthropic.TextContent); ok {
+				for _, cit := range tc.Citations {
+					citations = append(citations, extractCitation(cit))
 				}
 			}
 		}
+
+		if len(citations) > 0 {
+			s.StoreCitations(assistantMsg, citations)
+
+			if w != nil && flusher != nil {
+				currentContent := result.String()
+				citationResponse := MessageResponse{
+					ID:          assistantMsg.ID,
+					Role:        "assistant",
+					Content:     &currentContent,
+					CreatedAt:   assistantMsg.CreatedAt,
+					IsLive:      true,
+					MessageType: "normal",
+					Citations:   assistantMsg.Citations,
+				}
+				jsonData, _ := json.Marshal(citationResponse)
+				fmt.Fprintf(w, "data: %s\n\n", jsonData)
+				flusher.Flush()
+			}
+		}
+
+		// Check for tool use
+		var toolUses []*anthropic.ToolUseContent
+		for _, content := range response.Content {
+			if tuc, ok := content.(*anthropic.ToolUseContent); ok {
+				toolUses = append(toolUses, tuc)
+			}
+		}
+
+		if len(toolUses) == 0 {
+			// No tool calls, we're done
+			break
+		}
+
+		// Execute tool calls and continue the conversation
+		logger.WithField("count", len(toolUses)).Info("Processing tool calls")
+
+		// Save assistant message with tool call info
+		assistantMsgContent := result.String()
+		var toolCalls ToolCalls
+		for _, tu := range toolUses {
+			toolCalls = append(toolCalls, ToolCall{
+				ID:   tu.ID,
+				Type: "function",
+				Function: ToolCallFunction{
+					Name:      tu.Name,
+					Arguments: string(tu.Input),
+				},
+			})
+		}
+		assistantMsg.ToolCalls = toolCalls
+		assistantMsg.Content = &assistantMsgContent
+		s.db.Save(assistantMsg)
+
+		// Build the assistant response message for continuation
+		var assistantContent []anthropic.Content
+		for _, content := range response.Content {
+			assistantContent = append(assistantContent, content)
+		}
+		currentMessages = append(currentMessages, anthropic.NewMessage("assistant", assistantContent))
+
+		// Execute each tool and collect results
+		notifier := &WebappToolCallNotifier{}
+		var toolResults []anthropic.Content
+		for _, tu := range toolUses {
+			toolResult, err := s.executeToolCall(tu, notifier)
+			if err != nil {
+				logger.WithField("error", err).WithField("tool", tu.Name).Error("Tool call failed")
+				toolResult = fmt.Sprintf("Error: %v", err)
+			}
+			toolResults = append(toolResults, &anthropic.ToolResultContent{
+				ToolUseID: tu.ID,
+				Content:   toolResult,
+			})
+		}
+
+		// Add tool results as a user message
+		currentMessages = append(currentMessages, anthropic.NewMessage("user", toolResults))
+	}
+
+	if usage != nil {
+		logger.WithFields(map[string]interface{}{
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+			"total_tokens":  usage.TotalTokens,
+		}).Debug("Streaming complete")
 	}
 
 	return result.String(), usage, nil
-}
-
-// handleResponseFunctionCallsForWebapp processes function calls for the web app
-func (s *Server) handleResponseFunctionCallsForWebapp(chat *Chat, functions []openai.ResponseOutput) (string, error) {
-	var toolCalls []openai.ToolCall
-
-	for _, responseOutput := range functions {
-		if responseOutput.Type != "function_call" {
-			continue
-		}
-
-		toolCall := openai.ToolCall{
-			ID:   responseOutput.CallID,
-			Type: "function",
-			Function: openai.ToolCallFunction{
-				Name:      responseOutput.Name,
-				Arguments: responseOutput.Arguments,
-			},
-		}
-		toolCalls = append(toolCalls, toolCall)
-	}
-
-	notifier := &WebappToolCallNotifier{}
-	result, toolMessages, err := s.handleToolCallsCore(chat, toolCalls, notifier)
-	for _, msg := range toolMessages {
-		chat.addMessageToDialog(msg)
-	}
-	if len(result) > 0 {
-		s.saveHistory(chat)
-	}
-
-	return result, err
 }
 
 // Handle image upload with enhanced security and validation
@@ -1986,7 +1890,7 @@ func (s *Server) summarizeOldMessages(chat *Chat) error {
 		return err
 	}
 
-	// Create summary using miniModel
+	// Create summary of old messages
 	summary, err := s.createMessagesSummary(messages)
 	if err != nil {
 		return err
@@ -2015,131 +1919,18 @@ func (s *Server) summarizeOldMessages(chat *Chat) error {
 }
 
 func (s *Server) createMessagesSummary(messages []ChatMessage) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Format messages for summarization
 	var conversation strings.Builder
 	for _, msg := range messages {
 		if msg.Content != nil {
-			conversation.WriteString(fmt.Sprintf("%s: %s\n", string(msg.Role), *msg.Content))
+			conversation.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, *msg.Content))
 		}
 	}
 
-	prompt := []openai.ChatMessage{
-		{Role: "system", Content: "Summarize this conversation concisely, preserving key information and context. Focus on important decisions, facts, and ongoing topics."},
-		{Role: "user", Content: conversation.String()},
-	}
-
-	response, err := s.openAI.CreateChatCompletionWithContext(ctx, miniModel, prompt,
-		openai.ChatCompletionOptions{}.SetTemperature(0.2))
-	if err != nil {
-		return "", err
-	}
-
-	if len(response.Choices) > 0 {
-		if content, ok := response.Choices[0].Message.Content.(string); ok {
-			return content, nil
-		}
-	}
-
-	return "", fmt.Errorf("no summary generated")
-}
-
-// Helper functions for thread message processing
-
-func (s *Server) convertMessagesToOpenAI(messages []ChatMessage, chat *Chat, logger *log.Entry) []openai.ChatMessage {
-	var history []openai.ChatMessage
-
-	// Add system prompt/role if exists
-	if chat.RoleID != nil && chat.Role.Prompt != "" {
-		history = append(history, openai.ChatMessage{
-			Role:    "system",
-			Content: chat.Role.Prompt,
-		})
-	} else if chat.MasterPrompt != "" {
-		history = append(history, openai.ChatMessage{
-			Role:    "system",
-			Content: chat.MasterPrompt,
-		})
-	}
-
-	// Convert chat messages
-	for _, msg := range messages {
-		if msg.Content == nil {
-			continue
-		}
-
-		var message openai.ChatMessage
-
-		if msg.ImagePath != nil {
-			reader, err := os.Open(*msg.ImagePath)
-			if err != nil {
-				logger.Warn("Error opening file", "error=", err)
-				if *msg.Content != "" {
-					history = append(history, openai.ChatMessage{
-						Role:    openai.ChatMessageRole(msg.Role),
-						Content: *msg.Content,
-					})
-				}
-				continue
-			}
-			defer reader.Close()
-
-			bytes, err := io.ReadAll(reader)
-			if err != nil {
-				logger.Warn("Error reading file content", "error=", err)
-				if *msg.Content != "" {
-					history = append(history, openai.ChatMessage{
-						Role:    openai.ChatMessageRole(msg.Role),
-						Content: *msg.Content,
-					})
-				}
-				continue
-			}
-
-			if msg.MessageType == "file" {
-				filename := "file"
-				if msg.Filename != nil {
-					filename = *msg.Filename
-				}
-				isPDF := strings.HasSuffix(strings.ToLower(filename), ".pdf")
-				if isPDF {
-					content := []openai.ChatMessageContent{{Type: "text", Text: msg.Content}}
-					content = append(content, openai.NewChatMessageContentFileWithBytes(bytes, filename))
-					logger.Info("Adding PDF file to history", "filename=", filename)
-					message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
-				} else {
-					ext := strings.TrimPrefix(filepath.Ext(filename), ".")
-					if ext == "" {
-						ext = "text"
-					}
-					textContent := *msg.Content
-					if textContent != "" {
-						textContent += "\n\n"
-					}
-					textContent += fmt.Sprintf("```%s\n%s\n```\n[File: %s]", ext, string(bytes), filename)
-					logger.Info("Adding text file to history", "filename=", filename)
-					message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: textContent}
-				}
-			} else {
-				content := []openai.ChatMessageContent{{Type: "text", Text: msg.Content}}
-				content = append(content, openai.NewChatMessageContentWithBytes(bytes))
-				logger.Info("Adding image to history")
-				message = openai.ChatMessage{Role: openai.ChatMessageRole(msg.Role), Content: content}
-			}
-		} else {
-			// Regular text message
-			message = openai.ChatMessage{
-				Role:    openai.ChatMessageRole(msg.Role),
-				Content: *msg.Content,
-			}
-		}
-
-		history = append(history, message)
-	}
-
-	return history
+	return s.generateSimple(
+		"Summarize this conversation concisely, preserving key information and context. Focus on important decisions, facts, and ongoing topics.",
+		conversation.String(),
+		s.conf.Models[0].ModelID,
+	)
 }
 
 // Handle streaming response with Server-Sent Events
@@ -2164,14 +1955,15 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	// Load chat with full relationships
 	s.db.Preload("User").Preload("Role").First(chat, chat.ID)
 
-	// Get live messages for context (now includes the saved user message)
-	var messages []ChatMessage
+	// Get live messages for context and convert to Anthropic format
+	var dbMessages []ChatMessage
 	s.db.Where("chat_id = ? AND is_live = ?", chat.ChatID, true).
 		Order("created_at ASC").
-		Find(&messages)
+		Find(&dbMessages)
 
-	// Convert to OpenAI format (user message is now in DB, no need to append)
-	history := s.convertMessagesToOpenAI(messages, chat, logger)
+	// Store messages in chat.History so getDialog can convert them
+	chat.History = dbMessages
+	history := chat.getDialog(nil)
 
 	// Create assistant message in database
 	assistantMsg := ChatMessage{
@@ -2281,20 +2073,9 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		flusher.Flush()
 	}
 
-	// IMPORTANT: Reload the message from database to ensure we have all annotations
-	// that were processed during the streaming response
+	// Reload message from database to ensure we have all citations
 	if err := s.db.First(&assistantMsg, assistantMsg.ID).Error; err != nil {
-		logger.WithField("error", err).Error("Failed to reload message with annotations")
-	}
-
-	processedAnnotations := make(Annotations, 0, len(assistantMsg.Annotations))
-	for _, ann := range assistantMsg.Annotations {
-		processedAnn := ann
-		if ann.LocalFilePath != nil && *ann.LocalFilePath != "" {
-			url := s.filePathToURL(*ann.LocalFilePath)
-			processedAnn.LocalFilePath = &url
-		}
-		processedAnnotations = append(processedAnnotations, processedAnn)
+		logger.WithField("error", err).Error("Failed to reload message with citations")
 	}
 
 	// Send final message with complete metadata
@@ -2311,7 +2092,7 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 		ModelUsed:      assistantMsg.ModelUsed,
 		ResponseTimeMs: assistantMsg.ResponseTimeMs,
 		FinishReason:   assistantMsg.FinishReason,
-		Annotations:    processedAnnotations,
+		Citations:      assistantMsg.Citations,
 	}
 	jsonData, _ = json.Marshal(finalResponse)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
@@ -2320,35 +2101,6 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, r *http.Request,
 	// Send completion signal
 	fmt.Fprintf(w, "data: {\"type\": \"complete\"}\n\n")
 	flusher.Flush()
-}
-
-// Annotation processing for webapp
-
-// WebappAnnotationProcessor implements AnnotationProcessor for webapp
-type WebappAnnotationProcessor struct {
-	server *Server
-	logger *log.Entry
-}
-
-// ProcessFile saves a file locally and returns the path for webapp
-func (p *WebappAnnotationProcessor) ProcessFile(filename string, data []byte, annotation openai.Annotation, text string) (string, error) {
-	p.logger.WithField("filename", filename).WithField("size", len(data)).Info("Annotation file processed")
-
-	annotationsDir := "uploads/annotations"
-	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create annotations directory: %w", err)
-	}
-
-	// Generate unique filename to avoid conflicts
-	timestamp := time.Now().Unix()
-	localFilename := fmt.Sprintf("%d_%s", timestamp, filename)
-	localPath := filepath.Join(annotationsDir, localFilename)
-
-	if err := os.WriteFile(localPath, data, 0644); err != nil {
-		return "", fmt.Errorf("failed to write annotation file: %w", err)
-	}
-
-	return localPath, nil
 }
 
 func validateString(input string, minLen, maxLen int) error {
@@ -2456,17 +2208,6 @@ func validateUUID(uuidStr string) error {
 	}
 
 	return nil
-}
-
-// filePathToURL converts a file path to a URL path for serving
-func (s *Server) filePathToURL(filePath string) string {
-	// Extract just the filename from the full path
-	parts := strings.Split(filePath, "/")
-	if len(parts) > 0 {
-		filename := parts[len(parts)-1]
-		return "/uploads/annotations/" + filename
-	}
-	return filePath
 }
 
 // estimateTokenCount provides a rough estimate of token count for text

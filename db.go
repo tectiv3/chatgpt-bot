@@ -9,7 +9,7 @@ func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 	s.db.Preload("User").Preload("User.Roles").Preload("Role").Preload("History").FirstOrCreate(&chat, Chat{ChatID: c.ID})
 	if len(chat.MasterPrompt) == 0 {
 		chat.MasterPrompt = masterPrompt
-		chat.ModelName = openAILatest
+		chat.ModelName = s.conf.Models[0].ModelID
 		chat.Temperature = 0.8
 		chat.Stream = true
 		chat.ConversationAge = 1
