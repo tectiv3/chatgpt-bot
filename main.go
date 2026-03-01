@@ -91,10 +91,6 @@ func main() {
 			panic("failed to migrate role")
 		}
 
-		// Rename annotations column to citations
-		if db.Migrator().HasColumn(&ChatMessage{}, "annotations") {
-			db.Migrator().RenameColumn(&ChatMessage{}, "annotations", "citations")
-		}
 
 		if len(conf.Models) == 0 {
 			panic("config.json must contain at least one model in 'models' array")
