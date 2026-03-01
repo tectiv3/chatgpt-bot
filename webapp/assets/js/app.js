@@ -170,7 +170,7 @@ createApp({
 
             // Persistent user preferences
             userPreferences: {
-                selectedModel: 'gpt-4o',
+                selectedModel: null,
                 selectedRole: null,
                 defaultTemperature: 1.0,
                 enableStreaming: true,
@@ -425,7 +425,7 @@ createApp({
 
         getDefaultSettings() {
             return {
-                model_name: this.userPreferences?.selectedModel || 'gpt-4o',
+                model_name: this.userPreferences?.selectedModel || this.models?.[0]?.id || '',
                 temperature: this.userPreferences?.defaultTemperature || 1.0,
                 role_id: this.userPreferences?.selectedRole || null,
                 lang: 'en',
@@ -720,6 +720,15 @@ createApp({
             }
         },
 
+        isModelValid(modelName) {
+            return !modelName || this.models.some(m => m.id === modelName)
+        },
+
+        getModelDisplayName(modelName) {
+            const model = this.models.find(m => m.id === modelName)
+            return model ? model.name : modelName || 'Model'
+        },
+
         // Toggle tool in a specific pane
         toggleToolInPane(paneId, toolName) {
             const pane = this.getPaneById(paneId)
@@ -986,6 +995,11 @@ createApp({
                 pane.settings = {
                     ...this.getDefaultSettings(),
                     ...pane.thread.settings,
+                }
+
+                if (pane.settings.model_name && !this.isModelValid(pane.settings.model_name)) {
+                    pane.settings.model_name = this.models[0]?.id || pane.settings.model_name
+                    this.saveSettingsForPane(paneId)
                 }
 
                 try {
@@ -2125,7 +2139,7 @@ createApp({
                 sidebarCollapsed,
                 paneLayout,
             ] = await Promise.all([
-                this.deviceStorage.getItem('selectedModel', 'gpt-4o'),
+                this.deviceStorage.getItem('selectedModel', null),
                 this.deviceStorage.getItem('selectedRole', null),
                 this.deviceStorage.getItem('defaultTemperature', 1.0),
                 this.deviceStorage.getItem('enableStreaming', true),
