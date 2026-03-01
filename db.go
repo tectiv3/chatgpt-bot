@@ -107,20 +107,15 @@ func (s *Server) findRole(userID uint, name string) *Role {
 }
 
 func (s *Server) getModel(model string) *AiModel {
-	modelName := model
-	if modelName == openAILatest {
-		modelName = s.conf.OpenAILatestModel
-	}
 	for _, m := range s.conf.Models {
-		if m.Name == modelName {
-			return &m
-		}
-		if m.ModelID == modelName {
+		if m.Name == model || m.ModelID == model {
 			return &m
 		}
 	}
-
-	return &AiModel{model, model, "openai", "", false, false}
+	if len(s.conf.Models) > 0 {
+		return &s.conf.Models[0]
+	}
+	return &AiModel{ModelID: model, Name: model}
 }
 
 func (s *Server) getRole(id uint) *Role {
@@ -143,17 +138,17 @@ func (s *Server) resetUserState(user User) {
 	s.db.Model(&User{}).Where("id", user.ID).Update("State", nil)
 }
 
-// StoreAnnotations saves annotations directly to a specific message
-func (s *Server) StoreAnnotations(message *ChatMessage, annotations []AnnotationData) {
-	if len(annotations) == 0 {
+// StoreCitations saves citations directly to a specific message
+func (s *Server) StoreCitations(message *ChatMessage, citations []Citation) {
+	if len(citations) == 0 {
 		return
 	}
 
-	message.Annotations = Annotations(annotations)
+	message.Citations = Citations(citations)
 
 	if message.ID > 0 {
 		if err := s.db.Save(message).Error; err != nil {
-			Log.Errorf("failed to save annotations to database: %w", err)
+			Log.Errorf("failed to save citations to database: %w", err)
 		}
 	}
 }
