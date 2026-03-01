@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -8,12 +9,11 @@ import (
 	"time"
 
 	"github.com/go-shiori/go-readability"
-	"github.com/meinside/openai-go"
+	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	tele "gopkg.in/telebot.v3"
 )
 
-// withBrowserUserAgent creates a RequestWith modifier that sets a realistic browser user agent
 // ToolCallNotifier is an interface for notifying about tool call events
 type ToolCallNotifier interface {
 	OnFunctionCall(functionName string, arguments string)
@@ -65,285 +65,111 @@ func withBrowserUserAgent() readability.RequestWith {
 	}
 }
 
-// getResponseTools converts function tools to format compatible with Responses API
-func (s *Server) getResponseTools() []any {
-	traditionalTools := s.getFunctionTools()
-	responseTools := make([]any, 0, len(traditionalTools))
+// MakeSummaryTool implements anthropic.ToolInterface for web page summarization
+type MakeSummaryTool struct{}
 
-	for _, tool := range traditionalTools {
-		// Convert ChatCompletionTool to ResponseTool format
-		responseTool := openai.ResponseTool{
-			Type:       "function",
-			Name:       tool.Function.Name,
-			Parameters: tool.Function.Parameters,
-		}
-		if tool.Function.Description != nil {
-			responseTool.Description = *tool.Function.Description
-		}
-		responseTools = append(responseTools, responseTool)
+func (t *MakeSummaryTool) Name() string { return "make_summary" }
+func (t *MakeSummaryTool) Description() string {
+	return "Make a summary of a web page from an explicit summarization request."
+}
+func (t *MakeSummaryTool) Schema() *anthropic.Schema {
+	return &anthropic.Schema{
+		Type: anthropic.Object,
+		Properties: map[string]*anthropic.Property{
+			"url": {Type: anthropic.String, Description: "A valid URL to a web page"},
+		},
+		Required: []string{"url"},
 	}
-
-	return responseTools
 }
 
-func (s *Server) getFunctionTools() []openai.ChatCompletionTool {
-	availableTools := []openai.ChatCompletionTool{
-		openai.NewChatCompletionTool(
-			"make_summary",
-			"Make a summary of a web page from an explicit summarization request.",
-			openai.NewToolFunctionParameters().
-				AddPropertyWithDescription("url", "string", "A valid URL to a web page").
-				SetRequiredParameters([]string{"url"}),
-		),
-	}
-
-	// availableTools = append(availableTools,
-	// 	openai.NewChatCompletionTool(
-	// 		"generate_image",
-	// 		"Generate an image based on the input text",
-	// 		openai.NewToolFunctionParameters().
-	// 			AddPropertyWithDescription("text", "string", "The text to generate an image from").
-	// 			AddPropertyWithDescription("hd", "boolean", "Whether to generate an HD image. Default to false.").
-	// 			SetRequiredParameters([]string{"text", "hd"}),
-	// 	),
-	// )
-
-	return availableTools
+// getTools returns the custom tools available for Anthropic
+func (s *Server) getTools() []anthropic.ToolInterface {
+	return []anthropic.ToolInterface{&MakeSummaryTool{}}
 }
 
-// handleResponseFunctionCalls converts ResponseOutput to ToolCalls and delegates to unified handler
-func (s *Server) handleResponseFunctionCalls(chat *Chat, c tele.Context, functions []openai.ResponseOutput) (string, error) {
-	// Convert ResponseOutput function calls to ToolCall format
-	var toolCalls []openai.ToolCall
+// handleAnthropicToolCalls processes tool_use content blocks from Anthropic response
+func (s *Server) handleAnthropicToolCalls(
+	chat *Chat, c tele.Context,
+	response *anthropic.Response, toolUses []anthropic.Content,
+) {
+	notifier := &TelegramToolCallNotifier{chat: chat, c: c, bot: s.bot}
 
-	for _, responseOutput := range functions {
-		// Only process function calls
-		if responseOutput.Type != "function_call" {
+	// Collect text parts from the assistant response
+	var textParts []string
+	for _, content := range response.Content {
+		if tc, ok := content.(*anthropic.TextContent); ok {
+			textParts = append(textParts, tc.Text)
+		}
+	}
+
+	// Build tool call records for chat history
+	var toolCalls []ToolCall
+	for _, tu := range toolUses {
+		if tuc, ok := tu.(*anthropic.ToolUseContent); ok {
+			toolCalls = append(toolCalls, ToolCall{
+				ID:   tuc.ID,
+				Type: "function",
+				Function: ToolCallFunction{
+					Name:      tuc.Name,
+					Arguments: string(tuc.Input),
+				},
+			})
+		}
+	}
+
+	// Store the assistant message (text + tool_use blocks) in dialog history
+	assistantText := strings.Join(textParts, "")
+	chat.addMessageToDialog(ChatMessage{
+		Role:      "assistant",
+		Content:   &assistantText,
+		ToolCalls: toolCalls,
+	})
+
+	// Execute each tool and add results to dialog
+	for _, tu := range toolUses {
+		tuc, ok := tu.(*anthropic.ToolUseContent)
+		if !ok {
 			continue
 		}
 
-		toolCall := openai.ToolCall{
-			ID:   responseOutput.CallID,
-			Type: "function",
-			Function: openai.ToolCallFunction{
-				Name:      responseOutput.Name,
-				Arguments: responseOutput.Arguments,
-			},
-		}
-		toolCalls = append(toolCalls, toolCall)
-	}
-
-	// Use the unified handler with converted tool calls
-	return s.handleToolCalls(chat, c, toolCalls)
-}
-
-func (s *Server) handleFunctionCall(chat *Chat, c tele.Context, response openai.ChatMessage) (string, error) {
-	return s.handleToolCalls(chat, c, response.ToolCalls)
-}
-
-// handleToolCalls processes a slice of tool calls (unified logic for both APIs)
-func (s *Server) handleToolCalls(chat *Chat, c tele.Context, toolCalls []openai.ToolCall) (string, error) {
-	// Create a Telegram notifier wrapper
-	notifier := &TelegramToolCallNotifier{
-		chat: chat,
-		c:    c,
-		bot:  s.bot,
-	}
-
-	result, toolMessages, err := s.handleToolCallsCore(chat, toolCalls, notifier)
-
-	for _, msg := range toolMessages {
-		chat.addMessageToDialog(msg)
-	}
-
-	// Handle continuation based on provider
-	if len(result) > 0 {
-		model := s.getModel(chat.ModelName)
-		if model.Provider == pOpenAI {
-			s.saveHistory(chat)
-
-			return result, nil
-		}
-
-		// For other providers, continue conversation
-		if chat.Stream {
-			_ = s.getStreamAnswer(chat, c, nil)
-
-			return "", nil
-		}
-
-		// Non-streaming mode
-		if model.Provider == pOpenAI {
-			// For OpenAI models, use non-streaming Responses API
-			err := s.getResponse(chat, c, nil)
-			return "", err
-		} else {
-			err := s.getAnswer(chat, c, nil)
-			return "", err
-		}
-
-		s.saveHistory(chat)
-	}
-
-	return "", err
-}
-
-// handleToolCallsCore is the core implementation without Telegram dependencies
-func (s *Server) handleToolCallsCore(chat *Chat, toolCalls []openai.ToolCall, notifier ToolCallNotifier) (string, []openai.ChatMessage, error) {
-	var results []string
-	var toolMessages []openai.ChatMessage
-	var resultErr error
-
-	toolCallsCount := len(toolCalls)
-
-	for i, toolCall := range toolCalls {
-		function := toolCall.Function
-		if function.Name == "" {
-			err := fmt.Errorf("there was no returned function call name")
-			resultErr = err
-			continue
-		}
-
-		Log.WithField("tools", toolCallsCount).WithField("tool", i).WithField("function", function.Name).Info("Function call")
-
-		functionResult, err := s.executeToolCall(chat, toolCall, notifier)
+		result, err := s.executeToolCall(tuc, notifier)
 		if err != nil {
-			Log.WithField("function", function.Name).WithField("error", err).Error("Function call failed")
-			functionResult = fmt.Sprintf("Error: %v", err)
-			resultErr = err
+			result = fmt.Sprintf("Error: %v", err)
 		}
 
-		if functionResult != "" {
-			results = append(results, functionResult)
-
-			toolMessage := openai.NewChatToolMessage(functionResult, toolCall.ID)
-			toolMessages = append(toolMessages, toolMessage)
-		}
+		chat.addToolResultToDialog(tuc.ID, result)
 	}
 
-	combinedResult := ""
-	if len(results) > 0 {
-		combinedResult = strings.Join(results, "\n\n")
-	}
+	s.saveHistory(chat)
 
-	return combinedResult, toolMessages, resultErr
+	// Continue the conversation so the model can incorporate tool results
+	s.getStreamingAnswer(chat, c, nil)
 }
 
 // executeToolCall executes a single tool call
-func (s *Server) executeToolCall(chat *Chat, toolCall openai.ToolCall, notifier ToolCallNotifier) (string, error) {
-	function := toolCall.Function
-
-	// Notify about the function being called
+func (s *Server) executeToolCall(toolUse *anthropic.ToolUseContent, notifier ToolCallNotifier) (string, error) {
 	if notifier != nil {
-		notifier.OnFunctionCall(function.Name, function.Arguments)
+		notifier.OnFunctionCall(toolUse.Name, string(toolUse.Input))
 	}
 
-	switch function.Name {
-	case "text_to_speech":
-		type parsed struct {
-			Text     string `json:"text"`
-			Language string `json:"language"`
-		}
-		var arguments parsed
-		if err := toolCall.ArgumentsInto(&arguments); err != nil {
-			return "", fmt.Errorf("failed to parse arguments: %w", err)
-		}
-
-		// For TTS in Telegram context
-		if teleNotifier, ok := notifier.(*TelegramToolCallNotifier); ok {
-			go s.textToSpeech(teleNotifier.c, arguments.Text, arguments.Language)
-			return "Text-to-speech generation started", nil
-		}
-
-		// For webapp context - generate and return URL
-		// TODO: Implement audio generation and return download URL
-		return "Text-to-speech is being generated", nil
-
-	case "web_to_speech":
-		type parsed struct {
-			URL string `json:"url"`
-		}
-		var arguments parsed
-		if err := toolCall.ArgumentsInto(&arguments); err != nil {
-			return "", fmt.Errorf("failed to parse arguments: %w", err)
-		}
-
-		// For Telegram context
-		if teleNotifier, ok := notifier.(*TelegramToolCallNotifier); ok {
-			go s.pageToSpeech(teleNotifier.c, arguments.URL)
-			return "Web page to speech conversion started", nil
-		}
-
-		// For webapp context
-		// TODO: Implement page-to-speech and return download URL
-		return "Web page to speech conversion started", nil
-
-	case "generate_image":
-		type parsed struct {
-			Text string `json:"text"`
-			HD   bool   `json:"hd"`
-		}
-		var arguments parsed
-		if err := toolCall.ArgumentsInto(&arguments); err != nil {
-			return "", fmt.Errorf("failed to parse arguments: %w", err)
-		}
-
-		// For Telegram context
-		if teleNotifier, ok := notifier.(*TelegramToolCallNotifier); ok {
-			if err := s.textToImage(teleNotifier.c, arguments.Text, arguments.HD); err != nil {
-				return "", fmt.Errorf("failed to generate image: %w", err)
-			}
-			return "Image generated and sent", nil
-		}
-
-		// For webapp context - generate and return URL
-		// TODO: Implement image generation and return URL for display
-		return fmt.Sprintf("Image generation for '%s' started", arguments.Text), nil
-
+	switch toolUse.Name {
 	case "make_summary":
 		type parsed struct {
 			URL string `json:"url"`
 		}
-		var arguments parsed
-		if err := toolCall.ArgumentsInto(&arguments); err != nil {
+		var args parsed
+		if err := json.Unmarshal(toolUse.Input, &args); err != nil {
 			return "", fmt.Errorf("failed to parse arguments: %w", err)
 		}
-
-		Log.Info("Making summary for URL: ", arguments.URL)
-
-		summary, err := s.getPageSummary(arguments.URL)
-		if err != nil {
-			return "", fmt.Errorf("failed to get page summary: %w", err)
-		}
-
-		return summary, nil
+		Log.Info("Making summary for URL: ", args.URL)
+		return s.getPageSummary(args.URL)
 
 	default:
-		return "", fmt.Errorf("unknown function: %s", function.Name)
+		return "", fmt.Errorf("unknown function: %s", toolUse.Name)
 	}
 }
 
-func (s *Server) pageToSpeech(c tele.Context, url string) {
-	defer func() {
-		if err := recover(); err != nil {
-			Log.WithField("error", err).Error("panic: ", string(debug.Stack()))
-		}
-	}()
-
-	article, err := readability.FromURL(url, 30*time.Second, withBrowserUserAgent())
-	if err != nil {
-		Log.Fatalf("failed to parse %s, %v\n", url, err)
-	}
-
-	if s.conf.Verbose {
-		Log.Info("Page title=", article.Title, ", content=", len(article.TextContent))
-	}
-	_ = c.Notify(tele.Typing)
-
-	s.sendAudio(c, article.TextContent)
-}
-
-// getPageSummary gets a page summary synchronously and returns the result
+// getPageSummary fetches and summarizes a web page using Anthropic
 func (s *Server) getPageSummary(url string) (string, error) {
 	defer func() {
 		if err := recover(); err != nil {
@@ -360,18 +186,9 @@ func (s *Server) getPageSummary(url string) (string, error) {
 		Log.Info("Page title=", article.Title, ", content=", len(article.TextContent))
 	}
 
-	msg := openai.NewChatUserMessage(article.TextContent)
-	// You are acting as a summarization AI, and for the input text please summarize it to the most important 3 to 5 bullet points for brevity:
-	system := openai.NewChatSystemMessage("Make a summary of the article. Be brief but thorough and highlight key points. Use markdown to annotate the summary.")
-
-	history := []openai.ChatMessage{system, msg}
-
-	response, err := s.openAI.CreateChatCompletion(miniModel, history, openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5))
-	if err != nil {
-		return "", fmt.Errorf("failed to create chat completion: %v", err)
-	}
-
-	str, _ := response.Choices[0].Message.ContentString()
-
-	return str, nil
+	return s.generateSimple(
+		"Make a summary of the article. Be brief but thorough and highlight key points. Use markdown.",
+		article.TextContent,
+		s.conf.Models[0].ModelID,
+	)
 }
