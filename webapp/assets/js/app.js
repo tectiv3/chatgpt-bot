@@ -424,8 +424,10 @@ createApp({
         },
 
         getDefaultSettings() {
+            const preferredModel = this.userPreferences?.selectedModel
+            const validPreferred = preferredModel && this.isModelValid(preferredModel) ? preferredModel : null
             return {
-                model_name: this.userPreferences?.selectedModel || this.models?.[0]?.id || '',
+                model_name: validPreferred || this.models?.[0]?.id || '',
                 temperature: this.userPreferences?.defaultTemperature || 1.0,
                 role_id: this.userPreferences?.selectedRole || null,
                 lang: 'en',

@@ -167,6 +167,9 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		// Extract citations
 		var citations []Citation
 		for _, content := range response.Content {
+			if content == nil {
+				continue
+			}
 			if tc, ok := content.(*anthropic.TextContent); ok {
 				for _, cit := range tc.Citations {
 					citations = append(citations, extractCitation(cit))
@@ -177,6 +180,9 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		// Check for tool use — execute and loop
 		var toolUses []anthropic.Content
 		for _, content := range response.Content {
+			if content == nil {
+				continue
+			}
 			if content.Type() == anthropic.ContentTypeToolUse {
 				toolUses = append(toolUses, content)
 			}

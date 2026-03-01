@@ -1689,6 +1689,9 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 		// Build the assistant response message for continuation
 		var assistantContent []anthropic.Content
 		for _, content := range response.Content {
+			if content == nil {
+				continue
+			}
 			assistantContent = append(assistantContent, content)
 		}
 		currentMessages = append(currentMessages, anthropic.NewMessage("assistant", assistantContent))
