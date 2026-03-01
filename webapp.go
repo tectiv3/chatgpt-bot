@@ -1514,6 +1514,8 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 		anthropic.WithMaxTokens(16384),
 	)
 
+	caching := true
+	client.Caching = &caching
 	if !model.Reasoning {
 		temp := chat.Temperature
 		client.Temperature = &temp

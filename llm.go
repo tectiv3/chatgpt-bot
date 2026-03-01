@@ -93,8 +93,10 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 	_ = c.Notify(tele.Typing)
 	var totalInputTokens, totalOutputTokens int
 
+	caching := true
 	for round := 0; round < maxToolRounds; round++ {
 		client := anthropic.New(opts...)
+		client.Caching = &caching
 		if !model.Reasoning {
 			temp := chat.Temperature
 			client.Temperature = &temp
@@ -139,7 +141,9 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 					result.WriteString(event.Delta.Text)
 					tokens++
 					if time.Since(lastDraft) >= 100*time.Millisecond {
-						_ = c.Bot().SendMessageDraft(c.Sender(), draftID, result.String())
+						if err := c.Bot().SendMessageDraft(c.Sender(), draftID, result.String()); err != nil {
+							Log.WithField("user", c.Sender().Username).Warn("SendMessageDraft error: ", err)
+						}
 						lastDraft = time.Now()
 					}
 				}
@@ -201,6 +205,10 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		usage := accumulator.Usage()
 		totalInputTokens += usage.InputTokens
 		totalOutputTokens += usage.OutputTokens
+		if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+			Log.WithField("user", c.Sender().Username).
+				Infof("Cache: read=%d, created=%d", usage.CacheReadInputTokens, usage.CacheCreationInputTokens)
+		}
 
 		if len(toolUses) > 0 {
 			s.processToolCalls(chat, c, response, toolUses, draftID)
