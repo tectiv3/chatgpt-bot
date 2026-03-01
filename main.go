@@ -15,7 +15,6 @@ import (
 
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"
-	"github.com/tectiv3/anthropic-go"
 	"github.com/tectiv3/chatgpt-bot/i18n"
 	"golang.org/x/crypto/ssh/terminal"
 	"gorm.io/driver/sqlite"
@@ -105,7 +104,6 @@ func main() {
 		server := &Server{
 			conf:              conf,
 			db:                db,
-			ai:                anthropic.New(anthropic.WithAPIKey(conf.AnthropicAPIKey)),
 			rateLimiter:       NewRateLimiter(20, time.Minute),
 			connectionManager: NewConnectionManager(3),
 		}

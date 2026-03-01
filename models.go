@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tectiv3/anthropic-go"
 	tele "gopkg.in/telebot.v3"
 	"gorm.io/gorm"
 )
@@ -50,7 +49,6 @@ type Server struct {
 	sync.RWMutex
 	conf      config
 	users     []string
-	ai        *anthropic.Client
 	bot       *tele.Bot
 	db        *gorm.DB
 	webServer *http.Server

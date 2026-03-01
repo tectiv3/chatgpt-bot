@@ -78,6 +78,7 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 
 	dialog := chat.getDialog(question)
 	_ = c.Notify(tele.Typing)
+	var totalInputTokens, totalOutputTokens int
 
 	for round := 0; round < maxToolRounds; round++ {
 		client := anthropic.New(opts...)
@@ -172,6 +173,10 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 			}
 		}
 
+		usage := accumulator.Usage()
+		totalInputTokens += usage.InputTokens
+		totalOutputTokens += usage.OutputTokens
+
 		if len(toolUses) > 0 {
 			s.processToolCalls(chat, c, response, toolUses)
 			dialog = chat.getDialog(nil)
@@ -179,11 +184,10 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		}
 
 		// No tool use — finalize response
-		usage := accumulator.Usage()
 		reply := result.String()
 		s.updateReply(chat, reply, c)
 
-		totalTokens := usage.InputTokens + usage.OutputTokens
+		totalTokens := totalInputTokens + totalOutputTokens
 		if totalTokens > 0 {
 			chat.updateTotalTokens(totalTokens)
 		}

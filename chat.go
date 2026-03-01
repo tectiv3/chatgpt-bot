@@ -158,7 +158,7 @@ func (c *Chat) getDialog(request *string) []*anthropic.Message {
 			content = append(content, &anthropic.ImageContent{
 				Source: anthropic.RawData(http.DetectContentType(imageData), imageData),
 			})
-		} else {
+		} else if h.Content != nil && *h.Content != "" {
 			content = append(content, anthropic.NewTextContent(*h.Content))
 		}
 

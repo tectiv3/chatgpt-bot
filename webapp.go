@@ -1526,8 +1526,10 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 	var usage *TokenUsage
 
 	// Streaming loop with tool-use continuation
+	maxToolRounds := 10
 	currentMessages := messages
-	for {
+	exhausted := true
+	for round := 0; round < maxToolRounds; round++ {
 		stream, err := client.Stream(ctx, currentMessages)
 		if err != nil {
 			return result.String(), usage, fmt.Errorf("failed to start Anthropic stream: %v", err)
@@ -1659,7 +1661,7 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 		}
 
 		if len(toolUses) == 0 {
-			// No tool calls, we're done
+			exhausted = false
 			break
 		}
 
@@ -1707,6 +1709,9 @@ func (s *Server) generateResponseWithStreamingUpdates(ctx context.Context, chat 
 
 		// Add tool results as a user message
 		currentMessages = append(currentMessages, anthropic.NewMessage("user", toolResults))
+	}
+	if exhausted {
+		logger.Warn("Max tool call rounds exceeded")
 	}
 
 	if usage != nil {
@@ -1785,28 +1790,28 @@ func (s *Server) handleImageUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Validate content type
 	validTypes := map[string]bool{
-		"image/jpeg":         true,
-		"image/png":          true,
-		"image/gif":          true,
-		"image/webp":         true,
-		"application/pdf":    true,
-		"text/plain":         true,
-		"text/csv":           true,
-		"text/x-python":      true,
-		"text/x-php":         true,
-		"text/x-go":          true,
-		"text/javascript":    true,
+		"image/jpeg":             true,
+		"image/png":              true,
+		"image/gif":              true,
+		"image/webp":             true,
+		"application/pdf":        true,
+		"text/plain":             true,
+		"text/csv":               true,
+		"text/x-python":          true,
+		"text/x-php":             true,
+		"text/x-go":              true,
+		"text/javascript":        true,
 		"application/javascript": true,
-		"text/x-vue":         true,
-		"text/typescript":    true,
-		"text/markdown":      true,
-		"application/json":   true,
-		"text/yaml":          true,
-		"text/xml":           true,
-		"text/html":          true,
-		"text/css":           true,
-		"text/x-sql":         true,
-		"text/x-shellscript": true,
+		"text/x-vue":             true,
+		"text/typescript":        true,
+		"text/markdown":          true,
+		"application/json":       true,
+		"text/yaml":              true,
+		"text/xml":               true,
+		"text/html":              true,
+		"text/css":               true,
+		"text/x-sql":             true,
+		"text/x-shellscript":     true,
 	}
 
 	if !validTypes[contentType] {
@@ -2270,28 +2275,28 @@ func (s *Server) saveBase64Image(base64Data, originalFilename, mimeType string) 
 // getFileExtension returns the appropriate file extension for a given mime type
 func getFileExtension(mimeType string) string {
 	extensions := map[string]string{
-		"image/jpeg":           ".jpg",
-		"image/png":            ".png",
-		"image/gif":            ".gif",
-		"image/webp":           ".webp",
-		"application/pdf":      ".pdf",
-		"text/plain":           ".txt",
-		"text/csv":             ".csv",
-		"text/x-python":        ".py",
-		"text/x-php":           ".php",
-		"text/x-go":            ".go",
-		"text/javascript":      ".js",
+		"image/jpeg":             ".jpg",
+		"image/png":              ".png",
+		"image/gif":              ".gif",
+		"image/webp":             ".webp",
+		"application/pdf":        ".pdf",
+		"text/plain":             ".txt",
+		"text/csv":               ".csv",
+		"text/x-python":          ".py",
+		"text/x-php":             ".php",
+		"text/x-go":              ".go",
+		"text/javascript":        ".js",
 		"application/javascript": ".js",
-		"text/x-vue":           ".vue",
-		"text/typescript":      ".ts",
-		"text/markdown":        ".md",
-		"application/json":     ".json",
-		"text/yaml":            ".yaml",
-		"text/xml":             ".xml",
-		"text/html":            ".html",
-		"text/css":             ".css",
-		"text/x-sql":           ".sql",
-		"text/x-shellscript":   ".sh",
+		"text/x-vue":             ".vue",
+		"text/typescript":        ".ts",
+		"text/markdown":          ".md",
+		"application/json":       ".json",
+		"text/yaml":              ".yaml",
+		"text/xml":               ".xml",
+		"text/html":              ".html",
+		"text/css":               ".css",
+		"text/x-sql":             ".sql",
+		"text/x-shellscript":     ".sh",
 	}
 	if ext, ok := extensions[mimeType]; ok {
 		return ext
