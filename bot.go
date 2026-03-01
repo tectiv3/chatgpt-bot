@@ -22,10 +22,8 @@ const (
 	cmdPromptCL   = "/defaultprompt"
 	cmdStream     = "/stream"
 	cmdStop       = "/stop"
-	cmdVoice      = "/voice"
-	cmdInfo       = "/info"
+	cmdInfo = "/info"
 	cmdLang       = "/lang"
-	cmdImage      = "/image"
 	cmdToJapanese = "/ja"
 	cmdToEnglish  = "/en"
 	cmdToRussian  = "/ru"
@@ -40,16 +38,8 @@ const (
 	cmdDelUser    = "/del"
 	cmdHelp       = "/help"
 	cmdMiniApp    = "/webapp"
-	msgStart      = "This bot will answer your messages with ChatGPT API"
-	masterPrompt  = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
-	pOllama       = "ollama"
-	pGroq         = "groq"
-	pOpenAI       = "openai"
-	miniModel     = "gpt-4o-mini"
-	pAWS          = "aws"
-	pAnthropic    = "anthropic"
-	pGemini       = "gemini"
-	openAILatest  = "openAILatest"
+	msgStart     = "This bot will answer your messages using Claude AI"
+	masterPrompt = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
 )
 
 var (
@@ -148,9 +138,7 @@ func (s *Server) run() {
 /es - %s
 /cn - %s
 
-**Other Features:**
-/image <prompt> - %s
-/voice <url> - %s
+**Other:**
 /lang <code> - %s`,
 			chat.t("Available commands:"),
 			chat.t("Show this help message"),
@@ -170,8 +158,6 @@ func (s *Server) run() {
 			chat.t("Translate to Italian"),
 			chat.t("Translate to Spanish"),
 			chat.t("Translate to Chinese"),
-			chat.t("Generate an image"),
-			chat.t("Convert webpage to speech"),
 			chat.t("Set bot language"))
 
 		return c.Send(ConvertMarkdownToTelegramMarkdownV2(helpText), "text", &tele.SendOptions{
@@ -207,12 +193,7 @@ func (s *Server) run() {
 					rows = append(rows, menu.Row(row...))
 					row = []tele.Btn{}
 				}
-				if m.Provider == pOpenAI ||
-					(m.Provider == pAnthropic && s.conf.AnthropicEnabled) ||
-					(m.Provider == pAWS && s.conf.AWSEnabled) ||
-					(m.Provider == pGemini && s.conf.GeminiEnabled) {
-					row = append(row, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.Name})
-				}
+				row = append(row, tele.Btn{Text: m.Name, Unique: "btnModel", Data: m.Name})
 			}
 			rows = append(rows, menu.Row(row...))
 
@@ -514,12 +495,6 @@ func (s *Server) run() {
 		return c.Reply(c.Message(), text)
 	})
 
-	b.Handle(cmdVoice, func(c tele.Context) error {
-		go s.pageToSpeech(c, c.Message().Payload)
-
-		return c.Reply(c.Message(), "Downloading page")
-	})
-
 	b.Handle(cmdStop, func(c tele.Context) error {
 		return nil
 	})
@@ -543,10 +518,9 @@ func (s *Server) run() {
 		return c.Reply(
 			c.Message(),
 			fmt.Sprintf(
-				"Version: %s\nModel: %s (%s)\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConversation Age (days): %d\nRole: %s",
+				"Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConversation Age (days): %d\nRole: %s",
 				Version,
 				model.Name,
-				model.Provider,
 				chat.Temperature,
 				prompt,
 				status,
@@ -587,19 +561,6 @@ func (s *Server) run() {
 
 	b.Handle(cmdToChinese, func(c tele.Context) error {
 		go s.onTranslate(c, "To Chinese: ")
-
-		return nil
-	})
-
-	b.Handle(cmdImage, func(c tele.Context) error {
-		chat := s.getChat(c.Chat(), c.Sender())
-		msg := chat.getSentMessage(c)
-		msg, _ = c.Bot().Edit(msg, "Generating...")
-		if err := s.textToImage(c, c.Message().Payload, true); err != nil {
-			_, _ = c.Bot().Edit(msg, "Generating...")
-			return c.Send("Error: " + err.Error())
-		}
-		_ = c.Bot().Delete(msg)
 
 		return nil
 	})
