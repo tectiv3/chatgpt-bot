@@ -22,7 +22,8 @@ type config struct {
 	TelegramBotToken  string `json:"telegram_bot_token"`
 	TelegramServerURL string `json:"telegram_server_url"`
 
-	Models []AiModel `json:"models"`
+	Models       []AiModel `json:"models"`
+	DefaultModel string    `json:"default_model"`
 
 	AnthropicAPIKey string `json:"anthropic_api_key"`
 

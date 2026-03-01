@@ -107,6 +107,10 @@ func (s *Server) findRole(userID uint, name string) *Role {
 }
 
 func (s *Server) getModel(model string) *AiModel {
+	// Resolve symbolic aliases to the configured default model
+	if model == defaultModelName || model == "openAILatest" {
+		model = s.conf.DefaultModel
+	}
 	for _, m := range s.conf.Models {
 		if m.Name == model || m.ModelID == model {
 			return &m
