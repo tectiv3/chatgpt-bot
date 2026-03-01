@@ -87,14 +87,14 @@ func (s *Server) getTools() []anthropic.ToolInterface {
 	return []anthropic.ToolInterface{&MakeSummaryTool{}}
 }
 
-// handleAnthropicToolCalls processes tool_use content blocks from Anthropic response
-func (s *Server) handleAnthropicToolCalls(
+// processToolCalls executes tool_use content blocks and adds results to chat history.
+// Does NOT recurse into streaming — the caller loops instead.
+func (s *Server) processToolCalls(
 	chat *Chat, c tele.Context,
 	response *anthropic.Response, toolUses []anthropic.Content,
 ) {
 	notifier := &TelegramToolCallNotifier{chat: chat, c: c, bot: s.bot}
 
-	// Collect text parts from the assistant response
 	var textParts []string
 	for _, content := range response.Content {
 		if tc, ok := content.(*anthropic.TextContent); ok {
@@ -102,7 +102,6 @@ func (s *Server) handleAnthropicToolCalls(
 		}
 	}
 
-	// Build tool call records for chat history
 	var toolCalls []ToolCall
 	for _, tu := range toolUses {
 		if tuc, ok := tu.(*anthropic.ToolUseContent); ok {
@@ -117,7 +116,6 @@ func (s *Server) handleAnthropicToolCalls(
 		}
 	}
 
-	// Store the assistant message (text + tool_use blocks) in dialog history
 	assistantText := strings.Join(textParts, "")
 	chat.addMessageToDialog(ChatMessage{
 		Role:      "assistant",
@@ -125,7 +123,6 @@ func (s *Server) handleAnthropicToolCalls(
 		ToolCalls: toolCalls,
 	})
 
-	// Execute each tool and add results to dialog
 	for _, tu := range toolUses {
 		tuc, ok := tu.(*anthropic.ToolUseContent)
 		if !ok {
@@ -141,9 +138,6 @@ func (s *Server) handleAnthropicToolCalls(
 	}
 
 	s.saveHistory(chat)
-
-	// Continue the conversation so the model can incorporate tool results
-	s.getStreamingAnswer(chat, c, nil)
 }
 
 // executeToolCall executes a single tool call

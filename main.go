@@ -97,6 +97,27 @@ func main() {
 			db.Migrator().RenameColumn(&ChatMessage{}, "annotations", "citations")
 		}
 
+		if len(conf.Models) == 0 {
+			panic("config.json must contain at least one model in 'models' array")
+		}
+
+		// Migrate stale model names from removed providers to the default model
+		defaultModel := conf.Models[0].ModelID
+		knownModels := make(map[string]bool)
+		for _, m := range conf.Models {
+			knownModels[m.ModelID] = true
+			knownModels[m.Name] = true
+		}
+		db.Model(&Chat{}).
+			Where("model_name NOT IN (?)", func() []string {
+				keys := make([]string, 0, len(knownModels))
+				for k := range knownModels {
+					keys = append(keys, k)
+				}
+				return keys
+			}()).
+			Update("model_name", defaultModel)
+
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
 			conf:              conf,

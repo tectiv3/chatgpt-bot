@@ -12,11 +12,6 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
-// generate a user-agent value
-func userAgent(userID int64) string {
-	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
-}
-
 func (s *Server) complete(c tele.Context, message string, reply bool) {
 	chat := s.getChat(c.Chat(), c.Sender())
 
@@ -46,10 +41,13 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 	s.getStreamingAnswer(chat, c, msgPtr)
 }
 
-// getStreamingAnswer handles streaming responses from Anthropic
+// getStreamingAnswer handles streaming responses from Anthropic.
+// Creates a fresh client per request to avoid race conditions.
+// Tool call continuation is handled iteratively (max 10 rounds).
 func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string) {
 	model := s.getModel(chat.ModelName)
 	maxTokens := 4096
+	maxToolRounds := 10
 
 	system := chat.MasterPrompt
 	if chat.RoleID != nil {
@@ -62,140 +60,146 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	s.ai.Apply(anthropic.WithModel(model.ModelID))
-	s.ai.Apply(anthropic.WithSystemPrompt(system))
-	s.ai.Apply(anthropic.WithMaxTokens(maxTokens))
-
-	if !model.Reasoning {
-		temp := chat.Temperature
-		s.ai.Temperature = &temp
-	} else {
-		s.ai.Temperature = nil
-	}
-
-	// Add tools based on model config and chat settings
 	var tools []anthropic.ToolInterface
 	if model.WebSearch {
 		tools = append(tools, anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 5}))
 	}
-	// Custom tools from function_calls.go (Task 4)
 	tools = append(tools, s.getTools()...)
 
+	opts := []anthropic.Option{
+		anthropic.WithAPIKey(s.conf.AnthropicAPIKey),
+		anthropic.WithModel(model.ModelID),
+		anthropic.WithSystemPrompt(system),
+		anthropic.WithMaxTokens(maxTokens),
+	}
 	if len(tools) > 0 {
-		s.ai.Apply(anthropic.WithTools(tools...))
-	} else {
-		// Clear any previously set tools
-		s.ai.Apply(anthropic.WithTools())
+		opts = append(opts, anthropic.WithTools(tools...))
 	}
 
 	dialog := chat.getDialog(question)
-	stream, err := s.ai.Stream(ctx, dialog)
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		_, _ = c.Bot().Edit(sentMessage, err.Error())
-		return
-	}
-	defer stream.Close()
-
-	var result strings.Builder
 	_ = c.Notify(tele.Typing)
-	tokens := 0
-	accumulator := anthropic.NewResponseAccumulator()
 
-	for stream.Next() {
-		select {
-		case <-ctx.Done():
-			_, _ = c.Bot().Edit(sentMessage, "Timeout")
+	for round := 0; round < maxToolRounds; round++ {
+		client := anthropic.New(opts...)
+		if !model.Reasoning {
+			temp := chat.Temperature
+			client.Temperature = &temp
+		}
+
+		stream, err := client.Stream(ctx, dialog)
+		if err != nil {
+			Log.WithField("user", c.Sender().Username).Error(err)
+			_, _ = c.Bot().Edit(sentMessage, err.Error())
 			return
-		default:
 		}
-		event := stream.Event()
-		accumulator.AddEvent(event)
 
-		switch event.Type {
-		case anthropic.EventTypeContentBlockStart:
-			if event.ContentBlock != nil {
-				if event.ContentBlock.Type == anthropic.ContentTypeServerToolUse &&
-					event.ContentBlock.Name == "web_search" {
-					_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
+		var result strings.Builder
+		tokens := 0
+		accumulator := anthropic.NewResponseAccumulator()
+
+		for stream.Next() {
+			select {
+			case <-ctx.Done():
+				stream.Close()
+				_, _ = c.Bot().Edit(sentMessage, "Timeout")
+				return
+			default:
+			}
+			event := stream.Event()
+			accumulator.AddEvent(event)
+
+			switch event.Type {
+			case anthropic.EventTypeContentBlockStart:
+				if event.ContentBlock != nil {
+					if event.ContentBlock.Type == anthropic.ContentTypeServerToolUse &&
+						event.ContentBlock.Name == "web_search" {
+						_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
+					}
+				}
+			case anthropic.EventTypeContentBlockDelta:
+				if event.Delta == nil {
+					continue
+				}
+				if event.Delta.Type == anthropic.EventDeltaTypeText {
+					result.WriteString(event.Delta.Text)
+					tokens++
+					if tokens%10 == 0 {
+						_, _ = c.Bot().Edit(sentMessage, result.String())
+					}
+				}
+			case anthropic.EventTypeMessageStop:
+				Log.WithField("user", c.Sender().Username).
+					WithField("tokens", tokens).Info("Response stream finished")
+			}
+		}
+		stream.Close()
+
+		if err := stream.Err(); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				Log.WithField("user", c.Sender().Username).Error("Timeout. Partial: ", result.String())
+				_, _ = c.Bot().Edit(sentMessage, "Timeout. Partial: "+result.String())
+			} else if ctx.Err() == context.Canceled {
+				Log.WithField("user", c.Sender().Username).Error("Request cancelled. Partial: ", result.String())
+				_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial: "+result.String())
+			} else {
+				Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
+				_, _ = c.Bot().Edit(sentMessage, "Error: "+err.Error())
+			}
+			return
+		}
+
+		if !accumulator.IsComplete() {
+			return
+		}
+
+		response := accumulator.Response()
+
+		// Extract citations
+		var citations []Citation
+		for _, content := range response.Content {
+			if tc, ok := content.(*anthropic.TextContent); ok {
+				for _, cit := range tc.Citations {
+					citations = append(citations, extractCitation(cit))
 				}
 			}
-		case anthropic.EventTypeContentBlockDelta:
-			if event.Delta == nil {
-				continue
-			}
-			if event.Delta.Type == anthropic.EventDeltaTypeText {
-				result.WriteString(event.Delta.Text)
-				tokens++
-				if tokens%10 == 0 {
-					_, _ = c.Bot().Edit(sentMessage, result.String())
-				}
-			}
-		case anthropic.EventTypeMessageStop:
-			Log.WithField("user", c.Sender().Username).
-				WithField("tokens", tokens).Info("Response stream finished")
 		}
-	}
 
-	if err := stream.Err(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			Log.WithField("user", c.Sender().Username).Error("Timeout. Partial: ", result.String())
-			_, _ = c.Bot().Edit(sentMessage, "Timeout. Partial: "+result.String())
-		} else if ctx.Err() == context.Canceled {
-			Log.WithField("user", c.Sender().Username).Error("Request cancelled. Partial: ", result.String())
-			_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial: "+result.String())
-		} else {
-			Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
-			_, _ = c.Bot().Edit(sentMessage, "Error: "+err.Error())
+		// Check for tool use — execute and loop
+		var toolUses []anthropic.Content
+		for _, content := range response.Content {
+			if content.Type() == anthropic.ContentTypeToolUse {
+				toolUses = append(toolUses, content)
+			}
+		}
+
+		if len(toolUses) > 0 {
+			s.processToolCalls(chat, c, response, toolUses)
+			dialog = chat.getDialog(nil)
+			continue
+		}
+
+		// No tool use — finalize response
+		usage := accumulator.Usage()
+		reply := result.String()
+		s.updateReply(chat, reply, c)
+
+		totalTokens := usage.InputTokens + usage.OutputTokens
+		if totalTokens > 0 {
+			chat.updateTotalTokens(totalTokens)
+		}
+
+		if reply != "" {
+			chat.addAssistantMessage(reply)
+			if len(citations) > 0 {
+				s.storeCitations(chat, citations)
+			}
+			s.saveHistory(chat)
 		}
 		return
 	}
 
-	if !accumulator.IsComplete() {
-		return
-	}
-
-	// Extract citations from accumulated response
-	var citations []Citation
-	response := accumulator.Response()
-	for _, content := range response.Content {
-		if tc, ok := content.(*anthropic.TextContent); ok {
-			for _, cit := range tc.Citations {
-				citations = append(citations, extractCitation(cit))
-			}
-		}
-	}
-
-	// Check for tool use in response
-	var toolUses []anthropic.Content
-	for _, content := range response.Content {
-		if content.Type() == anthropic.ContentTypeToolUse {
-			toolUses = append(toolUses, content)
-		}
-	}
-
-	if len(toolUses) > 0 {
-		s.handleAnthropicToolCalls(chat, c, response, toolUses)
-		return
-	}
-
-	// Finalize response
-	usage := accumulator.Usage()
-	reply := result.String()
-	s.updateReply(chat, reply, c)
-
-	totalTokens := usage.InputTokens + usage.OutputTokens
-	if totalTokens > 0 {
-		chat.updateTotalTokens(totalTokens)
-	}
-
-	if reply != "" {
-		chat.addAssistantMessage(reply)
-		if len(citations) > 0 {
-			s.storeCitations(chat, citations)
-		}
-		s.saveHistory(chat)
-	}
+	Log.WithField("user", c.Sender().Username).Warn("Max tool call rounds exceeded")
+	_, _ = c.Bot().Edit(sentMessage, "Response incomplete: too many tool calls")
 }
 
 // extractCitation converts an Anthropic Citation to our local Citation type

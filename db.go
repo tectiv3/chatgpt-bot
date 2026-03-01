@@ -148,7 +148,7 @@ func (s *Server) StoreCitations(message *ChatMessage, citations []Citation) {
 
 	if message.ID > 0 {
 		if err := s.db.Save(message).Error; err != nil {
-			Log.Errorf("failed to save citations to database: %w", err)
+			Log.Errorf("failed to save citations to database: %v", err)
 		}
 	}
 }

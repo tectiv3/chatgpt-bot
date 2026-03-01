@@ -353,27 +353,28 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	threads := make([]ThreadResponse, len(chatCounts))
-	for i, chatCount := range chatCounts {
+	for i := range chatCounts {
+		cc := &chatCounts[i]
 		settings := ThreadSettings{
-			ModelName:    chatCount.Chat.ModelName,
-			Temperature:  chatCount.Chat.Temperature,
-			RoleID:       chatCount.Chat.RoleID,
-			Lang:         chatCount.Chat.Lang,
-			MasterPrompt: chatCount.Chat.MasterPrompt,
-			ContextLimit: chatCount.Chat.ContextLimit,
-			EnabledTools: chatCount.Chat.GetEnabledToolsArray(),
+			ModelName:    cc.Chat.ModelName,
+			Temperature:  cc.Chat.Temperature,
+			RoleID:       cc.Chat.RoleID,
+			Lang:         cc.Chat.Lang,
+			MasterPrompt: cc.Chat.MasterPrompt,
+			ContextLimit: cc.Chat.ContextLimit,
+			EnabledTools: cc.Chat.GetEnabledToolsArray(),
 		}
 
 		threads[i] = ThreadResponse{
-			ID:                *chatCount.Chat.ThreadID,
-			Title:             *chatCount.Chat.ThreadTitle,
-			CreatedAt:         chatCount.Chat.CreatedAt,
-			UpdatedAt:         chatCount.Chat.UpdatedAt,
-			ArchivedAt:        chatCount.Chat.ArchivedAt,
+			ID:                *cc.Chat.ThreadID,
+			Title:             *cc.Chat.ThreadTitle,
+			CreatedAt:         cc.Chat.CreatedAt,
+			UpdatedAt:         cc.Chat.UpdatedAt,
+			ArchivedAt:        cc.Chat.ArchivedAt,
 			Settings:          settings,
-			MessageCount:      int(chatCount.MessageCount),
-			TotalInputTokens:  chatCount.Chat.TotalInputTokens,
-			TotalOutputTokens: chatCount.Chat.TotalOutputTokens,
+			MessageCount:      int(cc.MessageCount),
+			TotalInputTokens:  cc.Chat.TotalInputTokens,
+			TotalOutputTokens: cc.Chat.TotalOutputTokens,
 		}
 	}
 
@@ -402,27 +403,28 @@ func (s *Server) getArchivedThreads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	threads := make([]ThreadResponse, len(chatCounts))
-	for i, chatCount := range chatCounts {
+	for i := range chatCounts {
+		cc := &chatCounts[i]
 		settings := ThreadSettings{
-			ModelName:    chatCount.Chat.ModelName,
-			Temperature:  chatCount.Chat.Temperature,
-			RoleID:       chatCount.Chat.RoleID,
-			Lang:         chatCount.Chat.Lang,
-			MasterPrompt: chatCount.Chat.MasterPrompt,
-			ContextLimit: chatCount.Chat.ContextLimit,
-			EnabledTools: chatCount.Chat.GetEnabledToolsArray(),
+			ModelName:    cc.Chat.ModelName,
+			Temperature:  cc.Chat.Temperature,
+			RoleID:       cc.Chat.RoleID,
+			Lang:         cc.Chat.Lang,
+			MasterPrompt: cc.Chat.MasterPrompt,
+			ContextLimit: cc.Chat.ContextLimit,
+			EnabledTools: cc.Chat.GetEnabledToolsArray(),
 		}
 
 		threads[i] = ThreadResponse{
-			ID:                *chatCount.Chat.ThreadID,
-			Title:             *chatCount.Chat.ThreadTitle,
-			CreatedAt:         chatCount.Chat.CreatedAt,
-			UpdatedAt:         chatCount.Chat.UpdatedAt,
-			ArchivedAt:        chatCount.Chat.ArchivedAt,
+			ID:                *cc.Chat.ThreadID,
+			Title:             *cc.Chat.ThreadTitle,
+			CreatedAt:         cc.Chat.CreatedAt,
+			UpdatedAt:         cc.Chat.UpdatedAt,
+			ArchivedAt:        cc.Chat.ArchivedAt,
 			Settings:          settings,
-			MessageCount:      int(chatCount.MessageCount),
-			TotalInputTokens:  chatCount.Chat.TotalInputTokens,
-			TotalOutputTokens: chatCount.Chat.TotalOutputTokens,
+			MessageCount:      int(cc.MessageCount),
+			TotalInputTokens:  cc.Chat.TotalInputTokens,
+			TotalOutputTokens: cc.Chat.TotalOutputTokens,
 		}
 	}
 

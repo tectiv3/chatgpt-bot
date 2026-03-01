@@ -119,7 +119,7 @@ func (c *Chat) getDialog(request *string) []*anthropic.Message {
 		if h.CreatedAt.Before(time.Now().AddDate(0, 0, -int(c.ConversationAge))) {
 			continue
 		}
-		if h.Content == nil || *h.Content == "" {
+		if (h.Content == nil || *h.Content == "") && len(h.ToolCalls) == 0 && h.ToolCallID == nil {
 			continue
 		}
 
