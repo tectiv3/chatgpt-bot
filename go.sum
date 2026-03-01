@@ -384,8 +384,8 @@ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/subosito/gotenv v1.4.1/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
-github.com/tectiv3/anthropic-go v0.1.1 h1:VRKOl60345MPO1LYymsrAUzWCNqj494N9UE+2N3XfV0=
-github.com/tectiv3/anthropic-go v0.1.1/go.mod h1:7GyeaaPq5Q3UZGzIsVvx9KgyotwBvHYufcE6j6f6FTY=
+github.com/tectiv3/anthropic-go v0.1.2 h1:Z+0r4/UnpnoIvZ9gg5l/WTzDvQ96D4767FD133/YlDY=
+github.com/tectiv3/anthropic-go v0.1.2/go.mod h1:7GyeaaPq5Q3UZGzIsVvx9KgyotwBvHYufcE6j6f6FTY=
 github.com/tectiv3/telebot v0.0.0-20260301132725-f54b1d46d473 h1:NKm/pR6yTDQ3caTagB62UJs43/UGpMfa/6UxQiRdonE=
 github.com/tectiv3/telebot v0.0.0-20260301132725-f54b1d46d473/go.mod h1:1mlbqcLTVSfK9dx7fdp+Nb5HZsy4LLPtpZTKmwhwtzM=
 github.com/telegram-mini-apps/init-data-golang v1.5.0 h1:rtpsmQ/nihkicPvnrdRXmHHtTnPvG1FmxMRZJwMKPz0=

@@ -12,7 +12,6 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
-
 func (c *Chat) addToolResultToDialog(id, content string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -153,6 +152,17 @@ func (c *Chat) getDialog(request *string) []*anthropic.Message {
 		}
 
 		history = append(history, anthropic.NewMessage(role, content))
+	}
+
+	// Mark the second-to-last message for caching so the conversation
+	// prefix is reused across turns (the last message is the new user input).
+	if len(history) >= 2 {
+		prev := history[len(history)-2]
+		if len(prev.Content) > 0 {
+			if setter, ok := prev.Content[len(prev.Content)-1].(anthropic.CacheControlSetter); ok {
+				setter.SetCacheControl(&anthropic.CacheControl{Type: anthropic.CacheControlTypeEphemeral})
+			}
+		}
 	}
 
 	return history

@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/sirupsen/logrus v1.9.4
-	github.com/tectiv3/anthropic-go v0.1.1
+	github.com/tectiv3/anthropic-go v0.1.2
 	github.com/telegram-mini-apps/init-data-golang v1.5.0
 	golang.org/x/crypto v0.48.0
 	gopkg.in/telebot.v3 v3.3.8
