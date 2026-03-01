@@ -1,7 +1,14 @@
 {
     "telegram_bot_token": "",
-    "openai_api_key": "",
-    "openai_org_id": "",
+    "anthropic_api_key": "",
+    "whisper_endpoint": "http://localhost:8765/transcribe",
     "allowed_telegram_users": [],
     "verbose": false,
+    "models": [
+        {
+            "model_id": "claude-sonnet-4-20250514",
+            "name": "Sonnet",
+            "web_search": true
+        }
+    ]
 }
