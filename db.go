@@ -11,7 +11,6 @@ func (s *Server) getChat(c *tele.Chat, u *tele.User) *Chat {
 		chat.MasterPrompt = masterPrompt
 		chat.ModelName = defaultModelName
 		chat.Temperature = 0.8
-		chat.Stream = true
 		chat.ConversationAge = 1
 		s.db.Save(&chat)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,7 +66,10 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 	system += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
 
 	chat.removeMenu(c)
-	sentMessage := chat.getSentMessage(c)
+	draftID := int(time.Now().UnixMilli() % 1000000)
+	if draftID == 0 {
+		draftID = 1
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -99,19 +103,20 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		stream, err := client.Stream(ctx, dialog)
 		if err != nil {
 			Log.WithField("user", c.Sender().Username).Error(err)
-			_, _ = c.Bot().Edit(sentMessage, friendlyAPIError(err))
+			_, _ = c.Bot().Send(c.Sender(), friendlyAPIError(err))
 			return
 		}
 
 		var result strings.Builder
 		tokens := 0
+		lastDraft := time.Now()
 		accumulator := anthropic.NewResponseAccumulator()
 
 		for stream.Next() {
 			select {
 			case <-ctx.Done():
 				stream.Close()
-				_, _ = c.Bot().Edit(sentMessage, "Timeout")
+				_, _ = c.Bot().Send(c.Sender(), "Timeout")
 				return
 			default:
 			}
@@ -123,7 +128,7 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 				if event.ContentBlock != nil {
 					if event.ContentBlock.Type == anthropic.ContentTypeServerToolUse &&
 						event.ContentBlock.Name == "web_search" {
-						_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
+						_ = c.Bot().SendMessageDraft(c.Sender(), draftID, chat.t("Web search started, please wait..."))
 					}
 				}
 			case anthropic.EventTypeContentBlockDelta:
@@ -133,8 +138,9 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 				if event.Delta.Type == anthropic.EventDeltaTypeText {
 					result.WriteString(event.Delta.Text)
 					tokens++
-					if tokens%10 == 0 {
-						_, _ = c.Bot().Edit(sentMessage, result.String())
+					if time.Since(lastDraft) >= 100*time.Millisecond {
+						_ = c.Bot().SendMessageDraft(c.Sender(), draftID, result.String())
+						lastDraft = time.Now()
 					}
 				}
 			case anthropic.EventTypeMessageStop:
@@ -147,18 +153,22 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		if err := stream.Err(); err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
 				Log.WithField("user", c.Sender().Username).Error("Timeout. Partial: ", result.String())
-				_, _ = c.Bot().Edit(sentMessage, "Timeout. Partial: "+result.String())
+				_, _ = c.Bot().Send(c.Sender(), "Timeout. Partial: "+result.String())
 			} else if ctx.Err() == context.Canceled {
 				Log.WithField("user", c.Sender().Username).Error("Request cancelled. Partial: ", result.String())
-				_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial: "+result.String())
+				_, _ = c.Bot().Send(c.Sender(), "Request cancelled. Partial: "+result.String())
 			} else {
 				Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
-				_, _ = c.Bot().Edit(sentMessage, "Error: "+friendlyAPIError(err))
+				_, _ = c.Bot().Send(c.Sender(), "Error: "+friendlyAPIError(err))
 			}
 			return
 		}
 
 		if !accumulator.IsComplete() {
+			Log.WithField("user", c.Sender().Username).Warn("Stream ended with incomplete accumulator")
+			if result.Len() > 0 {
+				_, _ = c.Bot().Send(c.Sender(), "Incomplete response: "+result.String())
+			}
 			return
 		}
 
@@ -193,14 +203,14 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		totalOutputTokens += usage.OutputTokens
 
 		if len(toolUses) > 0 {
-			s.processToolCalls(chat, c, response, toolUses)
+			s.processToolCalls(chat, c, response, toolUses, draftID)
 			dialog = chat.getDialog(nil)
 			continue
 		}
 
 		// No tool use — finalize response
 		reply := result.String()
-		s.updateReply(chat, reply, c)
+		s.sendFinalReply(chat, reply, c)
 
 		totalTokens := totalInputTokens + totalOutputTokens
 		if totalTokens > 0 {
@@ -218,7 +228,7 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 	}
 
 	Log.WithField("user", c.Sender().Username).Warn("Max tool call rounds exceeded")
-	_, _ = c.Bot().Edit(sentMessage, "Response incomplete: too many tool calls")
+	_, _ = c.Bot().Send(c.Sender(), "Response incomplete: too many tool calls")
 }
 
 // extractCitation converts an Anthropic Citation to our local Citation type
@@ -324,23 +334,32 @@ func (s *Server) storeCitations(chat *Chat, citations []Citation) {
 	}
 }
 
-func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
-	sentMessage := chat.getSentMessage(c)
+func (s *Server) sendFinalReply(chat *Chat, answer string, c tele.Context) {
+	if len(answer) == 0 {
+		return
+	}
 
-	if len(answer) > 0 {
-		if _, err := c.Bot().Edit(
-			sentMessage,
-			ConvertMarkdownToTelegramMarkdownV2(answer),
-			"text",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
-			replyMenu,
-		); err != nil {
+	msg, err := c.Bot().Send(
+		c.Sender(),
+		ConvertMarkdownToTelegramMarkdownV2(answer),
+		"text",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdownV2},
+		replyMenu,
+	)
+	if err != nil {
+		Log.Warn(err)
+		msg, err = c.Bot().Send(c.Sender(), answer, replyMenu)
+		if err != nil {
 			Log.Warn(err)
-			if _, err := c.Bot().Edit(sentMessage, answer, replyMenu); err != nil {
-				Log.Warn(err)
-				_ = c.Send(err.Error())
-			}
+			_ = c.Send(err.Error())
+			return
 		}
+	}
+
+	if msg != nil {
+		id := strconv.Itoa(msg.ID)
+		chat.setMessageID(&id)
+		s.setChatLastMessageID(&id, chat.ChatID)
 	}
 }
 

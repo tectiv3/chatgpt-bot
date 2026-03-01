@@ -23,15 +23,15 @@ type ToolCallNotifier interface {
 
 // TelegramToolCallNotifier implements ToolCallNotifier for Telegram
 type TelegramToolCallNotifier struct {
-	chat *Chat
-	c    tele.Context
-	bot  *tele.Bot
+	chat    *Chat
+	c       tele.Context
+	bot     *tele.Bot
+	draftID int
 }
 
 func (t *TelegramToolCallNotifier) OnFunctionCall(functionName string, arguments string) {
-	sentMessage := t.chat.getSentMessage(t.c)
 	message := fmt.Sprintf(t.chat.t("Action: {{.tool}}\nAction input: %s", &i18n.Replacements{"tool": t.chat.t(functionName)}), arguments)
-	_, _ = t.bot.Edit(sentMessage, message)
+	_ = t.bot.SendMessageDraft(t.c.Sender(), t.draftID, message)
 }
 
 func (t *TelegramToolCallNotifier) OnFunctionResult(functionName string, result string) {
@@ -92,8 +92,9 @@ func (s *Server) getTools() []anthropic.ToolInterface {
 func (s *Server) processToolCalls(
 	chat *Chat, c tele.Context,
 	response *anthropic.Response, toolUses []anthropic.Content,
+	draftID int,
 ) {
-	notifier := &TelegramToolCallNotifier{chat: chat, c: c, bot: s.bot}
+	notifier := &TelegramToolCallNotifier{chat: chat, c: c, bot: s.bot, draftID: draftID}
 
 	var textParts []string
 	for _, content := range response.Content {

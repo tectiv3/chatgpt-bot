@@ -20,8 +20,6 @@ const (
 	cmdPrompt     = "/prompt"
 	cmdAge        = "/age"
 	cmdPromptCL   = "/defaultprompt"
-	cmdStream     = "/stream"
-	cmdStop       = "/stop"
 	cmdInfo = "/info"
 	cmdLang       = "/lang"
 	cmdToJapanese = "/ja"
@@ -122,7 +120,6 @@ func (s *Server) run() {
 **Model Settings:**
 /model - %s
 /temperature - %s
-/stream - %s
 /age <days> - %s
 
 **Prompts & Roles:**
@@ -147,7 +144,6 @@ func (s *Server) run() {
 			chat.t("Reset conversation history"),
 			chat.t("Select AI model"),
 			chat.t("Set creativity level"),
-			chat.t("Toggle streaming responses"),
 			chat.t("Set conversation history age limit"),
 			chat.t("Set custom system prompt"),
 			chat.t("Reset to default prompt"),
@@ -204,7 +200,6 @@ func (s *Server) run() {
 		}
 		Log.WithField("user", c.Sender().Username).Info("Selected model ", model)
 		chat.ModelName = model
-		chat.Stream = true
 		s.db.Save(&chat)
 
 		return c.Send(chat.t("Model set to {{.model}}", &i18n.Replacements{"model": model}))
@@ -470,19 +465,6 @@ func (s *Server) run() {
 		return c.Reply(c.Message(), chat.t("Default prompt set"))
 	})
 
-	b.Handle(cmdStream, func(c tele.Context) error {
-		chat := s.getChat(c.Chat(), c.Sender())
-		chat.Stream = !chat.Stream
-		s.db.Save(&chat)
-		status := "disabled"
-		if chat.Stream {
-			status = "enabled"
-		}
-		text := chat.t("Stream is {{.status}}", &i18n.Replacements{"status": chat.t(status)})
-
-		return c.Reply(c.Message(), text)
-	})
-
 	b.Handle(cmdQA, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
 		chat.QA = !chat.QA
@@ -496,17 +478,8 @@ func (s *Server) run() {
 		return c.Reply(c.Message(), text)
 	})
 
-	b.Handle(cmdStop, func(c tele.Context) error {
-		return nil
-	})
-
 	b.Handle(cmdInfo, func(c tele.Context) error {
 		chat := s.getChat(c.Chat(), c.Sender())
-		status := "disabled"
-		if chat.Stream {
-			status = "enabled"
-		}
-		status = chat.t(status)
 
 		prompt := chat.MasterPrompt
 		role := chat.t("default")
@@ -519,12 +492,11 @@ func (s *Server) run() {
 		return c.Reply(
 			c.Message(),
 			fmt.Sprintf(
-				"Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nStreaming: %s\nConversation Age (days): %d\nRole: %s",
+				"Version: %s\nModel: %s\nTemperature: %0.2f\nPrompt: %s\nConversation Age (days): %d\nRole: %s",
 				Version,
 				model.Name,
 				chat.Temperature,
 				prompt,
-				status,
 				chat.ConversationAge,
 				role,
 			),

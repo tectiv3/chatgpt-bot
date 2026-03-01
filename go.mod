@@ -29,3 +29,5 @@ require (
 	golang.org/x/term v0.35.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
+
+replace gopkg.in/telebot.v3 => github.com/tectiv3/telebot v0.0.0-20260301132725-f54b1d46d473
