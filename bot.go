@@ -38,8 +38,9 @@ const (
 	cmdDelUser    = "/del"
 	cmdHelp       = "/help"
 	cmdMiniApp    = "/webapp"
-	msgStart     = "This bot will answer your messages using Claude AI"
-	masterPrompt = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
+	msgStart         = "This bot will answer your messages using Claude AI"
+	masterPrompt     = "You are a helpful assistant. You always try to answer truthfully. If you don't know the answer, just say that you don't know, don't try to make up an answer. Don't explain yourself. Do not introduce yourself, just answer the user concisely."
+	defaultModelName = "default"
 )
 
 var (

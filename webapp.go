@@ -495,7 +495,7 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request) {
 		ThreadID:     &threadID,
 		ThreadTitle:  &title,
 		Temperature:  1.0, // Default values
-		ModelName:    s.conf.Models[0].ModelID,
+		ModelName:    defaultModelName,
 		Stream:       true,
 		ContextLimit: 40000,
 	}
@@ -758,7 +758,7 @@ func (s *Server) chatInThread(w http.ResponseWriter, r *http.Request, threadID s
 			ThreadID:     &newThreadID,
 			ThreadTitle:  &title,
 			Temperature:  1.0, // Default values
-			ModelName:    s.conf.Models[0].ModelID,
+			ModelName:    defaultModelName,
 			Stream:       true,
 			ContextLimit: 4000,
 		}
