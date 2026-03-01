@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -40,30 +39,12 @@ func friendlyAPIError(err error) string {
 	return err.Error()
 }
 
-func (s *Server) complete(c tele.Context, message string, reply bool) {
+func (s *Server) complete(c tele.Context, message string) {
 	chat := s.getChat(c.Chat(), c.Sender())
 
-	text := "..."
-	sentMessage := c.Message()
-	var err error
-	// reply is a flag to indicate if we need to reply to another message, otherwise it is a voice transcription
-	if !reply {
-		text = fmt.Sprintf(chat.t("_Transcript:_\n\n%s\n\n_Answer:_ \n\n"), message)
-		sentMessage, err = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
-			ReplyTo:   c.Message(),
-			ParseMode: tele.ModeMarkdown,
-		})
-		if err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-			sentMessage, _ = c.Bot().Send(c.Recipient(), err.Error())
-		}
-		chat.MessageID = &([]string{strconv.Itoa(sentMessage.ID)}[0])
-		c.Set("reply", *sentMessage)
-	}
-
-	msgPtr := &message
-	if len(message) == 0 {
-		msgPtr = nil
+	var msgPtr *string
+	if len(message) > 0 {
+		msgPtr = &message
 	}
 
 	s.getStreamingAnswer(chat, c, msgPtr)
@@ -435,5 +416,5 @@ func (s *Server) processPDF(c tele.Context) {
 	chat.addFileToDialog(c.Message().Caption, fileName, c.Message().Document.FileName)
 	s.db.Save(&chat)
 
-	s.complete(c, "", true)
+	s.complete(c, "")
 }

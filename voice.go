@@ -140,7 +140,19 @@ func (s *Server) handleVoice(c tele.Context) {
 		return
 	}
 
-	s.complete(c, transcript, false)
+	// Always show transcript as a separate reply
+	transcriptText := fmt.Sprintf("_Transcript:_\n\n%s", transcript)
+	_, _ = c.Bot().Send(c.Recipient(), transcriptText, "text", &tele.SendOptions{
+		ReplyTo:   c.Message(),
+		ParseMode: tele.ModeMarkdown,
+	})
+
+	// Forwarded voice — transcript only, no AI reply
+	if c.Message().IsForwarded() {
+		return
+	}
+
+	s.complete(c, transcript)
 }
 
 // transcribe sends WAV audio to the configured whisper endpoint

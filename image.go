@@ -35,5 +35,5 @@ func (s *Server) handleImage(c tele.Context) {
 	chat.addImageToDialog(c.Message().Caption, fileName)
 	s.db.Save(&chat)
 
-	s.complete(c, "", true)
+	s.complete(c, "")
 }
