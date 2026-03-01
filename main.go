@@ -92,6 +92,11 @@ func main() {
 			panic("failed to migrate role")
 		}
 
+		// Rename annotations column to citations
+		if db.Migrator().HasColumn(&ChatMessage{}, "annotations") {
+			db.Migrator().RenameColumn(&ChatMessage{}, "annotations", "citations")
+		}
+
 		Log.WithField("allowed_users", len(conf.AllowedTelegramUsers)).Info("Started")
 		server := &Server{
 			conf:              conf,
