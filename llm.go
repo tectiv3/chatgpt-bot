@@ -1,659 +1,20 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/meinside/openai-go"
 	"github.com/tectiv3/anthropic-go"
-	"github.com/tectiv3/awsnova-go"
 	tele "gopkg.in/telebot.v3"
 )
 
 // generate a user-agent value
 func userAgent(userID int64) string {
 	return fmt.Sprintf("telegram-chatgpt-bot:%d", userID)
-}
-
-// convertDialogToResponseMessages converts OpenAI chat messages to ResponseMessage format
-func (s *Server) convertDialogToResponseMessages(history []openai.ChatMessage) []openai.ResponseMessage {
-	var messages []openai.ResponseMessage
-
-	for _, msg := range history {
-		// Skip system messages as they'll be handled via instructions
-		if msg.Role == openai.ChatMessageRoleSystem {
-			continue
-		}
-		// Convert tool messages to user messages with clear context for Responses API
-		if msg.Role == openai.ChatMessageRoleTool {
-			if str, err := msg.ContentString(); err == nil {
-				messages = append(messages, openai.ResponseMessage{
-					Role:    "user",
-					Content: fmt.Sprintf("[Tool execution result]: %s", str),
-				})
-			}
-			continue
-		}
-		if str, err := msg.ContentString(); err == nil {
-			messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: str})
-		} else if contentArr, err := msg.ContentArray(); err == nil {
-			fixed := []openai.ChatMessageContent{}
-			for _, c := range contentArr {
-				if c.Type == "text" && c.Text != nil {
-					fixed = append(fixed, openai.ChatMessageContent{Type: "input_text", Text: c.Text})
-				} else if c.Type == "image_url" {
-					// cast c.ImageURL to map[string]string and get "url"
-					if url, ok := c.ImageURL.(map[string]string)["url"]; ok {
-						fixed = append(fixed, openai.ChatMessageContent{Type: "input_image", ImageURL: url})
-					} else {
-						Log.Warnf("Image URL is not a string map: %v", c.ImageURL)
-						continue
-					}
-				} else {
-					fixed = append(fixed, c)
-				}
-			}
-			messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: fixed})
-		}
-		//
-		// 		// Convert content to string
-		// 		content, err := msg.ContentString()
-		// 		if err != nil {
-		// 			// Try to get content from array format
-		// 			if contentArr, arrErr := msg.ContentArray(); arrErr == nil {
-		// 				for _, c := range contentArr {
-		// 					if c.Type == "text" && c.Text != nil {
-		// 						// content = *c.Text
-		// 						break
-		// } else if c.Type == "image_url" && c.ImageURL != nil {
-		// 				}
-		// 			}
-		// 		}
-		//
-
-		// 		if content != "" {
-		// messages = append(messages, openai.ResponseMessage{Role: string(msg.Role), Content: msg.Content})
-		// }
-	}
-
-	return messages
-}
-
-// getResponseStream uses the Responses API for streaming when available
-func (s *Server) getResponseStream(chat *Chat, c tele.Context, question *string) error {
-	_ = c.Notify(tele.Typing)
-	type completion struct {
-		event openai.ResponseStreamEvent
-		done  bool
-		err   error
-	}
-	ch := make(chan completion, 1)
-
-	history := chat.getDialog(question)
-
-	chat.removeMenu(c)
-	sentMessage := chat.getSentMessage(c)
-
-	model := s.getModel(chat.ModelName)
-	if model.Provider != pOpenAI {
-		return s.getStreamAnswer(chat, c, question)
-	}
-
-	modelID := model.ModelID
-	messages := s.convertDialogToResponseMessages(history)
-	aiClient := s.openAI
-
-	instructions := chat.MasterPrompt
-	if chat.RoleID != nil {
-		instructions = chat.Role.Prompt
-	}
-	// append current date and time to instructions
-	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
-
-	options := openai.ResponseOptions{}
-	options.SetInstructions(instructions)
-	options.SetMaxOutputTokens(10000)
-	if !model.Reasoning {
-		options.SetTemperature(chat.Temperature)
-	}
-	options.SetUser(userAgent(c.Sender().ID))
-	options.SetStore(false)
-	// aiClient.Verbose = s.conf.Verbose
-
-	// Get custom function tools for responses API
-	tools := s.getResponseTools()
-
-	// Add built-in search tool if configured
-	if len(model.SearchTool) > 0 {
-		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
-	}
-	if model.CodeInterpreter {
-		tools = append(tools, openai.NewBuiltinToolWithContainer("code_interpreter", "auto"))
-	}
-
-	if len(tools) > 0 {
-		options.SetTools(tools)
-	}
-
-	ctx, cancel := WithTimeout(LongTimeout)
-	defer cancel()
-
-	reply := ""
-	tokens := 0
-	var functionCalls []openai.ResponseOutput
-
-	if err := aiClient.CreateResponseStreamWithContext(ctx, modelID, messages, options,
-		func(event openai.ResponseStreamEvent, d bool, e error) {
-			ch <- completion{event: event, done: d, err: e}
-			if d {
-				close(ch)
-			}
-		}); err != nil {
-		Log.WithField("user", c.Sender().Username).Error("Response stream error:", err)
-		return err
-	}
-
-	for comp := range ch {
-		if comp.err != nil {
-			Log.WithField("user", c.Sender().Username).Error(comp.err)
-
-			return comp.err
-		}
-		event := comp.event
-		// Log.WithField("event", event.Type).Debug("Stream event")
-
-		if comp.done {
-			// Handle function calls if any
-			if len(functionCalls) > 0 {
-				_ = c.Notify(tele.Typing)
-
-				// First, add the assistant's message with tool calls to conversation history
-				assistantMsg := openai.NewChatAssistantMessage(reply)
-				var toolCalls []openai.ToolCall
-				for _, responseOutput := range functionCalls {
-					if responseOutput.Type == "function_call" {
-						toolCall := openai.ToolCall{
-							ID:   responseOutput.CallID,
-							Type: "function",
-							Function: openai.ToolCallFunction{
-								Name:      responseOutput.Name,
-								Arguments: responseOutput.Arguments,
-							},
-						}
-						toolCalls = append(toolCalls, toolCall)
-					}
-				}
-				assistantMsg.ToolCalls = toolCalls
-				chat.addMessageToDialog(assistantMsg)
-
-				result, err := s.handleResponseFunctionCalls(chat, c, functionCalls)
-				if err != nil {
-					return err
-				}
-				s.updateReply(chat, reply+result, c)
-
-				return nil
-			}
-
-			if event.Response != nil && event.Response.Usage != nil {
-				tokens = event.Response.Usage.TotalTokens
-			}
-
-			if tokens > 0 {
-				chat.updateTotalTokens(tokens)
-			}
-
-			if reply != "" {
-				chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
-				s.saveHistory(chat)
-			}
-
-			return nil
-		}
-
-		switch event.Type {
-		case "response.output_item.added":
-			if event.Item != nil {
-				switch event.Item.Type {
-				case "function_call":
-					Log.WithField("function", event.Item.Name).Info("Function call started")
-				case "web_search_call":
-					Log.WithField("item", event.Item).Info("Web search started")
-					if len(event.Item.Content) > 0 {
-						Log.WithField("content", event.Item.Content[0]).Info("Web search content")
-					}
-					_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
-				}
-			}
-		case "response.output_text.delta":
-			if event.Delta != nil {
-				reply += *event.Delta
-				tokens++
-				if tokens%16 == 0 {
-					_, _ = c.Bot().Edit(sentMessage, reply)
-				}
-			}
-
-		case "response.output_item.done":
-			if event.Item != nil {
-				switch event.Item.Type {
-				case "message":
-					Log.WithField("user", c.Sender().Username).Info("Message output completed")
-					s.checkAnnotations(c, sentMessage, event.Item.Content)
-					s.updateReply(chat, reply, c)
-
-				case "function_call":
-					functionCalls = append(functionCalls, *event.Item)
-					Log.WithField("user", c.Sender().Username).WithField("function", event.Item.Name).Info("Function call completed")
-
-				}
-			}
-		}
-
-	}
-
-	return nil
-}
-
-// TelegramAnnotationProcessor implements AnnotationProcessor for Telegram bot
-type TelegramAnnotationProcessor struct {
-	context tele.Context
-	message *tele.Message
-}
-
-// ProcessFile saves the file locally AND sends it to Telegram user, then returns the local path
-func (p *TelegramAnnotationProcessor) ProcessFile(
-	filename string, data []byte, annotation openai.Annotation, text string,
-) (string, error) {
-	annotationsDir := "uploads/annotations"
-	if err := os.MkdirAll(annotationsDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create annotations directory: %w", err)
-	}
-
-	timestamp := time.Now().Unix()
-	localFilename := fmt.Sprintf("%d_%s", timestamp, filename)
-	localPath := filepath.Join(annotationsDir, localFilename)
-
-	if err := os.WriteFile(localPath, data, 0644); err != nil {
-		return "", fmt.Errorf("failed to write annotation file: %w", err)
-	}
-
-	ext := filepath.Ext(filename)
-	switch strings.ToLower(ext) {
-	case ".png", ".jpg", ".jpeg", ".gif":
-		file := &tele.Photo{File: tele.FromReader(bytes.NewReader(data))}
-		if len(text) > 0 {
-			file.Caption = text
-			p.context.Bot().Edit(p.message, file)
-		} else {
-			p.context.Send(file)
-		}
-	default:
-		mimes := map[string]string{
-			".c":    "text/x-c",
-			".cs":   "text/x-csharp",
-			".cpp":  "text/x-c++",
-			".csv":  "text/csv",
-			".doc":  "application/msword",
-			".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-			".html": "text/html",
-			".java": "text/x-java",
-			".json": "application/json",
-			".md":   "text/markdown",
-			".pdf":  "application/pdf",
-			".php":  "text/x-php",
-			".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-			".py":   "text/x-python",
-			".rb":   "text/x-ruby",
-			".tex":  "text/x-tex",
-			".txt":  "text/plain",
-			".css":  "text/css",
-			".js":   "text/javascript",
-			".sh":   "application/x-sh",
-			".ts":   "application/typescript",
-			".pkl":  "application/octet-stream",
-			".tar":  "application/x-tar",
-			".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-			".xml":  "application/xml",
-			".zip":  "application/zip",
-		}
-
-		file := &tele.Document{
-			File:     tele.FromReader(bytes.NewReader(data)),
-			FileName: filename,
-			MIME:     mimes[strings.ToLower(ext)],
-		}
-		if len(text) > 0 {
-			file.Caption = text
-			p.context.Bot().Edit(p.message, file)
-		} else {
-			p.context.Send(file)
-		}
-	}
-
-	return localPath, nil
-}
-
-func (s *Server) checkAnnotations(c tele.Context, m *tele.Message, content []openai.OutputContent) {
-	chat := s.getChat(c.Chat(), c.Sender())
-
-	processor := &TelegramAnnotationProcessor{
-		context: c,
-		message: m,
-	}
-
-	annotations := s.ProcessAnnotations(content, processor)
-	if len(annotations) > 0 {
-		// Find the most recent assistant message in the chat history
-		var lastAssistantMessage *ChatMessage
-		for i := len(chat.History) - 1; i >= 0; i-- {
-			if chat.History[i].Role == "assistant" {
-				lastAssistantMessage = &chat.History[i]
-				break
-			}
-		}
-
-		if lastAssistantMessage == nil {
-			Log.Error("no assistant message found to store annotations")
-			return
-		}
-
-		s.StoreAnnotations(lastAssistantMessage, annotations)
-	}
-}
-
-// getResponse uses the non-streaming Responses API
-func (s *Server) getResponse(chat *Chat, c tele.Context, question *string) error {
-	_ = c.Notify(tele.Typing)
-
-	history := chat.getDialog(question)
-
-	chat.removeMenu(c)
-
-	model := s.getModel(chat.ModelName)
-	if model.Provider != pOpenAI {
-		return s.getAnswer(chat, c, question)
-	}
-
-	modelID := model.ModelID
-	messages := s.convertDialogToResponseMessages(history)
-	aiClient := s.openAI
-
-	instructions := chat.MasterPrompt
-	if chat.RoleID != nil {
-		instructions = chat.Role.Prompt
-	}
-	instructions += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
-
-	options := openai.ResponseOptions{}
-	options.SetInstructions(instructions)
-	options.SetMaxOutputTokens(4000)
-	if !model.Reasoning {
-		options.SetTemperature(chat.Temperature)
-	}
-	options.SetUser(userAgent(c.Sender().ID))
-	options.SetStore(false)
-
-	tools := s.getResponseTools()
-	if len(model.SearchTool) > 0 {
-		tools = append(tools, openai.NewBuiltinTool(model.SearchTool))
-	}
-
-	if len(tools) > 0 {
-		options.SetTools(tools)
-	}
-
-	ctx, cancel := WithTimeout(LongTimeout)
-	defer cancel()
-
-	response, err := aiClient.CreateResponseWithContext(ctx, modelID, messages, options)
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error("Response error:", err)
-		return err
-	}
-
-	var functionCalls []openai.ResponseOutput
-	for _, output := range response.Output {
-		if output.Type == "function_call" {
-			functionCalls = append(functionCalls, output)
-		}
-	}
-
-	// Handle function calls if any
-	if len(functionCalls) > 0 {
-		_ = c.Notify(tele.Typing)
-
-		// First, add the assistant's message with tool calls to conversation history
-		reply := ""
-		if len(response.Output) > 0 {
-			for _, output := range response.Output {
-				if output.Type == "message" && len(output.Content) > 0 {
-					for _, content := range output.Content {
-						if content.Type == "text" && content.Text != "" {
-							reply += content.Text
-						}
-					}
-				}
-			}
-		}
-
-		assistantMsg := openai.NewChatAssistantMessage(reply)
-		// Convert ResponseOutput function calls to ToolCall format for history
-		var toolCalls []openai.ToolCall
-		for _, responseOutput := range functionCalls {
-			if responseOutput.Type == "function_call" {
-				toolCall := openai.ToolCall{
-					ID:   responseOutput.CallID,
-					Type: "function",
-					Function: openai.ToolCallFunction{
-						Name:      responseOutput.Name,
-						Arguments: responseOutput.Arguments,
-					},
-				}
-				toolCalls = append(toolCalls, toolCall)
-			}
-		}
-		assistantMsg.ToolCalls = toolCalls
-		chat.addMessageToDialog(assistantMsg)
-
-		// Execute the tool calls
-		result, err := s.handleResponseFunctionCalls(chat, c, functionCalls)
-		if err != nil {
-			return err
-		}
-
-		// Update UI with tool results and end conversation
-		s.updateReply(chat, reply+"\n\n"+result, c)
-		return nil
-	}
-
-	// No function calls - handle normal response
-	reply := ""
-	var messageContent []openai.OutputContent
-	for _, output := range response.Output {
-		if output.Type == "message" && len(output.Content) > 0 {
-			messageContent = output.Content
-			for _, content := range output.Content {
-				if content.Type == "text" && content.Text != "" {
-					reply += content.Text
-				}
-			}
-		}
-	}
-
-	if len(messageContent) > 0 {
-		sentMessage := chat.getSentMessage(c)
-		s.checkAnnotations(c, sentMessage, messageContent)
-	}
-
-	// Update token count and save history
-	if response.Usage != nil {
-		chat.updateTotalTokens(response.Usage.TotalTokens)
-	}
-
-	if reply != "" {
-		chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
-		s.saveHistory(chat)
-		s.updateReply(chat, reply, c)
-	}
-
-	return nil
-}
-
-func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
-	ctx, cancel := WithTimeout(DefaultTimeout)
-	defer cancel()
-
-	_ = c.Notify(tele.Typing)
-	chat := s.getChat(c.Chat(), c.Sender())
-	msg := openai.NewChatUserMessage(request)
-
-	prompt := chat.MasterPrompt
-	if chat.RoleID != nil {
-		prompt = chat.Role.Prompt
-	}
-	system := openai.NewChatSystemMessage(prompt)
-
-	aiClient := s.openAI
-	model := s.getModel(chat.ModelName)
-	modelID := model.ModelID
-	if model.Provider == pAnthropic {
-		aiClient = openai.NewClient(s.conf.AnthropicAPIKey, "").SetBaseURL("https://api.anthropic.com/v1")
-	} else if model.Provider == pGemini {
-		aiClient = s.gemini
-	} else if model.Provider != pOpenAI {
-		modelID = s.conf.OpenAILatestModel
-	}
-
-	aiClient.Verbose = s.conf.Verbose
-	history := []openai.ChatMessage{system}
-	history = append(history, msg)
-
-	response, err := aiClient.CreateChatCompletionWithContext(ctx, modelID, history,
-		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(chat.Temperature))
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		return err.Error(), err
-	}
-	_ = c.Notify(tele.Typing)
-
-	result := response.Choices[0].Message
-	if len(result.ToolCalls) > 0 {
-		return s.handleFunctionCall(chat, c, result)
-	}
-
-	var answer string
-	if len(response.Choices) > 0 {
-		answer, err = response.Choices[0].Message.ContentString()
-		if err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-			return err.Error(), err
-		}
-		chat.TotalTokens += response.Usage.TotalTokens
-		s.db.Save(&chat)
-	} else {
-		answer = "No response from API."
-	}
-
-	if s.conf.Verbose {
-		Log.WithField("user", c.Sender().Username).Info(answer)
-	}
-
-	return answer, nil
-}
-
-func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error) {
-	ctx, cancel := WithTimeout(DefaultTimeout)
-	defer cancel()
-
-	_ = c.Notify(tele.Typing)
-	msg := openai.NewChatUserMessage(request)
-	system := openai.NewChatSystemMessage(masterPrompt)
-
-	aiClient := s.openAI
-	aiClient.Verbose = s.conf.Verbose
-	history := []openai.ChatMessage{system}
-	history = append(history, msg)
-
-	response, err := aiClient.CreateChatCompletionWithContext(ctx,
-		s.conf.OpenAILatestModel,
-		history,
-		openai.ChatCompletionOptions{}.SetUser(userAgent(c.Sender().ID)).SetTemperature(0.8),
-	)
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		return err.Error(), err
-	}
-	_ = c.Notify(tele.Typing)
-
-	// result := response.Choices[0].Message
-	// if len(result.ToolCalls) > 0 {
-	// 	return s.handleFunctionCall(chat, c, result)
-	// }
-
-	var answer string
-	if len(response.Choices) > 0 {
-		answer, err = response.Choices[0].Message.ContentString()
-		if err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-			return err.Error(), err
-		}
-	} else {
-		answer = "No response from API."
-	}
-
-	if s.conf.Verbose {
-		Log.WithField("user", c.Sender().Username).Info(answer)
-	}
-
-	return answer, nil
-}
-
-// summarize summarizes the chat history
-func (s *Server) summarize(chatHistory []ChatMessage) (*openai.ChatCompletion, error) {
-	msg := openai.NewChatUserMessage(
-		"Make a compressed summary of the conversation with the AI. Try to be as brief as possible and highlight key points. Use same language as the user.",
-	)
-	system := openai.NewChatSystemMessage("Be as brief as possible")
-
-	history := []openai.ChatMessage{system}
-	for _, h := range chatHistory {
-		if h.Role == openai.ChatMessageRoleTool {
-			continue
-		}
-		history = append(
-			history,
-			openai.ChatMessage{Role: h.Role, Content: []openai.ChatMessageContent{{
-				Type: "text", Text: h.Content,
-			}}},
-		)
-	}
-	history = append(history, msg)
-	Log.Info("Chat history len: ", len(history))
-
-	ctx, cancel := WithTimeout(DefaultTimeout)
-	defer cancel()
-
-	response, err := s.openAI.CreateChatCompletionWithContext(ctx,
-		miniModel,
-		history,
-		openai.ChatCompletionOptions{}.SetUser(userAgent(31337)).SetTemperature(0.5),
-	)
-	if err != nil {
-		Log.Error(err)
-		return nil, err
-	}
-	if response.Choices[0].Message.Content == nil {
-		return nil, nil
-	}
-
-	return &response, nil
 }
 
 func (s *Server) complete(c tele.Context, message string, reply bool) {
@@ -663,7 +24,6 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 	sentMessage := c.Message()
 	var err error
 	// reply is a flag to indicate if we need to reply to another message, otherwise it is a voice transcription
-	// TODO: refactor me, this is a mess
 	if !reply {
 		text = fmt.Sprintf(chat.t("_Transcript:_\n\n%s\n\n_Answer:_ \n\n"), message)
 		sentMessage, err = c.Bot().Send(c.Recipient(), text, "text", &tele.SendOptions{
@@ -683,239 +43,262 @@ func (s *Server) complete(c tele.Context, message string, reply bool) {
 		msgPtr = nil
 	}
 
-	model := s.getModel(chat.ModelName)
-	if model.Provider == pAWS {
-		s.getNovaAnswer(chat, c, msgPtr)
-		return
-	}
-
-	if model.Provider == pAnthropic {
-		s.getAnthropicAnswer(chat, c, msgPtr)
-		return
-	}
-
-	if chat.Stream {
-		// Use new Responses API for OpenAI models, fall back to regular streaming for others
-		if model.Provider == pOpenAI {
-			if err := s.getResponseStream(chat, c, msgPtr); err != nil {
-				Log.WithField("user", c.Sender().Username).Error(err)
-				_ = c.Reply(c.Message(), err.Error())
-			}
-		} else {
-			if err := s.getStreamAnswer(chat, c, msgPtr); err != nil {
-				Log.WithField("user", c.Sender().Username).Error(err)
-				_ = c.Reply(c.Message(), err.Error())
-			}
-		}
-		return
-	}
-
-	if err := s.getAnswer(chat, c, msgPtr); err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		_ = c.Send(err.Error(), replyMenu)
-	}
+	s.getStreamingAnswer(chat, c, msgPtr)
 }
 
-func (s *Server) getAnswer(chat *Chat, c tele.Context, question *string) error {
-	_ = c.Notify(tele.Typing)
-
-	aiClient := s.openAI
+// getStreamingAnswer handles streaming responses from Anthropic
+func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string) {
 	model := s.getModel(chat.ModelName)
-	modelID := model.ModelID
-	if model.Provider == pAnthropic {
-		s.getAnthropicAnswer(chat, c, question)
-		return nil
-	} else if model.Provider == pGemini {
-		aiClient = s.gemini
-	} else if model.Provider != pOpenAI {
-		modelID = s.conf.OpenAILatestModel
+	maxTokens := 4096
+
+	system := chat.MasterPrompt
+	if chat.RoleID != nil {
+		system = chat.Role.Prompt
 	}
-
-	options := openai.ChatCompletionOptions{}
-	// s.ai.APIKey = s.conf.OpenAIAPIKey
-	options.SetTools(s.getFunctionTools())
-
-	// s.ai.Verbose = s.conf.Verbose
-	// options.SetMaxTokens(3000)
-	history := chat.getDialog(question)
+	system += fmt.Sprintf("\n\nCurrent date and time: %s", time.Now().Format(time.RFC3339))
 
 	chat.removeMenu(c)
-
-	ctx, cancel := WithTimeout(LongTimeout)
+	sentMessage := chat.getSentMessage(c)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	response, err := aiClient.CreateChatCompletionWithContext(ctx, modelID, history,
-		options.
-			SetUser(userAgent(c.Sender().ID)).
-			SetTemperature(chat.Temperature))
+	s.ai.Apply(anthropic.WithModel(model.ModelID))
+	s.ai.Apply(anthropic.WithSystemPrompt(system))
+	s.ai.Apply(anthropic.WithMaxTokens(maxTokens))
+
+	if !model.Reasoning {
+		temp := chat.Temperature
+		s.ai.Temperature = &temp
+	} else {
+		s.ai.Temperature = nil
+	}
+
+	// Add tools based on model config and chat settings
+	var tools []anthropic.ToolInterface
+	if model.WebSearch {
+		tools = append(tools, anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 5}))
+	}
+	// Custom tools from function_calls.go (Task 4)
+	tools = append(tools, s.getTools()...)
+
+	if len(tools) > 0 {
+		s.ai.Apply(anthropic.WithTools(tools...))
+	} else {
+		// Clear any previously set tools
+		s.ai.Apply(anthropic.WithTools())
+	}
+
+	dialog := chat.getDialog(question)
+	stream, err := s.ai.Stream(ctx, dialog)
 	if err != nil {
 		Log.WithField("user", c.Sender().Username).Error(err)
-		return err
+		_, _ = c.Bot().Edit(sentMessage, err.Error())
+		return
+	}
+	defer stream.Close()
+
+	var result strings.Builder
+	_ = c.Notify(tele.Typing)
+	tokens := 0
+	accumulator := anthropic.NewResponseAccumulator()
+
+	for stream.Next() {
+		select {
+		case <-ctx.Done():
+			_, _ = c.Bot().Edit(sentMessage, "Timeout")
+			return
+		default:
+		}
+		event := stream.Event()
+		accumulator.AddEvent(event)
+
+		switch event.Type {
+		case anthropic.EventTypeContentBlockStart:
+			if event.ContentBlock != nil {
+				if event.ContentBlock.Type == anthropic.ContentTypeServerToolUse &&
+					event.ContentBlock.Name == "web_search" {
+					_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
+				}
+			}
+		case anthropic.EventTypeContentBlockDelta:
+			if event.Delta == nil {
+				continue
+			}
+			if event.Delta.Type == anthropic.EventDeltaTypeText {
+				result.WriteString(event.Delta.Text)
+				tokens++
+				if tokens%10 == 0 {
+					_, _ = c.Bot().Edit(sentMessage, result.String())
+				}
+			}
+		case anthropic.EventTypeMessageStop:
+			Log.WithField("user", c.Sender().Username).
+				WithField("tokens", tokens).Info("Response stream finished")
+		}
 	}
 
-	var answer string
-	result := response.Choices[0].Message
-	if len(result.ToolCalls) > 0 {
-		answer, err = s.handleFunctionCall(chat, c, result)
-		if err != nil {
-			return err
+	if err := stream.Err(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			Log.WithField("user", c.Sender().Username).Error("Timeout. Partial: ", result.String())
+			_, _ = c.Bot().Edit(sentMessage, "Timeout. Partial: "+result.String())
+		} else if ctx.Err() == context.Canceled {
+			Log.WithField("user", c.Sender().Username).Error("Request cancelled. Partial: ", result.String())
+			_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial: "+result.String())
+		} else {
+			Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
+			_, _ = c.Bot().Edit(sentMessage, "Error: "+err.Error())
 		}
-	} else if len(response.Choices) == 0 {
-		answer = chat.t("No response from API.")
-	} else {
-		answer, err = response.Choices[0].Message.ContentString()
-		if err != nil {
-			Log.WithField("user", c.Sender().Username).Error(err)
-			return err
+		return
+	}
+
+	if !accumulator.IsComplete() {
+		return
+	}
+
+	// Extract citations from accumulated response
+	var citations []Citation
+	response := accumulator.Response()
+	for _, content := range response.Content {
+		if tc, ok := content.(*anthropic.TextContent); ok {
+			for _, cit := range tc.Citations {
+				citations = append(citations, extractCitation(cit))
+			}
 		}
-		chat.updateTotalTokens(response.Usage.TotalTokens)
-		chat.addMessageToDialog(openai.NewChatAssistantMessage(answer))
+	}
+
+	// Check for tool use in response
+	var toolUses []anthropic.Content
+	for _, content := range response.Content {
+		if content.Type() == anthropic.ContentTypeToolUse {
+			toolUses = append(toolUses, content)
+		}
+	}
+
+	if len(toolUses) > 0 {
+		s.handleAnthropicToolCalls(chat, c, response, toolUses)
+		return
+	}
+
+	// Finalize response
+	usage := accumulator.Usage()
+	reply := result.String()
+	s.updateReply(chat, reply, c)
+
+	totalTokens := usage.InputTokens + usage.OutputTokens
+	if totalTokens > 0 {
+		chat.updateTotalTokens(totalTokens)
+	}
+
+	if reply != "" {
+		chat.addAssistantMessage(reply)
+		if len(citations) > 0 {
+			s.storeCitations(chat, citations)
+		}
 		s.saveHistory(chat)
 	}
-
-	Log.WithField("user", c.Sender().Username).
-		WithField("length", len(answer)).
-		Info("got an answer")
-
-	if len(answer) == 0 {
-		return nil
-	}
-
-	if len(answer) > 4000 {
-		file := tele.FromReader(strings.NewReader(answer))
-		_ = c.Send(
-			&tele.Document{File: file, FileName: "answer.txt", MIME: "text/plain"},
-			replyMenu,
-		)
-		// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-		// 	Log.Warn(err)
-		// 	return err
-		// }
-
-		return nil
-	}
-	s.updateReply(chat, answer, c)
-
-	// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-	// 	Log.Warn(err)
-	// 	return err
-	// }
-
-	return nil
 }
 
-func (s *Server) getStreamAnswer(chat *Chat, c tele.Context, question *string) error {
-	_ = c.Notify(tele.Typing)
-	type completion struct {
-		response openai.ChatCompletion
-		done     bool
-		err      error
+// extractCitation converts an Anthropic Citation to our local Citation type
+func extractCitation(cit anthropic.Citation) Citation {
+	switch c := cit.(type) {
+	case *anthropic.WebSearchResultLocation:
+		return Citation{
+			URL:       c.URL,
+			Title:     c.Title,
+			CitedText: c.CitedText,
+		}
+	case *anthropic.CharLocation:
+		return Citation{
+			Title:     c.DocumentTitle,
+			CitedText: c.CitedText,
+		}
+	default:
+		return Citation{}
 	}
-	ch := make(chan completion, 1)
+}
 
-	history := chat.getDialog(question)
-
-	chat.removeMenu(c)
-
-	sentMessage := chat.getSentMessage(c)
-
-	aiClient := s.openAI
-	model := s.getModel(chat.ModelName)
-	Log.WithField("model", model.ModelID).WithField("provider", model.Provider).Info("Using model")
-	modelID := model.ModelID
-	if model.Provider == pAnthropic {
-		s.getAnthropicAnswer(chat, c, question)
-		return nil
-	} else if model.Provider == pGemini {
-		aiClient = s.gemini
-	} else if model.Provider != pOpenAI {
-		modelID = s.conf.OpenAILatestModel
-		// s.ai.APIKey = s.conf.OpenAIAPIKey
-	}
-
-	// aiClient.Verbose = s.conf.Verbose
-	ctx, cancel := WithTimeout(LongTimeout)
+// generateSimple performs a non-streaming Anthropic call for internal use
+// (summaries, title generation, etc.)
+func (s *Server) generateSimple(system, prompt, model string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if _, err := aiClient.CreateChatCompletionWithContext(ctx, modelID, history,
-		openai.ChatCompletionOptions{}.
-			SetTools(s.getFunctionTools()).
-			SetToolChoice(openai.ChatCompletionToolChoiceAuto).
-			SetUser(userAgent(c.Sender().ID)).
-			SetTemperature(chat.Temperature).
-			SetStream(func(r openai.ChatCompletion, d bool, e error) {
-				ch <- completion{response: r, done: d, err: e}
-				if d {
-					close(ch)
-				}
-			})); err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		return err
+	client := anthropic.New(
+		anthropic.WithAPIKey(s.conf.AnthropicAPIKey),
+		anthropic.WithModel(model),
+		anthropic.WithSystemPrompt(system),
+		anthropic.WithMaxTokens(1024),
+	)
+
+	messages := []*anthropic.Message{
+		anthropic.NewUserTextMessage(prompt),
 	}
+
+	response, err := client.Generate(ctx, messages)
+	if err != nil {
+		return "", err
+	}
+
+	var result string
+	for _, content := range response.Content {
+		if tc, ok := content.(*anthropic.TextContent); ok {
+			result += tc.Text
+		}
+	}
+
+	return result, nil
+}
+
+// simpleAnswer answers a one-off question using the chat's current model
+func (s *Server) simpleAnswer(c tele.Context, request string) (string, error) {
 	_ = c.Notify(tele.Typing)
-	reply := ""
-	result := ""
-	if c.Get("reply") != nil {
-		if msg, ok := c.Get("reply").(tele.Message); ok {
-			result = msg.Text
+	chat := s.getChat(c.Chat(), c.Sender())
+
+	prompt := chat.MasterPrompt
+	if chat.RoleID != nil {
+		prompt = chat.Role.Prompt
+	}
+
+	model := s.getModel(chat.ModelName)
+	return s.generateSimple(prompt, request, model.ModelID)
+}
+
+// anonymousAnswer answers without chat context
+func (s *Server) anonymousAnswer(c tele.Context, request string) (string, error) {
+	_ = c.Notify(tele.Typing)
+	model := s.conf.Models[0]
+	return s.generateSimple(masterPrompt, request, model.ModelID)
+}
+
+// summarize summarizes chat history using generateSimple
+func (s *Server) summarize(chatHistory []ChatMessage) (string, error) {
+	var historyText strings.Builder
+	for _, h := range chatHistory {
+		if h.Role == "tool" {
+			continue
+		}
+		if h.Content != nil {
+			historyText.WriteString(fmt.Sprintf("%s: %s\n", h.Role, *h.Content))
 		}
 	}
 
-	tokens := 0
-	for comp := range ch {
-		if comp.err != nil {
-			Log.WithField("user", c.Sender().Username).Error(comp.err)
-			return comp.err
-		}
-		if !comp.done {
-			// streaming the result, append the response to the result
-			if comp.response.Choices[0].Delta.Content != nil {
-				if c, err := comp.response.Choices[0].Delta.ContentString(); err == nil {
-					result += c
-				}
-				tokens++
-			}
-			// every 16 tokens update the message
-			if tokens%16 == 0 {
-				_, _ = c.Bot().Edit(sentMessage, result)
-			}
-		} else {
-			// stream is done, send the final result
-			if len(comp.response.Choices[0].Message.ToolCalls) > 0 &&
-				comp.response.Choices[0].Message.ToolCalls[0].Function.Name != "" {
-				_ = c.Notify(tele.Typing)
-				result, err := s.handleFunctionCall(chat, c, comp.response.Choices[0].Message)
-				if err != nil {
-					return err
-				}
+	prompt := historyText.String() + "\n\nMake a compressed summary of the conversation. Be brief, highlight key points. Use same language as the user."
+	model := s.conf.Models[0].ModelID
+	return s.generateSimple("Be as brief as possible", prompt, model)
+}
 
-				s.updateReply(chat, reply+result, c)
-				// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-				// 	Log.Warn(err)
-				// 	return err
-				// }
-
-				return nil
-			}
-
-			if len(result) == 0 {
-				return nil
-			}
-			s.updateReply(chat, reply+result, c)
-
-			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Stream finished")
-			// if err := c.Bot().React(c.Sender(), c.Message(), react.React(react.Brain)); err != nil {
-			// 	Log.Warn(err)
-			// }
-			chat.updateTotalTokens(tokens)
-			chat.addMessageToDialog(openai.NewChatAssistantMessage(result))
-			s.saveHistory(chat)
-
-			return nil
+// storeCitations saves citations to the last assistant message in chat history
+func (s *Server) storeCitations(chat *Chat, citations []Citation) {
+	var lastMsg *ChatMessage
+	for i := len(chat.History) - 1; i >= 0; i-- {
+		if chat.History[i].Role == "assistant" {
+			lastMsg = &chat.History[i]
+			break
 		}
 	}
-
-	return nil
+	if lastMsg != nil {
+		s.StoreCitations(lastMsg, citations)
+	}
 }
 
 func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
@@ -939,10 +322,6 @@ func (s *Server) updateReply(chat *Chat, answer string, c tele.Context) {
 }
 
 func (s *Server) saveHistory(chat *Chat) {
-	// Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saving chat history")
-
-	// iterate over history
-	// drop messages that are older than chat.ConversationAge days
 	var history []ChatMessage
 	chat.mutex.Lock()
 	defer chat.mutex.Unlock()
@@ -958,7 +337,6 @@ func (s *Server) saveHistory(chat *Chat) {
 		}
 	}
 	chat.History = history
-	// Log.WithField("user", chat.User.Username).WithField("history", len(chat.History)).Info("Saved chat history")
 	if len(chat.History) < 100 {
 		s.db.Save(&chat)
 		return
@@ -966,12 +344,11 @@ func (s *Server) saveHistory(chat *Chat) {
 
 	Log.WithField("user", chat.User.Username).
 		Infof("Chat history for chat ID %d is too long. Summarising...", chat.ID)
-	response, err := s.summarize(chat.History)
+	summary, err := s.summarize(chat.History)
 	if err != nil {
 		Log.Warn(err)
 		return
 	}
-	summary, _ := response.Choices[0].Message.ContentString()
 
 	if s.conf.Verbose {
 		Log.Info(summary)
@@ -982,7 +359,7 @@ func (s *Server) saveHistory(chat *Chat) {
 	s.db.Where("chat_id = ?", chat.ID).Where("id <= ?", maxID).Delete(&ChatMessage{})
 
 	chat.History = []ChatMessage{{
-		Role:      openai.ChatMessageRoleAssistant,
+		Role:      "assistant",
 		Content:   &summary,
 		ChatID:    chat.ChatID,
 		CreatedAt: time.Now(),
@@ -990,207 +367,8 @@ func (s *Server) saveHistory(chat *Chat) {
 
 	Log.WithField("user", chat.User.Username).
 		Info("Chat history length after summarising: ", len(chat.History))
-	chat.TotalTokens += response.Usage.TotalTokens
 
 	s.db.Save(&chat)
-}
-
-func (s *Server) getAnthropicAnswer(chat *Chat, c tele.Context, question *string) {
-	maxTokens := 1000
-	system := chat.MasterPrompt
-	if chat.RoleID != nil {
-		system = chat.Role.Prompt
-	}
-
-	chat.removeMenu(c)
-	sentMessage := chat.getSentMessage(c)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	s.anthropic.Apply(anthropic.WithSystemPrompt(system))
-	s.anthropic.Apply(anthropic.WithTools(anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 5})))
-	s.anthropic.Apply(anthropic.WithMaxTokens(maxTokens))
-	// s.anthropic.Apply(anthropic.WithTemperature(chat.Temperature))
-
-	stream, err := s.anthropic.Stream(ctx, chat.getAnthropicDialog(question))
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		_, _ = c.Bot().Edit(sentMessage, err.Error())
-		return
-	}
-	defer stream.Close()
-
-	var result strings.Builder
-	searchQuery := ""
-	_ = c.Notify(tele.Typing)
-	tokens := 0
-	accumulator := anthropic.NewResponseAccumulator()
-
-	for stream.Next() {
-		select {
-		case <-ctx.Done():
-			_, _ = c.Bot().Edit(sentMessage, "Timeout")
-			return
-		default:
-			// Continue processing
-		}
-		event := stream.Event()
-		accumulator.AddEvent(event)
-
-		switch event.Type {
-		case anthropic.EventTypeContentBlockStart:
-			if event.ContentBlock != nil {
-				switch event.ContentBlock.Type {
-				case anthropic.ContentTypeServerToolUse:
-					if event.ContentBlock.Name == "web_search" {
-						_, _ = c.Bot().Edit(sentMessage, chat.t("Web search started, please wait..."))
-					} else {
-						Log.WithField("content_block", event.ContentBlock.Name).Info("Content block started")
-					}
-				}
-			}
-		case anthropic.EventTypeContentBlockDelta:
-			if event.Delta == nil {
-				continue
-			}
-			switch event.Delta.Type {
-			case anthropic.EventDeltaTypeText:
-				result.WriteString(event.Delta.Text)
-				tokens++
-				if tokens%10 == 0 {
-					_, _ = c.Bot().Edit(sentMessage, result.String())
-				}
-
-			case anthropic.EventDeltaTypeInputJSON:
-				searchQuery += event.Delta.PartialJSON
-				// Log("Input JSON delta: %q", event.Delta.PartialJSON)
-			}
-
-		case anthropic.EventTypeMessageStop:
-			Log.WithField("user", c.Sender().Username).WithField("tokens", tokens).Info("Response stream finished")
-			// done
-		}
-	}
-	Log.WithField("searchQuery", searchQuery).Info("Search query")
-
-	if err := stream.Err(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			Log.WithField("user", c.Sender().Username).Error("Timeout after 60s. Partial response: ", result.String())
-			_, _ = c.Bot().Edit(sentMessage, "Timeout after 60s. Partial response: "+result.String())
-		} else if ctx.Err() == context.Canceled {
-			Log.WithField("user", c.Sender().Username).Error("Request cancelled. Partial response: ", result.String())
-			_, _ = c.Bot().Edit(sentMessage, "Request cancelled. Partial response: "+result.String())
-		} else {
-			Log.WithField("user", c.Sender().Username).Error("Streaming error: ", err)
-			_, _ = c.Bot().Edit(sentMessage, "Streaming error: "+err.Error())
-		}
-	}
-
-	if accumulator.IsComplete() {
-		usage := accumulator.Usage()
-		reply := result.String()
-		s.updateReply(chat, reply, c)
-		tokens = usage.InputTokens + usage.OutputTokens
-		// Update token count and save history
-		if tokens > 0 {
-			chat.updateTotalTokens(tokens)
-		}
-
-		if reply != "" {
-			chat.addMessageToDialog(openai.NewChatAssistantMessage(reply))
-			s.saveHistory(chat)
-		}
-	}
-}
-
-func (s *Server) getNovaAnswer(chat *Chat, c tele.Context, question *string) {
-	maxTokens := 1000
-	system := chat.MasterPrompt
-	if chat.RoleID != nil {
-		system = chat.Role.Prompt
-	}
-	req := awsnova.Request{
-		Messages: chat.getNovaDialog(question),
-		InferenceConfig: awsnova.InferenceConfig{
-			MaxTokens:   &maxTokens,
-			Temperature: &chat.Temperature,
-		},
-		System: system,
-	}
-
-	chat.removeMenu(c)
-	sentMessage := chat.getSentMessage(c)
-	// Create a context with a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	// Invoke the model with response stream
-	ch, err := s.nova.InvokeModelWithResponseStream(ctx, req)
-	if err != nil {
-		Log.WithField("user", c.Sender().Username).Error(err)
-		_, _ = c.Bot().Edit(sentMessage, err.Error())
-		return
-	}
-
-	result := ""
-	_ = c.Notify(tele.Typing)
-	tokens := 0
-
-	for {
-		select {
-		case comp, ok := <-ch:
-			if !ok {
-				// channel closed
-				return
-			}
-			// Log.WithField("user", c.Sender().Username).Info(comp)
-			if comp.Error != "" {
-				Log.WithField("user", c.Sender().Username).Error(comp.Error)
-				_, _ = c.Bot().Edit(sentMessage, comp.Error)
-				return
-			}
-			if comp.Content != "" {
-				result += comp.Content
-				tokens++
-				// every 16 tokens update the message
-				if tokens%16 == 0 {
-					_, _ = c.Bot().Edit(sentMessage, result)
-				}
-			}
-			if comp.Done {
-				continue
-			}
-			if comp.Usage != nil {
-				if len(result) == 0 {
-					result = "No response from model."
-				}
-				s.updateReply(chat, result, c)
-
-				Log.WithField("user", c.Sender().Username).
-					WithField("tokens", tokens).
-					WithFields(map[string]interface{}{
-						"input_tokens":  comp.Usage.InputTokens,
-						"output_tokens": comp.Usage.OutputTokens,
-					}).Info("Nova stream finished")
-
-				chat.updateTotalTokens(comp.Usage.InputTokens + comp.Usage.OutputTokens)
-
-				chat.History = append(chat.History,
-					ChatMessage{
-						Role:      "assistant",
-						Content:   &result,
-						ChatID:    chat.ChatID,
-						CreatedAt: time.Now(),
-					})
-				s.saveHistory(chat)
-
-				return
-			}
-		case <-ctx.Done():
-			_, _ = c.Bot().Edit(sentMessage, "Timeout")
-			return
-		}
-	}
 }
 
 func (s *Server) processPDF(c tele.Context) {
@@ -1222,57 +400,4 @@ func (s *Server) processPDF(c tele.Context) {
 	s.db.Save(&chat)
 
 	s.complete(c, "", true)
-}
-
-// ProcessAnnotations is a unified function that processes all annotation types
-func (s *Server) ProcessAnnotations(
-	content []openai.OutputContent, processor AnnotationProcessor,
-) []AnnotationData {
-	var annotations []AnnotationData
-
-	for _, content := range content {
-		text := content.Text
-
-		for _, annotation := range content.Annotations {
-			switch annotation.Type {
-			case "url_citation":
-				annotations = append(annotations, AnnotationData{
-					Annotation:    annotation,
-					LocalFilePath: nil,
-				})
-
-			case "file_citation", "container_file_citation":
-				if a := s.processFileCitation(annotation, text, processor); a != nil {
-					annotations = append(annotations, *a)
-				}
-			default:
-				Log.WithField("annotation", annotation).Warnf("Unknown annotation type: %s", annotation.Type)
-				continue
-			}
-		}
-	}
-
-	return annotations
-}
-
-// processFileCitation handles file_citation and container_file_citation annotations
-func (s *Server) processFileCitation(
-	annotation openai.Annotation, text string, processor AnnotationProcessor,
-) *AnnotationData {
-	result, err := s.openAI.RetrieveContainerFile(annotation.ContainerID, annotation.FileID)
-	if err != nil {
-		Log.WithField("annotation", annotation).Errorf("Error retrieving container file: %v", err)
-		return nil
-	}
-
-	localPath, err := processor.ProcessFile(annotation.Filename, result, annotation, text)
-	var localPathPtr *string
-	if err == nil && localPath != "" {
-		localPathPtr = &localPath
-	}
-
-	return &AnnotationData{
-		Annotation:    annotation,
-		LocalFilePath: localPathPtr,
-	}
 }
