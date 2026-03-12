@@ -64,6 +64,9 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 		system = chat.Role.Prompt
 	}
 	system += fmt.Sprintf("\n\nCurrent date: %s", time.Now().Format("2006-01-02"))
+	if model.WebSearch {
+		system += "\n\nOnly use web search when the query explicitly requires up-to-date information, factual verification, or references you don't have. Do not search for general knowledge questions you can answer from training data."
+	}
 
 	chat.removeMenu(c)
 	draftID := int(time.Now().UnixMilli() % 1000000)
@@ -75,7 +78,7 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 
 	var tools []anthropic.ToolInterface
 	if model.WebSearch {
-		tools = append(tools, anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 5}))
+		tools = append(tools, anthropic.NewWebSearchTool(anthropic.WebSearchToolOptions{MaxUses: 3}))
 	}
 	tools = append(tools, s.getTools()...)
 
@@ -123,7 +126,11 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 			default:
 			}
 			event := stream.Event()
-			accumulator.AddEvent(event)
+			if err := accumulator.AddEvent(event); err != nil {
+				Log.WithField("user", c.Sender().Username).
+					WithField("event_type", event.Type).
+					Warn("Accumulator error: ", err)
+			}
 
 			switch event.Type {
 			case anthropic.EventTypeContentBlockStart:
@@ -170,13 +177,18 @@ func (s *Server) getStreamingAnswer(chat *Chat, c tele.Context, question *string
 
 		if !accumulator.IsComplete() {
 			Log.WithField("user", c.Sender().Username).Warn("Stream ended with incomplete accumulator")
-			if result.Len() > 0 {
-				_, _ = c.Bot().Send(c.Sender(), "Incomplete response: "+result.String())
-			}
-			return
 		}
 
 		response := accumulator.Response()
+		if response == nil {
+			Log.WithField("user", c.Sender().Username).Error("No response from stream")
+			if result.Len() > 0 {
+				s.sendFinalReply(chat, result.String(), c)
+				chat.addAssistantMessage(result.String())
+				s.saveHistory(chat)
+			}
+			return
+		}
 
 		// Extract citations
 		var citations []Citation

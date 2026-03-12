@@ -97,7 +97,7 @@ func (c *Chat) getDialog(request *string) []*anthropic.Message {
 		if c.ConversationAge > 0 && h.CreatedAt.Before(time.Now().AddDate(0, 0, -int(c.ConversationAge))) {
 			continue
 		}
-		if (h.Content == nil || *h.Content == "") && len(h.ToolCalls) == 0 && h.ToolCallID == nil {
+		if (h.Content == nil || *h.Content == "") && h.ImagePath == nil && len(h.ToolCalls) == 0 && h.ToolCallID == nil {
 			continue
 		}
 
@@ -132,7 +132,9 @@ func (c *Chat) getDialog(request *string) []*anthropic.Message {
 				Log.Warn("Error reading image", "error=", err)
 				continue
 			}
-			content = append(content, anthropic.NewTextContent(*h.Content))
+			if h.Content != nil && *h.Content != "" {
+				content = append(content, anthropic.NewTextContent(*h.Content))
+			}
 			content = append(content, &anthropic.ImageContent{
 				Source: anthropic.RawData(http.DetectContentType(imageData), imageData),
 			})

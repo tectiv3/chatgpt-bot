@@ -32,7 +32,11 @@ func (s *Server) handleImage(c tele.Context) {
 	}
 
 	chat := s.getChat(c.Chat(), c.Sender())
-	chat.addImageToDialog(c.Message().Caption, fileName)
+	caption := c.Message().Caption
+	if caption == "" {
+		caption = "Briefly describe the image"
+	}
+	chat.addImageToDialog(caption, fileName)
 	s.db.Save(&chat)
 
 	s.complete(c, "")
